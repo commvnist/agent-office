@@ -1,11 +1,14 @@
 {
   "name": "agent-office",
-  "owner": { "name": "Agent Office contributors" },
+  "owner": {
+    "name": "Agent Office contributors"
+  },
   "plugins": [
     {
       "name": "agent-office",
       "source": "./plugin",
       "description": "Watch your Claude Code agents work in a virtual office. Observes hooks only; never touches credentials."
     }
-  ]
+  ],
+  "description": "Agent Office: watch Claude Code sessions and subagents work in a virtual office."
 }

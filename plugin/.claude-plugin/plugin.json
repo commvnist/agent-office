@@ -1,5 +1,11 @@
 {
   "name": "agent-office",
   "version": "0.0.1",
-  "description": "Watch your Claude Code agents work in a virtual office. Observes hooks only; never touches credentials."
+  "description": "Watch your Claude Code agents work in a virtual office. Observes hooks only; never touches credentials.",
+  "author": {
+    "name": "commvnist",
+    "url": "https://github.com/commvnist/agent-office"
+  },
+  "repository": "https://github.com/commvnist/agent-office",
+  "license": "MIT"
 }
