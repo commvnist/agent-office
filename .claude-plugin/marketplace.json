@@ -1,0 +1,11 @@
+{
+  "name": "agent-office",
+  "owner": { "name": "Agent Office contributors" },
+  "plugins": [
+    {
+      "name": "agent-office",
+      "source": "./plugin",
+      "description": "Watch your Claude Code agents work in a virtual office. Observes hooks only; never touches credentials."
+    }
+  ]
+}

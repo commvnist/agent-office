@@ -1,0 +1,6 @@
+{
+  "name": "@agent-office/web", "version": "0.0.0", "type": "module",
+  "scripts": { "build": "vite build", "dev": "vite" },
+  "dependencies": { "@agent-office/core": "*", "pixi.js": "^8.0.0" },
+  "devDependencies": { "vite": "^6.0.0" }
+}

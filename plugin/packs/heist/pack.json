@@ -1,0 +1,16 @@
+{
+  "name": "heist",
+  "description": "Fun roles for the same office: mastermind plans, hacker and driver build, lookout reviews.",
+  "roles": {
+    "mastermind": { "agent": "mastermind", "count": 1, "names": ["The Brain"] },
+    "hacker": { "agent": "hacker", "count": 2, "names": ["Zero", "Cipher"], "overflow": { "max": 1, "names": ["Script Kiddie"] } },
+    "driver": { "agent": "driver", "count": 2, "names": ["Wheels", "Gears"], "overflow": { "max": 1, "names": ["Valet"] } },
+    "lookout": { "agent": "lookout", "count": 1, "names": ["Hawk"] }
+  },
+  "agents": {
+    "mastermind": "mastermind.md",
+    "hacker": "hacker.md",
+    "driver": "driver.md",
+    "lookout": "lookout.md"
+  }
+}

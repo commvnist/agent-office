@@ -1,0 +1,20 @@
+{
+  "name": "startup",
+  "description": "The default roster: architect, two frontend, two backend, two QA, reviewer, researcher.",
+  "roles": {
+    "architect": { "agent": "architect", "count": 1, "names": ["Ada"] },
+    "frontend": { "agent": "frontend-dev", "count": 2, "names": ["Maya", "Leo"], "overflow": { "max": 1, "names": ["Temp"] } },
+    "backend": { "agent": "backend-dev", "count": 2, "names": ["Dev", "Priya"], "overflow": { "max": 1, "names": ["Temp"] } },
+    "qa": { "agent": "qa-engineer", "count": 2, "names": ["Quinn", "Sam"], "overflow": { "max": 2, "names": ["Temp"] } },
+    "reviewer": { "agent": "reviewer", "count": 1, "names": ["Rex"] },
+    "researcher": { "agent": "researcher", "count": 1, "names": ["Ziv"], "overflow": { "max": 1, "names": ["Temp"] } }
+  },
+  "agents": {
+    "architect": "../../agents/architect.md",
+    "frontend-dev": "../../agents/frontend-dev.md",
+    "backend-dev": "../../agents/backend-dev.md",
+    "qa-engineer": "../../agents/qa-engineer.md",
+    "reviewer": "../../agents/reviewer.md",
+    "researcher": "../../agents/researcher.md"
+  }
+}

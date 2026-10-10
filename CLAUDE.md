@@ -1,0 +1,20 @@
+# Agent Office: working agreements
+
+- **Use ponytail for all development in this repo** (enabled via `.claude/settings.json`, plugin `ponytail@ponytail`, DietrichGebert/ponytail). Smallest complete change; reuse before writing; no speculative options or abstractions; keep the existing structure.
+- New non-trivial logic gets a small test (`node --test`, native TS). Known shortcuts get a `// shortcut: <limit>, <when to upgrade>` comment.
+- Subagents working in this repo follow the same rules; end each report with what was skipped or not checked and any risk.
+
+## Layout
+
+- `packages/core`: types, reducer, seat allocator, layout. Pure, no I/O, no DOM. `npm test` covers it.
+- `packages/server`: hook-payload adapter + localhost daemon.
+- `packages/web`: PixiJS client (procedural sprites).
+- `plugin/`: Claude Code plugin (hooks, agents, skills).
+- `docs/improvements.md`: the 100-item backlog; keep its status column current.
+
+## Guardrails
+
+- Never read `~/.claude` credentials/OAuth tokens or call the Anthropic API/Agent SDK from this project.
+- Observer-only. The only sanctioned use of the binary is `claude plugin ...` (plugin management, in `scripts/setup.mjs` and `scripts/office.mjs doctor`). Never `claude -p`/`--print`, headless or programmatic prompting, wrapping the binary, or sending keystrokes into a Claude session; `npm run check:compliance` enforces it.
+- Interactive control of Claude from the UI (tmux web terminal) was built and removed at the owner's request; a backup tarball sits next to the repo. Do not reintroduce it without being asked.
+- Bind to loopback only. Displayed text is untrusted input.

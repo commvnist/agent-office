@@ -1,0 +1,22 @@
+{
+  "name": "agent-office",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "test": "node --test \"packages/*/src/**/*.test.ts\" \"scripts/*.test.mjs\"",
+    "server": "node packages/server/src/main.ts",
+    "build:web": "npm run build -w @agent-office/web",
+    "demo": "node scripts/demo.mjs",
+    "check:compliance": "node scripts/check-compliance.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "setup": "node scripts/setup.mjs",
+    "doctor": "node scripts/office.mjs doctor"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/node": "^22.0.0"
+  }
+}

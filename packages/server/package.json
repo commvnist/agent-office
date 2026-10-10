@@ -1,0 +1,1 @@
+{ "name": "@agent-office/server", "version": "0.0.0", "type": "module", "dependencies": { "@agent-office/core": "*" } }

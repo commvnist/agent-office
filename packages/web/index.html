@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Agent Office</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root{--bg:#14121f;--panel:#1d1a2e;--line:#322d4d;--fg:#e8e6f5;--mute:#8d89ab;--acc:#8fb7ff;--warn:#ffb86b;--bad:#ff8a80;--good:#5be37d}
+  body{--sw:var(--swx,340px)}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:13px ui-monospace,Menlo,Consolas,monospace;overflow:hidden}
+  button,select,input{font:inherit;color:inherit}
+  :focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+  .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  [hidden]{display:none!important}
+  #stage{position:absolute;inset:0 var(--sw) 0 0}
+  #stage canvas{display:block}
+  #top{position:absolute;left:0;right:var(--sw);top:0;height:34px;display:flex;align-items:center;gap:12px;padding:0 14px;background:linear-gradient(#14121fee,#14121f00)}
+  #top b{letter-spacing:.08em}
+  #top .live{width:8px;height:8px;border-radius:50%;background:var(--good);box-shadow:0 0 8px var(--good)}
+  #top .live.off{background:#e0524a;box-shadow:0 0 8px #e0524a}
+  #top .sp{flex:1}
+  #badge{background:var(--warn);color:#14121f;font-weight:700;padding:2px 8px;border-radius:3px;letter-spacing:.06em}
+  #empty{position:absolute;left:0;right:var(--sw);top:42%;text-align:center;color:var(--mute);line-height:1.8;pointer-events:none}
+  #empty code{color:var(--acc)}
+  #caption{position:absolute;left:5%;right:calc(var(--sw) + 5%);bottom:5%;text-align:center;font-size:30px;line-height:1.3;background:#14121fcc;padding:12px 18px;border-radius:8px;pointer-events:none}
+  #caption b{display:block;color:var(--acc);font-size:.7em}
+  #side{position:absolute;right:0;top:0;bottom:0;width:var(--swx,340px);background:var(--panel);border-left:1px solid var(--line);display:flex;transition:transform .2s}
+  #handle{width:6px;margin-left:-3px;cursor:ew-resize;flex:none;background:transparent}
+  #handle:hover,#handle:focus-visible{background:var(--acc)}
+  #pbody{flex:1;overflow-y:auto;min-width:0}
+  #tools{display:flex;flex-wrap:wrap;gap:4px;padding:8px 10px;border-bottom:1px solid var(--line)}
+  .b{background:#2a2645;border:1px solid var(--line);border-radius:4px;padding:3px 8px;cursor:pointer}
+  .b:hover{border-color:var(--acc)} .b[aria-pressed=true]{background:var(--acc);color:#14121f}
+  .b.sm{padding:0 6px;font-size:11px}
+  #tg{position:absolute;right:8px;top:6px;z-index:5}
+  body:not(.collapsed) #tg{right:calc(var(--swx,340px) + 8px)}
+  .note{padding:2px 12px;color:var(--mute);font-size:11px}
+  section h2,#legend summary{margin:0;padding:10px 14px;font-size:12px;letter-spacing:.1em;color:var(--mute);border-bottom:1px solid var(--line)}
+  #legend summary{cursor:pointer}
+  #radar.hot h2{color:var(--warn)}
+  .rd{display:block;width:100%;text-align:left;background:none;border:0;border-left:3px solid var(--warn);padding:7px 14px;cursor:pointer}
+  .rd.blocked{border-color:var(--bad)} .rd.stuck{border-color:var(--mute)}
+  .rd:hover{background:#2a2645}
+  .k{color:var(--mute)} .pad{padding:8px 14px}
+  #banner .warn,#explain{padding:8px 14px;border-bottom:1px solid var(--line);color:var(--warn);line-height:1.5}
+  #explain{color:var(--fg)}
+  #card{padding:10px 14px;border-bottom:1px solid var(--line);line-height:1.5}
+  #card .n{font-size:15px;font-weight:700}
+  #card .full{margin-top:6px} #card .tx{white-space:pre-wrap;word-break:break-word;max-height:9em;overflow:auto;color:#cfcde6}
+  #sessions .sess{padding:8px 14px;border-bottom:1px solid var(--line);line-height:1.5}
+  .sname{background:none;border:0;padding:0;font-weight:700;cursor:pointer;text-decoration:underline;color:var(--acc)}
+  .badge{display:inline-block;margin-right:4px;padding:0 6px;border:1px solid var(--line);border-radius:8px;font-size:11px;color:var(--mute)}
+  .badge.warn{color:var(--warn);border-color:var(--warn)}
+  .cwd{display:flex;gap:6px;align-items:center;word-break:break-all}
+  #roster{list-style:none;margin:0;padding:4px 0}
+  .r{display:block;width:100%;text-align:left;background:none;border:0;border-left:3px solid transparent;padding:4px 14px;cursor:pointer}
+  .r:hover{background:#2a2645} .r[aria-pressed=true]{border-color:var(--acc);background:#2a2645}
+  .r.waiting{color:var(--warn)} .r.blocked{color:var(--bad)} .r.queued,.r.idle{color:var(--mute)}
+  #filters{display:flex;flex-wrap:wrap;gap:4px;padding:6px 10px;border-bottom:1px solid var(--line)}
+  #filters select{background:#2a2645;border:1px solid var(--line);border-radius:4px;max-width:120px}
+  #feed{max-height:45vh;overflow:auto;padding:4px 0}
+  #feed h3{margin:6px 14px 2px;font-size:11px;color:var(--mute);letter-spacing:.08em}
+  .it{display:flex;border-left:3px solid transparent;animation:in .25s ease-out}
+  .it .row{flex:1;text-align:left;background:none;border:0;padding:6px 14px;cursor:pointer;line-height:1.45;min-width:0}
+  .it .row:hover{background:#2a2645}
+  .it .who{color:var(--acc)} .it .t{color:var(--mute);font-size:11px;float:right}
+  .it .tx{color:#cfcde6;display:block;margin-top:2px;word-break:break-word}
+  .it .mute{align-self:center;margin-right:6px;opacity:.6}
+  .it.delegate{border-color:#8fb7ff} .it.report{border-color:#5be37d} .it.prompt{border-color:#ffd84a} .it.message{border-color:#d58cff} .it.done{border-color:#5be37d;color:var(--mute)}
+  @keyframes in{from{opacity:0;transform:translateX(10px)}to{opacity:1;transform:none}}
+  .lg{padding:5px 14px;line-height:1.4} .lg b{display:block;color:var(--fg)} .lg span{color:var(--mute)}
+  #settings{position:absolute;right:calc(var(--swx,340px) + 8px);top:40px;z-index:6;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px;width:240px;display:flex;flex-direction:column;gap:8px}
+  .srow{display:flex;justify-content:space-between;align-items:center;gap:8px}
+  #modebar .rp{padding:8px 10px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;border-bottom:1px solid var(--line)}
+  .rp-ctl{display:flex;flex-wrap:wrap;gap:4px;align-items:center;width:100%} .rp-ctl input{flex:1;min-width:100px}
+  select{background:#2a2645;border:1px solid var(--line);border-radius:4px}
+  /* privacy: blur free text in the DOM too (the canvas is blanked by ?private=1) */
+  body.priv #card .tx,body.priv #card .k+*,body.priv .it .tx,body.priv .cwd .k,body.priv #sessions .k{filter:blur(5px)}
+  body.collapsed{--sw:0px} body.collapsed #side{transform:translateX(100%);border-left:0}
+  body.presenter #side,body.presenter #tools,body.overlay #side,body.overlay #top,body.overlay #empty,body.overlay #tg{display:none}
+  body.presenter,body.overlay{--sw:0px}
+  body.presenter #tg{display:none}
+  body.overlay,body.overlay html{background:transparent}
+  body.overlay #caption{font-size:36px}
+  .b:disabled{opacity:.45;cursor:not-allowed}
+  @media (max-width:800px){
+    body,body.collapsed{--sw:0px}
+    #side{width:min(var(--swx,340px),92vw);box-shadow:-8px 0 24px #0008}
+    body:not(.collapsed) #tg{right:min(var(--swx,340px),92vw)}
+    #settings{right:8px}
+  }
+</style></head>
+<body>
+<div id="stage"></div>
+<div id="top"><span class="live" id="live"></span><b>AGENT OFFICE</b><span id="stats"></span><span id="badge" hidden></span></div>
+<button id="tg" class="b" type="button" aria-controls="side" aria-expanded="true">Hide panel</button>
+<div id="empty">The office is empty.<br>Start Claude Code with <code>--plugin-dir plugin</code> and it moves in.</div>
+<div id="caption" hidden aria-hidden="true"></div>
+<div id="live-region" class="sr" role="status" aria-live="polite"></div>
+<div id="settings" role="dialog" aria-label="Settings" hidden></div>
+<aside id="side" aria-label="Agent Office panel">
+  <div id="handle" role="separator" aria-orientation="vertical" aria-label="Resize panel (arrow keys)" tabindex="0"></div>
+  <div id="pbody">
+    <div id="tools" role="toolbar" aria-label="Tools"></div>
+    <div id="modebar"></div>
+    <div id="banner" role="status" hidden></div>
+    <div id="explain" hidden></div>
+    <section id="radar" aria-label="Needs you"><h2>NEEDS YOU</h2><div id="radar-list" role="list"></div></section>
+    <section id="card-sec" aria-label="Selected" hidden><h2>SELECTED</h2><div id="card" aria-live="off"></div></section>
+    <section aria-label="Sessions"><h2>SESSIONS</h2><div id="sessions"></div></section>
+    <section aria-label="Agents"><h2>AGENTS</h2><ul id="roster" role="list" aria-label="Agents"></ul></section>
+    <section aria-label="Activity"><h2>ACTIVITY</h2><div id="filters"></div><div id="feed" role="list" aria-label="Activity feed"></div></section>
+    <details id="legend"></details>
+  </div>
+</aside>
+<script type="module" src="./src/main.ts"></script>
+</body></html>
