@@ -139,7 +139,7 @@ its own hardware. The raw numbers are printed too. The gate always holds the upd
 render) to the budget, and the full frame (update + render submit) too unless the environment cannot render: in CI
 (`CI=true`; a GPU-less 2-core runner's software GL starves the page to about 3 frames a second), or when an empty office
 on that machine stays under 30 fps. The exemption never comes from the measured run itself, so a slow office cannot switch
-its own check off; where it applies the full frame is printed and render cost is held by the object budget. The same run times the daemon: about 0.7 ms per sequential `POST /event` at 100 agents, 1.1 ms with
+its own check off; where it applies the full frame is printed and render cost is held by the object budget. In that environment the desk-cap point's timings are printed but not gated (they measure the page fighting software GL for 2 cores; the 100-agent timings stay the CI gate); its object count is always gated. The same run times the daemon: about 0.7 ms per sequential `POST /event` at 100 agents, 1.1 ms with
 a browser subscribed to `/stream`, so roughly 900 events/s, far above what hooks produce.
 
 ## What it shows, and what it ignores

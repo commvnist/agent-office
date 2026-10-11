@@ -631,7 +631,7 @@ function renderStats() {
   if (!e) return;
   const s = e.state, as = office.actors(), ns = Object.keys(s.sessions).length, q = as.filter((a) => a.status === "queued").length;
   // agents = every actor on the floor, leads included: the same number as the AGENTS list and the canvas label
-  const working = as.filter((a) => a.status === "working").length; // L8: in a tool now, the crew badges' number; "thinking" between tools is not counted
+  const working = as.filter((a) => !a.lead && statusKey(a.status) === "working").length; // helpers at work, counted exactly as the session tiles and badges do
   const full = `${ns} session${ns === 1 ? "" : "s"} · ${as.length} agent${as.length === 1 ? "" : "s"}${q ? ` · ${q} queued` : ""}${items.length ? ` · ${items.length} need you` : ""}${e.configError ? " · config error" : ""}`;
   const outs = (s as { outcomes?: { outcome?: string }[] }).outcomes;
   const done = outs ? outs.filter((o) => o.outcome === "done").length : office.feed.filter((f) => f.kind === "report" && f.outcome === "done").length;
@@ -710,7 +710,12 @@ function bindEscScope() {
 /** Phones (H3): the toolbar lives in the sheet's "More" section, after NEEDS YOU and the lists; desktops keep it in the header. */
 function bindPlacement(tools: HTMLElement) {
   const mq = matchMedia("(max-width:800px)");
-  const place = () => (mq.matches ? $("more-body") : $("top-tools")).append(tools);
+  // narrow: the menus live in the sheet, but the Office / Sessions / History switch stays in the header (O4: always visible)
+  const views = tools.querySelector<HTMLElement>(".tg-views");
+  const place = () => {
+    if (mq.matches) { $("more-body").append(tools); if (views) $("top-tools").append(views); }
+    else { if (views) tools.prepend(views); $("top-tools").append(tools); }
+  };
   mq.addEventListener("change", place);
   place();
 }

@@ -18,6 +18,8 @@ test("verdict fails on p95, objects and too few frames", () => {
   assert.equal(verdict({ frames: 60, fps: 6, p95: 1, up95: BUDGET.p95 + 1, objects: 100, exempt: true }, BUDGET).length, 1, "the update phase is always gated");
   assert.equal(verdict({ frames: 400, fps: 40, p95: 1, up95: 1, objects: BUDGET.objects + 1 }, BUDGET).length, 1);
   assert.equal(verdict({ frames: 3, fps: 1, p95: 1, up95: 1, objects: 1 }, BUDGET).length, 1);
+  assert.equal(verdict({ frames: 60, fps: 3, exempt: true, timed: false, p95: 99, up95: 99, objects: 100 }, BUDGET).length, 0, "cap point on a starved runner: timings not gated");
+  assert.equal(verdict({ frames: 60, fps: 3, exempt: true, timed: false, p95: 1, up95: 1, objects: BUDGET.objects + 1 }, BUDGET).length, 1, "objects are always gated");
 });
 
 test("findChrome honours CHROME, else the first existing known path", () => {

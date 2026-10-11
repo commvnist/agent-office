@@ -754,3 +754,23 @@ Built by the lead (canvas) and two Opus agents (core/server; web panels and view
 | O3 | Done | In-scene text has no legibility floor: tags, bubbles, badges, plaques, the board and the receive badge scale with the world both ways. |
 | O4 | Done | `fitHeader` folds the wordmark, Display, Export, the chips, then Setup into More; the counts drop rather than show a stray character; a dialog closed from More returns focus to More. |
 | Owner removals | Done | Disco tint, courier, GIF export, Recap PNG and OBS/overlay mode removed (code, menus, keys, palette, CSS, tests); Present and kiosk kept. |
+
+### Pass 4 short review (three critics on the built pass)
+
+| Finding | Verdict | Fix |
+|---|---|---|
+| An ENDED tile with a gave-up helper was green | Fixed | Worst outcome wins: red if anyone gave up, green only when everything got done, else neutral. |
+| History legend said "X blocked" | Fixed | "x gave up", like every other surface. |
+| Header "0 working" while the tile said "1 working" | Fixed | The header counts helpers at work exactly as the tiles and badges do. |
+| The lead's result echoed the prompt | Verified, no change | A harness artifact (its Stop carried no message); on the owner's live sessions `result` is Claude's actual last message. |
+| A stray character after the pill | Verified fixed | Those shots predate the `f-stats` fold; the header shots at every width show none. |
+| First-run explainer above Recently done | Skipped | First-run text with "Got it"; every screenshot uses a fresh browser. |
+| The view switch was missing from the header below 800 px | Fixed | Office / Sessions / History stay in the header on narrow widths; the menus live in the sheet. |
+| The meter strip covered the phone sheet's last card | Fixed | Hidden while the sheet is open on narrow widths. |
+| The your-turn row cut the lead's question | Fixed | NEEDS YOU reasons wrap to three lines; the age never splits. |
+| A highlight card covered the phone stage | Fixed | No highlight cards on phones (NEEDS YOU and the pill carry the alert). |
+| The "Claude needs your permission" bubble covered the waiting lead | Fixed | The bubble is gone; NEEDS YOU says it and the lead keeps its ring, raised hand and lamp. |
+| The minimap was cut by the strip | Fixed | It rises with the ticker. |
+| Unlabelled lit pods at 100 agents | Verified, no change | One badge per collapsed session on its first pod; a session spanning several pods shows its badge once. |
+| A gave-up tag near its own ring and flag | Skipped | The owner rule is that a flag never pushes its own tag; nothing is covered. |
+| CI perf at the 128-desk point | Fixed (gate) | Reproducible on GitHub's 2-core runner (update p95 18-23 ms normalized vs 8.6 ms locally on the same build): at 2.5 fps software GL competes with the page for the CPU. CI keeps the 100-agent timings as its gate; the cap point's timings are gated where rendering keeps up (locally: 14.1 ms frame p95) and its object count everywhere. |

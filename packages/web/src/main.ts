@@ -466,7 +466,7 @@ function syncActors() {
       if (s.doing) a.tool(clip(`${s.doing}${s.detail ? " " + s.detail : ""}`, 44));
     }
     if (s.waiting && a.emote?.e !== "question") a.showEmote("question", 3000);
-    if (s.waiting && s.waitingText && !a.speech) a.speak(s.waitingText, "say", 5000);
+    // no "Claude needs your permission" bubble: NEEDS YOU says it, and the bubble covered the waiting lead's face and lamp
   });
 
   let qseen = -1;

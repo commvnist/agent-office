@@ -29,7 +29,9 @@ export function pct(xs, p) {
 export function verdict(m, b) {
   const out = [];
   if (m.frames < 30) out.push(`only ${m.frames} frames sampled (page not animating?)`);
-  if (m.up95 > b.p95) out.push(`update p95 ${m.up95.toFixed(2)} ms > budget ${b.p95} ms`);
+  // timings at the cap point are gated only where rendering keeps up: on a starved runner they measure CPU contention with
+  // software GL, not the app (CI keeps the 100-agent timings as its regression gate); object counts are always gated
+  if (m.timed !== false && m.up95 > b.p95) out.push(`update p95 ${m.up95.toFixed(2)} ms > budget ${b.p95} ms`);
   // decided by the environment, never by the measured run: a slow office must not switch its own frame check off
   if (!m.exempt && m.p95 > b.p95) out.push(`frame p95 ${m.p95.toFixed(2)} ms > budget ${b.p95} ms`);
   if (m.objects > b.objects) out.push(`${m.objects} display objects > budget ${b.objects}`);
@@ -177,8 +179,10 @@ async function main() {
   let failed = 0;
   for (const m of results) {
     m.exempt = exempt;
+    m.timed = !(exempt && m.point !== points[0]);
     console.log(`perf: ${m.point} agents / ${SESS} sessions, ${m.actors} actors on screen, CPU 4x throttled, ${seconds}s; raw frame p50 ${m.raw.p50.toFixed(2)}  p95 ${m.raw.p95.toFixed(2)}`);
     console.log(`  normalized to the reference host: update p95 ${m.up95.toFixed(2)} ms; frame p50 ${m.p50.toFixed(2)}  p95 ${m.p95.toFixed(2)}  max ${m.max.toFixed(2)}  (${m.frames} frames${m.fps < 30 ? `, ${m.fps.toFixed(1)} fps` : ""}${exempt ? `; full frame not gated: ${env.CI === "true" ? "CI" : `empty office renders ${baseFps.toFixed(1)} fps`}` : ""}; budget p95 ${budget.p95})`);
+    if (!m.timed) console.log(`  timings at this point not gated here (starved renderer); objects are`);
     console.log(`  display objects: ${m.objects} (budget ${budget.objects})`);
     const bad = verdict(m, budget);
     for (const b of bad) console.error(`perf FAIL at ${m.point} agents: ${b}`);

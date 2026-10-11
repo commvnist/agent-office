@@ -42,7 +42,8 @@ function renderEnded(box: HTMLElement) {
     grid.append(...rows.map(({ x, ago }) => {
       const d = el("div", "tile ended"), o = x.outcomes;
       // red only when the session got nothing done; mixed outcomes stay neutral and the counts carry the detail
-      d.style.setProperty("--st", (o.blocked && !o.done && !o.partial ? look("blocked") : o.done ? outcomeLook("done") : outcomeLook("")).color);
+      // worst outcome wins: red if anyone gave up, green only when everything got done, else neutral (a failed session never looks clean)
+      d.style.setProperty("--st", (o.blocked ? look("blocked") : o.done && !o.partial && !o.empty ? outcomeLook("done") : outcomeLook("")).color);
       const outs = el("span", "k", `${t("agent", { n: x.agents })} · `);
       outs.append(...([["done", o.done], ["partial", o.partial], ["blocked", o.blocked], ...(o.empty ? [["empty", o.empty]] as const : [])] as const).flatMap(([k, n], i) => {
         const g = el("span", "", `${outcomeLook(k).glyph} ${n} ${outcomeLook(k).label}`); // "✓ 1 done", not a bare "✓ 1" (final review)
@@ -333,7 +334,7 @@ function buildTimeline(root: HTMLElement) {
   const legendFill = () => {
     const roles = [...new Set((tl?.w.rows ?? []).filter((r) => r.kind === "agent").map((r) => r.role))].slice(0, 10);
     legend.replaceChildren(...roles.map((r) => { const i = el("span", "lgi"); const sw = el("i", "sw"); sw.style.background = roleColor(r); i.append(sw, el("span", "", priv() ? "role" : r)); return i; }),
-      el("span", "lgi", "✓ done"), el("span", "lgi", "✕ blocked"), el("span", "lgi", "~ partial"), el("span", "lgi", "dashed = still running"), el("span", "lgi", "grey bar = session"),
+      el("span", "lgi", "✓ done"), el("span", "lgi", "x gave up"), el("span", "lgi", "~ partial"), el("span", "lgi", "dashed = still running"), el("span", "lgi", "grey bar = session"),
       el("span", "lgi k", "Click a row to find that agent. Drag to select a range, double-click to zoom, wheel/pinch zoom, +/-/0 keys. Times are local."));
   };
   const redrawAll = () => { legendFill(); draw(); };

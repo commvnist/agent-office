@@ -51,8 +51,8 @@ function highlight(e: FunEvent) {
   const h = parseHighlight(e.text);
   // Cards sit over the stage: never repeat what the open panel already lists (NEEDS YOU, Recently done); on a phone only a
   // helper that gave up earns one (the pill and NEEDS YOU carry the rest). The ticker still says it either way.
-  const phone = matchMedia("(max-width:800px)").matches;
-  if (phone ? h.outcome !== "blocked" : !document.body.classList.contains("collapsed")) return;
+  // phone: never (a card covered the stage where the camera frames the alert; NEEDS YOU and the pill carry it)
+  if (matchMedia("(max-width:800px)").matches || !document.body.classList.contains("collapsed")) return;
   const b = el("button", `hl ${h.outcome}`);
   b.type = "button";
   b.title = "Select this agent";
@@ -63,8 +63,7 @@ function highlight(e: FunEvent) {
   b.append(g, tx);
   if (h.dur) b.append(el("span", "k", h.dur));
   if (h.outcome === "blocked") b.setAttribute("role", "alert"); // announced at once, and kept until dismissed
-  // phone: cards cover the top of a short stage, where the camera frames the alert; NEEDS YOU and the pill keep it instead
-  const gone = transient($("hl"), cards, b, h.outcome === "blocked" && !phone ? 0 : HL_MS, phone ? 1 : 2);
+  const gone = transient($("hl"), cards, b, h.outcome === "blocked" ? 0 : HL_MS, 2);
   b.addEventListener("click", () => { pick(e.actorId); gone(); });
 }
 

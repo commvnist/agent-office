@@ -65,6 +65,7 @@
   .rdw{display:flex;align-items:flex-start;border-inline-start:3px solid var(--st,var(--warn))}
   .rdw.t1{background:color-mix(in srgb,var(--st) 8%,transparent)} .rdw.t2{background:color-mix(in srgb,var(--st) 16%,transparent)}
   .rd,.dn{display:block;flex:1;min-width:0;text-align:start;background:none;border:0;padding:8px var(--pad);cursor:pointer;line-height:1.45}
+  .rd .rh .k{white-space:nowrap} .rd .why{-webkit-line-clamp:3 !important} /* the question at the end of a lead's answer must not be cut */
   .rd .why,.dn .why{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;color:var(--soft);word-break:break-word} /* A9: wraps to two lines; the full text is the row title */
   .rd:hover,.dn:hover{background:var(--raise)}
   .ra{display:flex;flex-direction:column;gap:4px;padding:8px 8px 8px 0}
