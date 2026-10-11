@@ -710,3 +710,47 @@ Owner calls raised: the disco floor tint (R4), the courier (S8), dropping GIF an
 5. **Words and final review.** P5 README numbers and tagline; P7 rename "nudged", move the Stuck setting, let the pill grow; X7 `n` cycles NEEDS YOU; X8 trim the breadcrumb and empty "next"; then the screenshot matrix, the perf gate at the new cap, and a short critic pass.
 
 Per phase: typecheck, tests, compliance, build, a screenshot matrix that is inspected, the doc updated, commit and push.
+
+### Pass 4 build: status
+
+Built by the lead (canvas) and two Opus agents (core/server; web panels and views) against shared contracts. Checks: typecheck, 322 tests, compliance, build; perf gate at 100 agents (frame p95 12.6 ms, 2566 objects) and at the new 128-desk cap (frame p95 14.1 ms, 3176 objects); the screenshot matrix (3/12/45/100 agents, day and night, desktop and phone) and the header at 390-1920 px with the panel open and closed, inspected.
+
+| Item | Verdict | What changed |
+|---|---|---|
+| S1 (C1) | Done | A helper's permission prompt carries its `agent_id` as `waitBy`; only that helper's next event ends the wait (and its permission latency); the ring, lamp and NEEDS YOU row belong to that helper. |
+| S2 (C2) | Done | An unknown helper is created as recovered on its first event; its tool never lands on the session; its stop files an outcome. |
+| S3, P2 (C3) | Done | Only an explicit DONE shows ✓ or green; no report or an unprefixed one is a neutral "· reported" on the ledger, panel, History and desk card; the walk-in says "(no report)" with no emote or burst. |
+| S4 (C5) | Done | AskUserQuestion is your turn without ending the turn. |
+| S5 (C7) | Done | A helper silent 3x the Stuck threshold is listed as stuck; the sweep retires ghost helpers older than their lead's last turn end. |
+| S6 | Done | A swept session's summary ends at its last event. |
+| S7, X1 (C6) | Done | Gave-up rows come from `state.outcomes`, last until the session's next prompt or Seen, and agree across pages, title, favicon and chime. |
+| S8 | Done | No ✓ or confetti on a lead's turn end; idle quirks only when truly idle; the courier and the dead coffee-pair path are removed. |
+| P1 (C4) | Done | A lead's finished turn files an outcome with its result line (text omitted in privacy); sessions keep `lastPrompt`, `result`, `promptAt`; summaries keep prompt and result (blanked in privacy). |
+| X2 | Done | History reads the stored outcome. |
+| X3 | Done | The your-turn row, pill title, card and tiles show the lead's last result. |
+| P3, X4, X5 | Done | Session tiles and ENDED tiles show the goal and last result, count helpers only, and say "gave up" everywhere. |
+| P4 | Done | A dismissible "Since you left" block after an absence, from `/history`. |
+| X6 | Done | Recently done has "Show all (N)"; a departed helper's row opens History at that moment. |
+| X7, X8 | Done | `n` cycles NEEDS YOU; the Stuck setting moved to Settings; a lead's breadcrumb ends at its session; an empty "next" row is hidden. |
+| P5 | Done | README numbers (128 desks), tagline around outcomes, the GIF placeholder dropped, removals documented. |
+| P6 | Done | Combos removed (core and canvas); delights never toast and never play while something needs you. |
+| P7 | Done | "nudged" is "protocol on"; the pill grows into free space. |
+| L1 | Done | Boot replays every session and agent start and stop within retention, then the newest events; 100 agents survive a restart after 60k events (were 0). |
+| L2 (C8) | Done | Privacy stores and serves a project pseudonym. |
+| L3 | Done | Two gate points (100 agents and the desk cap); the cap is 128 desks (2 floors), the largest whole-floor office that passes; at 192 the object budget failed. |
+| L4 | Done | The full-frame check is exempt only in CI or when an empty office renders under 30 fps. |
+| L5, L6, L7 | Done | Typecheck blocking in CI; `windowsHide` on both spawns; `events.log` purged and pruned; one close listener per `/history` response. |
+| L8 | Done | Header counts agents in a tool, like the crew badges. `?lod=summary` stays as a documented API with no client in the app. |
+| R1 | Done | A chair hides while its occupant is folded into a badge. |
+| R2 | Done | The waiting lamp is steady, amber for permission and cyan for your turn; alert pulses and the vignette never fire for your turn. |
+| R3 | Done | Chrome colours come from `KEY`/`STATUS` at boot; the canvas background is the room's ramp; a small pixel wordmark below 1500 px. |
+| R4 | Done | Effects use STATUS and KEY; confetti is gold and paper; the disco floor tint is removed. |
+| R5 | Done | The alert ring sits behind the figure (face and raised hand show) and pulses in two stepped frames; the expanding pulse is three pixel-ring frames. |
+| R6 | Done | The thought cloud is paper with ramp dots; the plain bubble is a paper tint, not white. |
+| R7 | Done | The camera fits below the header and the chip strip, so the wall stays in frame at scale; badges have square corners. |
+| R8 | Done | People get a soft lit-edge outline; the role shirt near the neon moved to 272°. |
+| O1 | Done | An upper-row tag sits above the emote's space, so it never covers its own thought cloud; bubbles stack above it. |
+| O2 | Done | A lead tag shows the project in full on its own line, the delegation line second. |
+| O3 | Done | In-scene text has no legibility floor: tags, bubbles, badges, plaques, the board and the receive badge scale with the world both ways. |
+| O4 | Done | `fitHeader` folds the wordmark, Display, Export, the chips, then Setup into More; the counts drop rather than show a stray character; a dialog closed from More returns focus to More. |
+| Owner removals | Done | Disco tint, courier, GIF export, Recap PNG and OBS/overlay mode removed (code, menus, keys, palette, CSS, tests); Present and kiosk kept. |

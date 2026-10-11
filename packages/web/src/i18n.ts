@@ -5,7 +5,7 @@ type Msg = string | (Partial<Record<Intl.LDMLPluralRule, string>> & { other: str
 export const MSG: Record<string, Record<string, Msg>> = {
   en: {
     panel: "Panel", needYou: "{n} need you", stale: "Stale since {time}: the daemon stream is down.",
-    session: { one: "{n} session", other: "{n} sessions" }, agent: { one: "{n} agent", other: "{n} agents" }, event: { one: "{n} event", other: "{n} events" },
+    session: { one: "{n} session", other: "{n} sessions" }, agent: { one: "{n} agent", other: "{n} agents" }, helper: { one: "{n} helper", other: "{n} helpers" }, event: { one: "{n} event", other: "{n} events" },
   },
 };
 const base = (l: string) => l.toLowerCase().split("-")[0];

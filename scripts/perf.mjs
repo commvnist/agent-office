@@ -1,7 +1,8 @@
-// Performance gate (P6): a throwaway daemon with 100 agents over 8 sessions and live tool traffic, the built web client in
-// headless Chrome over CDP (Node's built-in WebSocket) with 4x CPU throttling; fails when frame p95 or live display
-// objects exceed the budget. Also times the daemon's commit cost (POST /event round trips) at 100 agents.
-// Usage: npm run build:web && npm run perf    Env: CHROME=<binary>, PERF_P95_MS, PERF_OBJECTS, PERF_SECONDS, PERF_AGENTS.
+// Performance gate (P6): a throwaway daemon with agents over 8 sessions and live tool traffic, the built web client in
+// headless Chrome over CDP (Node's built-in WebSocket) with 4x CPU throttling; fails when update or frame p95 or live display
+// objects exceed the budget. Gated at two points on one page: 100 agents, then the desk cap (the daemon's /status desks.cap).
+// Also times the daemon's commit cost (POST /event round trips).
+// Usage: npm run build:web && npm run perf    Env: CHROME=<binary>, PERF_P95_MS, PERF_OBJECTS, PERF_SECONDS, PERF_AGENTS (one point instead).
 // Without a browser it skips (exit 0) locally and fails when CI=true.
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -24,13 +25,13 @@ export function pct(xs, p) {
   return s[Math.min(s.length - 1, Math.max(0, Math.ceil((p / 100) * s.length) - 1))];
 }
 
-/** Budget failures as readable lines ([] = pass). */
+/** Budget failures as readable lines ([] = pass). `m.exempt`: the environment cannot render (CI, or an empty office below 30 fps), so the full frame is not gated. */
 export function verdict(m, b) {
   const out = [];
   if (m.frames < 30) out.push(`only ${m.frames} frames sampled (page not animating?)`);
   if (m.up95 > b.p95) out.push(`update p95 ${m.up95.toFixed(2)} ms > budget ${b.p95} ms`);
-  // the full frame only where rendering keeps up (>= 30 fps sampled): on a GPU-less 2-core runner software GL starves the page
-  if (m.fps >= 30 && m.p95 > b.p95) out.push(`frame p95 ${m.p95.toFixed(2)} ms > budget ${b.p95} ms`);
+  // decided by the environment, never by the measured run: a slow office must not switch its own frame check off
+  if (!m.exempt && m.p95 > b.p95) out.push(`frame p95 ${m.p95.toFixed(2)} ms > budget ${b.p95} ms`);
   if (m.objects > b.objects) out.push(`${m.objects} display objects > budget ${b.objects}`);
   return out;
 }
@@ -49,7 +50,7 @@ export function findChrome(env = process.env, exists = existsSync) {
 }
 
 async function main() {
-  const env = process.env, seconds = Number(env.PERF_SECONDS) || 20, agents = Number(env.PERF_AGENTS) || 100, SESS = 8;
+  const env = process.env, seconds = Number(env.PERF_SECONDS) || 20, SESS = 8;
   const budget = { p95: Number(env.PERF_P95_MS) || BUDGET.p95, objects: Number(env.PERF_OBJECTS) || BUDGET.objects };
   const chrome = findChrome();
   if (!chrome) {
@@ -73,6 +74,9 @@ async function main() {
   if (!url) { console.error("perf: could not start a throwaway daemon"); process.exit(1); }
   const token = readFileSync(join(tmp, "token"), "utf8").trim();
   const post = (e) => fetch(`${url}/event`, { method: "POST", headers: { "x-agent-office-token": token }, body: JSON.stringify(e) }).then((r) => r.arrayBuffer());
+  const cap = (await (await fetch(`${url}/status?format=json`, { headers: { "x-agent-office-token": token } })).json()).desks.cap;
+  const points = env.PERF_AGENTS ? [Number(env.PERF_AGENTS)] : [...new Set([Math.min(100, cap), cap])];
+  let agents = points[0];
   /** Mean ms per sequential POST over n tool events (the commit cost a hook pays). */
   const commitMs = async (n) => {
     const t0 = performance.now();
@@ -83,10 +87,13 @@ async function main() {
   const types = ["backend-dev", "frontend-dev", "qa-engineer", "reviewer", "researcher", "general-purpose", "devops", "docs-writer", "architect", "security-auditor"];
   for (let i = 0; i < SESS; i++) await post({ hook_event_name: "SessionStart", session_id: `s${i}`, cwd: `/work/p${i}` });
   const empty = await commitMs(200);
-  for (let n = 0; n < agents; n++) {
-    const type = types[(n * 3 + (n >> 2)) % types.length];
-    await post({ hook_event_name: "SubagentStart", session_id: `s${n % SESS}`, agent_id: `a${n}`, agent_type: type === "general-purpose" ? type : `agent-office:${type}` });
-  }
+  const spawnTo = async (from, to) => {
+    for (let n = from; n < to; n++) {
+      const type = types[(n * 3 + (n >> 2)) % types.length];
+      await post({ hook_event_name: "SubagentStart", session_id: `s${n % SESS}`, agent_id: `a${n}`, agent_type: type === "general-purpose" ? type : `agent-office:${type}` });
+    }
+  };
+  await spawnTo(0, agents);
   const full = await commitMs(400);
 
   // headless Chrome, DevTools endpoint from stderr
@@ -131,26 +138,53 @@ async function main() {
   for (let i = 0; i < 5; i++) bench.push(await evalJs(BENCH_JS));
   const speed = pct(bench, 50) / REF_BENCH_MS; // > 1: slower than the reference host
   await cdp("Emulation.setCPUThrottlingRate", { rate: 4 });
-  await sleep(5000); // warm-up: walk-ins, texture bakes
-  await evalJs("__aoPerf.reset()");
-  if (env.PERF_PROFILE) { await cdp("Profiler.enable"); await cdp("Profiler.start"); } // opt-in: a .cpuprofile of the measured window (open in DevTools)
-  await sleep(seconds * 1000);
-  if (env.PERF_PROFILE) writeFileSync(env.PERF_PROFILE, JSON.stringify((await cdp("Profiler.stop")).profile));
-  const frames = await evalJs("__aoPerf.frames()"), updates = await evalJs("__aoPerf.updates()"), objects = await evalJs("__aoPerf.objects()"), actors = await evalJs("__aoPerf.actors()");
+  console.log(`  host speed: ${speed.toFixed(2)}x the reference (bench ${pct(bench, 50).toFixed(1)} ms vs ${REF_BENCH_MS} ms)`);
+  console.log(`  daemon commit: ${empty.toFixed(2)} ms/event with 0 agents, ${full.toFixed(2)} ms/event with ${agents}, ${viewed.toFixed(2)} with ${agents} and a browser on /stream (~${Math.round(1000 / viewed)} events/s sequential)`);
+
+  const results = [];
+  for (const point of points) {
+    if (point > agents) {
+      await spawnTo(agents, point);
+      agents = point;
+      for (const end = Date.now() + 30_000; Date.now() < end && !(await evalJs(`globalThis.__aoPerf?.actors() >= ${Math.min(agents, 64)}`).catch(() => false));) await sleep(250);
+    }
+    await sleep(5000); // warm-up: walk-ins, texture bakes
+    await evalJs("__aoPerf.reset()");
+    if (env.PERF_PROFILE) { await cdp("Profiler.enable"); await cdp("Profiler.start"); } // opt-in: a .cpuprofile of the measured window (open in DevTools)
+    await sleep(seconds * 1000);
+    if (env.PERF_PROFILE) writeFileSync(env.PERF_PROFILE, JSON.stringify((await cdp("Profiler.stop")).profile));
+    const frames = await evalJs("__aoPerf.frames()"), updates = await evalJs("__aoPerf.updates()"), objects = await evalJs("__aoPerf.objects()"), actors = await evalJs("__aoPerf.actors()");
+    const raw = { p50: pct(frames, 50), p95: pct(frames, 95), max: Math.max(0, ...frames) };
+    const fps = frames.length >= 600 ? Infinity : frames.length / seconds; // the probe keeps the last 600 frames: a full ring kept up
+    results.push({ point, frames: frames.length, p50: raw.p50 / speed, p95: raw.p95 / speed, max: raw.max / speed, up95: pct(updates, 95) / speed, fps, objects, actors, raw });
+  }
   stop = true;
   await traffic;
-  ws.close();
 
-  const raw = { p50: pct(frames, 50), p95: pct(frames, 95), max: Math.max(0, ...frames) };
-  const m = { frames: frames.length, p50: raw.p50 / speed, p95: raw.p95 / speed, max: raw.max / speed, up95: pct(updates, 95) / speed, fps: frames.length >= 600 ? Infinity : frames.length / seconds, objects, actors }; // the probe keeps the last 600 frames: a full ring kept up
-  console.log(`perf: ${agents} agents / ${SESS} sessions, ${actors} actors on screen, CPU 4x throttled, ${seconds}s`);
-  console.log(`  host speed: ${speed.toFixed(2)}x the reference (bench ${pct(bench, 50).toFixed(1)} ms vs ${REF_BENCH_MS} ms); raw frame p50 ${raw.p50.toFixed(2)}  p95 ${raw.p95.toFixed(2)}`);
-  console.log(`  normalized to the reference host: update p95 ${m.up95.toFixed(2)} ms; frame p50 ${m.p50.toFixed(2)}  p95 ${m.p95.toFixed(2)}  max ${m.max.toFixed(2)}  (${m.frames} frames${m.fps < 30 ? `, ${m.fps.toFixed(1)} fps: rendering starved, full frame not gated` : ""}; budget p95 ${budget.p95})`);
-  console.log(`  display objects: ${objects} (budget ${budget.objects})`);
-  console.log(`  daemon commit: ${empty.toFixed(2)} ms/event with 0 agents, ${full.toFixed(2)} ms/event with ${agents}, ${viewed.toFixed(2)} with ${agents} and a browser on /stream (~${Math.round(1000 / viewed)} events/s sequential)`);
-  const bad = verdict(m, budget);
-  for (const b of bad) console.error(`perf FAIL: ${b}`);
-  process.exit(bad.length ? 1 : 0);
+  // The frame exemption is the environment's, measured on an empty office: CI (GPU-less runners), or one that cannot reach 30 fps with 0 agents.
+  let baseFps = Infinity;
+  if (env.CI !== "true" && results.some((r) => r.fps < 30)) {
+    for (let i = 0; i < SESS; i++) await post({ hook_event_name: "SessionEnd", session_id: `s${i}` });
+    await sleep(8000); // walk-outs
+    await evalJs("__aoPerf.reset()");
+    await sleep(5000);
+    const n = (await evalJs("__aoPerf.frames()")).length;
+    baseFps = n >= 600 ? Infinity : n / 5;
+  }
+  ws.close();
+  const exempt = env.CI === "true" || baseFps < 30;
+
+  let failed = 0;
+  for (const m of results) {
+    m.exempt = exempt;
+    console.log(`perf: ${m.point} agents / ${SESS} sessions, ${m.actors} actors on screen, CPU 4x throttled, ${seconds}s; raw frame p50 ${m.raw.p50.toFixed(2)}  p95 ${m.raw.p95.toFixed(2)}`);
+    console.log(`  normalized to the reference host: update p95 ${m.up95.toFixed(2)} ms; frame p50 ${m.p50.toFixed(2)}  p95 ${m.p95.toFixed(2)}  max ${m.max.toFixed(2)}  (${m.frames} frames${m.fps < 30 ? `, ${m.fps.toFixed(1)} fps` : ""}${exempt ? `; full frame not gated: ${env.CI === "true" ? "CI" : `empty office renders ${baseFps.toFixed(1)} fps`}` : ""}; budget p95 ${budget.p95})`);
+    console.log(`  display objects: ${m.objects} (budget ${budget.objects})`);
+    const bad = verdict(m, budget);
+    for (const b of bad) console.error(`perf FAIL at ${m.point} agents: ${b}`);
+    failed += bad.length;
+  }
+  process.exit(failed ? 1 : 0);
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) await main();

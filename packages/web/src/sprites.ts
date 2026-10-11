@@ -333,8 +333,9 @@ export const emoteTex = (e: Emote) =>
   memo(`emote:${e}`, () => {
     if (e.startsWith("dots")) {
       const g = new Grid(11, 7), n = Number(e[4]) + 1;
-      g.map(0, 0, CLOUD, { "#": "#2a2d3f", o: "#f4f5fb" });
-      for (let i = 0; i < 3; i++) g.set(3 + i * 2, 3, i < n ? "#2a2d3f" : "#b4b8cc");
+      // paper, not white: the face stays the brightest part of a figure (R6)
+      g.map(0, 0, CLOUD, { "#": "#2a2d3f", o: KEY.paper });
+      for (let i = 0; i < 3; i++) g.set(3 + i * 2, 3, i < n ? E[1] : E[4]);
       return g;
     }
     const g = new Grid(9, 9);
@@ -393,15 +394,11 @@ export function drawPx(c: CanvasRenderingContext2D, text: string, x: number, y: 
   [...text].forEach((ch, i) => FONT_ROWS[ch]?.forEach((row, j) => [...row].forEach((v, k) => { if (v === "#") c.fillRect(x + i * 4 + k, y + j, 1, 1); })));
 }
 
-// ---- ambient courier: a figure that is deliberately not an agent (own palette, hi-vis cap and band, a parcel; no tag) ------
-const COURIER: Look = { skin: "#d9a07a", hair: "#2a1d12", shirt: "#4f5d3a", pants: "#2a2f3a", style: 0, build: 0, head: 0, acc: "cap", accColor: "#d7ff3a", badge: -1 };
-const courierCache: Record<string, Texture> = {};
-export function courierTex(dir: Dir, frame: number): Texture {
-  const k = `${dir}${frame % WALK_FRAMES}${settings.reducedMotion ? "r" : ""}`;
-  return (courierCache[k] ??= (() => {
-    const g = person(COURIER, dir, "walk", frame);
-    g.rect(4, 13, 8, 2, "#d7ff3a"); // hi-vis band, even-width and mirrored
-    if (dir !== "up") { g.rect(5, 15, 6, 4, "#b88a55"); g.rect(7, 15, 2, 4, "#8a6238"); } // parcel held in front
-    return g.outline(theme().outline).texture();
-  })());
-}
+
+/** Expanding alert pulse as three pixel-ring frames (radius 4, 6, 8 art px), white for tinting: no vector stroke at device scale (R5). */
+export const pulseTex = (i: number) =>
+  memoRaw(`pulse${i}`, () => {
+    const r = [4, 6, 8][i] ?? 8, n = 2 * r + 1, g = new Grid(n, n);
+    for (let a = 0; a < 360; a += 2) g.set(Math.round(r + r * Math.cos((a * Math.PI) / 180)), Math.round(r + r * Math.sin((a * Math.PI) / 180)), "#ffffff");
+    return g;
+  });

@@ -517,3 +517,75 @@ test("an ended session leaves an after-action summary with no free text", () => 
   const many = Array.from({ length: 25 }, (_, i) => [{ type: "session_start", session: `z${i}`, project: "p", t: i }, { type: "session_end", session: `z${i}`, t: i }] as OfficeEvent[]).flat();
   assert.equal(run(...many).summaries!.length, LIMITS.summaries);
 });
+
+test("S1: a helper's permission wait is attributed to it (waitBy); only that helper's next event or stop ends it", () => {
+  const helperWait: OfficeEvent = { type: "waiting", session: "s1", agentId: "a", kind: "permission", t: 100 };
+  let s = run(lead({ type: "session_start", project: "p" }), start("a"), start("b"), helperWait);
+  assert.equal(s.sessions.s1.waitBy, "a");
+  s = reduce(cfg, s, lead({ type: "tool", tool: "Read", t: 150 }));
+  s = reduce(cfg, s, lead({ type: "tool", agentId: "b", tool: "Read", t: 160 }));
+  assert.equal(s.sessions.s1.waiting, true, "neither the lead nor another helper answers a helper's prompt");
+  s = reduce(cfg, s, lead({ type: "tool_end", agentId: "a", tool: "Bash", ok: true, t: 400 }));
+  assert.equal(s.sessions.s1.waiting, false);
+  assert.equal(s.sessions.s1.waitBy, undefined);
+  assert.deepEqual(s.sessions.s1.permWait, { n: 1, totalMs: 300, lastMs: 300 }, "latency is the helper's");
+  const stopped = reduce(cfg, reduce(cfg, s, { ...helperWait, t: 500 }), { type: "agent_stop", session: "s1", agentId: "a", t: 600 });
+  assert.equal(stopped.sessions.s1.waiting, false, "the helper's stop ends its wait");
+  const leadWait = run(lead({ type: "session_start", project: "p" }), wait("Claude needs your permission to use Bash", "permission"));
+  assert.equal(leadWait.sessions.s1.waitBy, undefined);
+});
+
+test("S2: a helper with no SubagentStart is created as recovered (never drawn as the lead) and its stop files an outcome", () => {
+  let s = run(lead({ type: "session_start", project: "p" }), lead({ type: "delegate", agentType: "qa-engineer", text: "find it", t: 1 }),
+    lead({ type: "tool", agentId: "h9", tool: "Grep", t: 3 }));
+  assert.equal(s.sessions.s1.doing, undefined, "the lead is not doing the helper's tool");
+  assert.equal(s.agents.h9.recovered, true);
+  assert.equal(s.agents.h9.role, "qa");
+  assert.equal(s.agents.h9.task, "find it");
+  assert.equal(s.agents.h9.doing, "Grep");
+  s = reduce(cfg, s, { type: "agent_stop", session: "s1", agentId: "h9", message: "BLOCKED: no access", t: 9 });
+  assert.equal(s.outcomes![0].agentId, "h9");
+  assert.equal(s.outcomes![0].outcome, "blocked");
+  assert.equal(reduce(cfg, s, lead({ type: "tool_end", agentId: "h9", tool: "Grep", ok: true, t: 10 })).agents.h9, undefined, "a late tool_end does not bring it back");
+  assert.equal(reduce(cfg, s, { type: "agent_stop", session: "s1", agentId: "h9", t: 11 }).outcomes!.length, 1, "a repeated stop files nothing");
+  const bare = run(lead({ type: "session_start", project: "p" }), lead({ type: "tool", agentId: "z", tool: "Read" }));
+  assert.equal(bare.agents.z.role, "unknown");
+});
+
+test("C4: a lead's finished turn keeps its prompt and result and files a lead outcome; an unprefixed answer is neutral", () => {
+  let s = run(lead({ type: "session_start", project: "p" }), lead({ type: "prompt", text: "fix the build", t: 1000 }));
+  assert.equal(s.sessions.s1.promptAt, 1000);
+  s = reduce(cfg, s, lead({ type: "turn_end", message: "The build passes now.\nDetails...", t: 4000 }));
+  const x = s.sessions.s1;
+  assert.deepEqual([x.prompt, x.lastPrompt, x.result, x.turnAt], [undefined, "fix the build", "The build passes now.", 4000]);
+  assert.deepEqual(s.outcomes![0], { session: "s1", project: "p", agentId: "lead:s1", lead: true, outcome: undefined, text: "The build passes now.", task: "fix the build", t: 4000, durationMs: 3000 });
+  s = reduce(cfg, s, lead({ type: "turn_end", outcome: "blocked", t: 5000 })); // a stored line without text keeps its stamped outcome
+  assert.equal(s.outcomes!.length, 1, "no prompt and no message: nothing to file");
+  s = reduce(cfg, s, lead({ type: "prompt", text: "next", t: 6000 }));
+  assert.deepEqual([s.sessions.s1.lastPrompt, s.sessions.s1.result], ["next", undefined]);
+  s = reduce(cfg, s, lead({ type: "turn_end", message: "BLOCKED: no network", t: 7000 }));
+  assert.equal(s.outcomes![0].outcome, "blocked");
+  s = reduce(cfg, s, { type: "session_end", session: "s1", t: 8000 });
+  assert.deepEqual([s.summaries![0].prompt, s.summaries![0].result], ["next", "BLOCKED: no network"]);
+});
+
+test("C5: a question is your turn without ending the turn (prompt and helpers keep running)", () => {
+  const s = run(lead({ type: "session_start", project: "p" }), lead({ type: "prompt", text: "go" }), start("a"), lead({ type: "tool", agentId: "a", tool: "Bash" }),
+    { type: "waiting", session: "s1", kind: "turn", text: "Claude needs your permission to use AskUserQuestion", t: 3 });
+  assert.deepEqual([s.sessions.s1.waiting, s.sessions.s1.waitKind, s.sessions.s1.prompt, s.agents.a.doing], [true, "turn", "go", "Bash"]);
+});
+
+test("S6 + C7: the sweep ends a summary at the last event, and reaps a ghost helper once its lead finished a later turn", () => {
+  const ttl = 45 * 60_000;
+  const swept = sweep(run({ type: "session_start", session: "s9", project: "q", t: 0 }, { type: "turn_end", session: "s9", t: 6 * 60_000 }), 2 * 3600_000, ttl).state;
+  assert.equal(swept.summaries![0].endedAt, 6 * 60_000);
+  assert.equal(swept.summaries![0].durationMs, 6 * 60_000);
+  const s = run(lead({ type: "session_start", project: "p", t: 0 }), { ...start("ghost"), t: 0 }, { ...start("busy"), t: 0 },
+    lead({ type: "turn_end", t: 60_000 }), lead({ type: "tool", agentId: "busy", tool: "Read", t: 70_000 }), lead({ type: "tool", tool: "Read", t: 19 * 60_000 }));
+  const early = sweep(s, 10 * 60_000, ttl);
+  assert.ok(early.state.agents.ghost, "not yet silent for ttl/3");
+  const r = sweep(s, 20 * 60_000, ttl);
+  assert.deepEqual(r.removed, { sessions: [], agents: ["ghost"] });
+  assert.ok(r.state.agents.busy, "a helper active after the lead's last turn_end stays");
+  assert.ok(r.state.sessions.s1);
+});

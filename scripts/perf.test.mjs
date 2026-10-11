@@ -13,8 +13,9 @@ test("pct is nearest-rank and safe on empty input", () => {
 test("verdict fails on p95, objects and too few frames", () => {
   assert.deepEqual(verdict({ frames: 400, fps: 40, p95: 10, up95: 5, objects: 100 }, BUDGET), []);
   assert.equal(verdict({ frames: 400, fps: 40, p95: BUDGET.p95 + 1, up95: 5, objects: 100 }, BUDGET).length, 1);
-  assert.equal(verdict({ frames: 60, fps: 6, p95: BUDGET.p95 + 1, up95: 5, objects: 100 }, BUDGET).length, 0, "rendering starved: the full frame is not gated");
-  assert.equal(verdict({ frames: 60, fps: 6, p95: 1, up95: BUDGET.p95 + 1, objects: 100 }, BUDGET).length, 1, "the update phase is always gated");
+  assert.equal(verdict({ frames: 60, fps: 6, p95: BUDGET.p95 + 1, up95: 5, objects: 100 }, BUDGET).length, 1, "a slow run does not exempt itself");
+  assert.equal(verdict({ frames: 60, fps: 6, p95: BUDGET.p95 + 1, up95: 5, objects: 100, exempt: true }, BUDGET).length, 0, "an environment that cannot render: the full frame is not gated");
+  assert.equal(verdict({ frames: 60, fps: 6, p95: 1, up95: BUDGET.p95 + 1, objects: 100, exempt: true }, BUDGET).length, 1, "the update phase is always gated");
   assert.equal(verdict({ frames: 400, fps: 40, p95: 1, up95: 1, objects: BUDGET.objects + 1 }, BUDGET).length, 1);
   assert.equal(verdict({ frames: 3, fps: 1, p95: 1, up95: 1, objects: 1 }, BUDGET).length, 1);
 });

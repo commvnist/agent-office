@@ -28,10 +28,8 @@ test("mostRecent prefers the latest tool call, leads included", () => {
   assert.equal(mostRecent(s), "a2");
 });
 
-test("flags: obs presets imply overlay and a fixed size; kiosk and streamsafe parse", () => {
-  const f = parseFlags("?preset=obs-720&kiosk&streamsafe=0");
-  assert.deepEqual([f.obs, f.overlay, f.size, f.kiosk, f.streamSafe], [true, true, [1280, 720], true, false]);
-  assert.equal(parseFlags("?overlay").overlay, true);
-  assert.equal(parseFlags("?overlay=0").overlay, false);
+test("flags: kiosk and streamsafe parse; the removed overlay flags are ignored", () => {
+  assert.deepEqual(parseFlags("?preset=obs-720&overlay&kiosk&streamsafe=0"), { kiosk: true, streamSafe: false });
+  assert.equal(parseFlags("?kiosk=0").kiosk, false);
   assert.equal(parseFlags("").streamSafe, null);
 });

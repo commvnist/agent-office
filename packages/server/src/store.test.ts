@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, statSync, existsSync, mkdirSync, symlinkSync } from "node:fs";
+import { mkdtempSync, writeFileSync, statSync, existsSync, mkdirSync, symlinkSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { emptyState, reduce, type OfficeConfig, type OfficeEvent } from "@agent-office/core";
-import { appendRotating, readEvents, replay } from "./store.ts";
+import { emptyState, pseudonym, reduce, type OfficeConfig, type OfficeEvent } from "@agent-office/core";
+import { appendRotating, bootEvents, readEvents, replay } from "./store.ts";
 const loadEvents = async (f: string, since?: number, limit?: number, until?: number) => (await readEvents(join(f, ".."), { since, limit, until })).events;
 import { validateConfig, unknownKeys } from "./config.ts";
 import { readUsage } from "./usage.ts";
@@ -254,4 +254,46 @@ test("lodState: summary counts per session, one session in full", () => {
   assert.deepEqual(sum.crew, { s: { agents: 2, working: 1, waiting: 1, blocked: 0, queued: 0 }, t: { agents: 0, working: 0, waiting: 0, blocked: 1, queued: 0 } });
   const one = lodState(publicState(s, false), "s");
   assert.deepEqual([Object.keys(one.agents).sort(), one.log.every((i) => i.session === "s"), one.log.length > 0], [["a", "b"], true, true]);
+});
+
+test("L1: a restart after more than 50k tool events keeps every session and agent (starts replayed from the whole window)", async () => {
+  const home = tmp(), t0 = Date.now() - 3600_000;
+  // shortcut: the 50k+ lines are written straight to one day file (appendEvent per line takes ~1 min); bootEvents reads it like any other
+  mkdirSync(join(home, "events"));
+  const lines: string[] = [];
+  const add = (e: OfficeEvent) => lines.push(JSON.stringify({ v: 1, ...e }));
+  for (let i = 0; i < 4; i++) add({ type: "session_start", session: `s${i}`, project: `p${i}`, t: t0 });
+  for (let n = 0; n < 40; n++) add({ type: "agent_start", session: `s${n % 4}`, agentId: `a${n}`, agentType: "qa-engineer", t: t0 + 1 });
+  for (let i = 0; i < 50_100; i++) add({ type: "tool", session: `s${i % 4}`, agentId: `a${i % 40}`, tool: "Read", t: t0 + 2 + Math.floor(i / 20) });
+  const day = new Date(t0).toISOString().slice(0, 10);
+  writeFileSync(join(home, "events", `${day}.jsonl`), lines.join("\n") + "\n");
+  const evs = await bootEvents(home, t0 - 1, false);
+  const s = replay(cfg, evs, t0 + 3000, 3600_000);
+  assert.equal(Object.keys(s.sessions).length, 4);
+  assert.ok(!Object.values(s.sessions).some((x) => x.recovered), "sessions come back from their starts, not recovered");
+  assert.equal(Object.keys(s.agents).length, 40);
+  assert.ok(!Object.values(s.agents).some((a) => a.recovered));
+  assert.equal((await bootEvents(home, t0 - 1, false, 100_000)).length, lines.length, "under the limit: one read, nothing doubled");
+});
+
+test("L2: privacy stores and serves the project as a pseudonym", async () => {
+  const home = tmp();
+  appendEvent(home, { type: "session_start", session: "s1", project: "acme-merger", cwd: "/w/acme-merger", t: 1000 }, true);
+  const disk = readFileSync(join(home, "events", "1970-01-01.jsonl"), "utf8");
+  assert.ok(!disk.includes("acme") && disk.includes(pseudonym("s1")));
+  assert.match(pseudonym("s1"), /^session-[0-9a-f]{4}$/);
+  let st = reduce(cfg, emptyState(), { type: "session_start", session: "s1", project: "acme", cwd: "/w/acme", t: 1 });
+  st = reduce(cfg, st, { type: "prompt", session: "s1", text: "PROMPT", t: 2 });
+  st = reduce(cfg, st, { type: "turn_end", session: "s1", message: "RESULT", t: 3 });
+  st = reduce(cfg, reduce(cfg, st, { type: "session_start", session: "s2", project: "acme", cwd: "/w/acme", t: 4 }), { type: "session_end", session: "s1", t: 5 });
+  const p = JSON.stringify(publicState(st, true));
+  for (const x of ["acme", "PROMPT", "RESULT"]) assert.ok(!p.includes(x), x);
+  assert.ok(JSON.stringify(publicState(st, false)).includes("acme"));
+});
+
+test("L7: retention prunes the raw events.log by its ISO time prefix", () => {
+  const f = join(tmp(), "events.log");
+  appendFileSync(f, `${new Date(1000).toISOString()} {"old":1}\n${new Date(5000).toISOString()} {"new":1}\n`);
+  assert.equal(pruneEvents(f, 3000, (l) => Date.parse(l.slice(0, 24))), 1);
+  assert.match(readFileSync(f, "utf8"), /new/);
 });

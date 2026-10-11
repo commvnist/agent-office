@@ -45,7 +45,7 @@ const cmds = {
     if (await health()) return console.log("already running"), 0;
     const entry = join(ROOT, "packages/server/src/main.ts");
     const old = major === 22 && minor < 18 ? ["--experimental-strip-types"] : [];
-    spawn(process.execPath, [...old, entry], { detached: true, stdio: "ignore", env: process.env }).unref();
+    spawn(process.execPath, [...old, entry], { detached: true, stdio: "ignore", env: process.env, windowsHide: true }).unref();
     for (let i = 0; i < 20; i++) { await new Promise((r) => setTimeout(r, 150)); if (await health()) return console.log(`started (${base()})`), 0; }
     console.log("did not come up; run `npm run server` to see the error");
     return 1;
@@ -135,9 +135,10 @@ const cmds = {
     const files = ["events.jsonl", "events.jsonl.1", "events.log", "events.log.1"].map((f) => join(HOME, f)).filter((f) => existsSync(f));
     const later = async () => { if (await health()) console.log("the running daemon still holds today's office in memory: node scripts/office.mjs restart clears it"); };
     if (process.argv.includes("--purge-text")) {
-      const text = dayFiles.filter((f) => f.endsWith(".text.jsonl"));
+      // the raw log (AGENT_OFFICE_LOG) is whole hook payloads, so it is text too
+      const text = [...dayFiles.filter((f) => f.endsWith(".text.jsonl")), ...files.filter((f) => /events\.log/.test(f))];
       for (const f of text) rmSync(f, { force: true });
-      console.log(text.length ? `deleted ${text.length} text files in ${days} (the timeline stays)` : "no stored text files");
+      console.log(text.length ? `deleted ${text.length} text files (day text files in ${days}, raw events.log); the timeline stays` : "no stored text files");
       if (files.some((f) => /events\.jsonl/.test(f))) console.log("the legacy events.jsonl keeps its text inline until historyHours prunes it (or history --purge)");
       await later();
       return 0;

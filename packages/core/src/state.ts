@@ -22,6 +22,12 @@ export const safeId = (v: unknown): v is string =>
   typeof v === "string" && /^[\w.:-]{1,64}$/.test(v) && !(v in Object.prototype) && !v.startsWith("lead:");
 
 export const leadId = (session: string) => `lead:${session}`;
+/** Privacy mode's project label: `session-` + 4 hex of an FNV-1a hash of the session id (stable, reveals no folder name). */
+export const pseudonym = (session: string) => {
+  let h = 2166136261;
+  for (let i = 0; i < session.length; i++) h = Math.imul(h ^ session.charCodeAt(i), 16777619);
+  return `session-${(h >>> 0).toString(16).padStart(8, "0").slice(0, 4)}`;
+};
 const bareType = (t: string) => t.slice(t.lastIndexOf(":") + 1).toLowerCase();
 
 function say(s: OfficeState, i: Omit<Interaction, "id">): OfficeState {
@@ -199,7 +205,9 @@ const closePerm = (x: Session, t: number): Partial<Session> => {
   const ms = Math.max(0, t - w.since);
   return { permWait: { n: w.n + 1, totalMs: w.totalMs + ms, lastMs: ms } };
 };
-const clearWait = (x: Session, t: number): Partial<Session> => ({ waiting: false, waitKind: undefined, ...closePerm(x, t) });
+const clearWait = (x: Session, t: number): Partial<Session> => ({ waiting: false, waitKind: undefined, waitBy: undefined, ...closePerm(x, t) });
+/** Does an event from `agentId` (undefined = the lead) answer the session's wait? A helper's wait (waitBy) only by that helper; the lead's only by the lead. */
+const answers = (x: Session, agentId?: string) => (x.waitBy ? agentId === x.waitBy : !agentId);
 
 const RUN0: Run = { agents: 0, tree: [], errors: 0, outcomes: { done: 0, blocked: 0, partial: 0, empty: 0 }, tools: {} };
 const withRun = (s: OfficeState, id: string, f: (r: Run) => Run): OfficeState =>
@@ -239,14 +247,15 @@ function filterPending(s: OfficeState, keep: (j: OfficeState["pending"][string][
   return gone.size ? { ...s, pending, tasks: s.tasks!.filter((t) => !gone.has(t.id)) } : { ...s, pending };
 }
 
-/** Remove a session and everything of its. Pass cfg to seat queued agents of other sessions. */
-function endSession(cfg: OfficeConfig | undefined, s: OfficeState, session: string, t: number): OfficeState {
+/** Remove a session and everything of its. Pass cfg to seat queued agents of other sessions. `endedAt` defaults to `t`. */
+function endSession(cfg: OfficeConfig | undefined, s: OfficeState, session: string, t: number, endedAt = t): OfficeState {
   const agents = Object.fromEntries(Object.entries(s.agents).filter(([, a]) => a.session !== session));
   const { [session]: x, ...sessions } = s.sessions;
   const { [session]: run = RUN0, ...runs } = s.track!.runs ?? {};
   if (x) {
     const sum: Summary = {
-      session, project: x.project, startedAt: x.startedAt, endedAt: t, durationMs: Math.max(0, t - x.startedAt),
+      session, project: x.project, startedAt: x.startedAt, endedAt, durationMs: Math.max(0, endedAt - x.startedAt),
+      ...(x.lastPrompt ? { prompt: x.lastPrompt } : {}), ...(x.result ? { result: x.result } : {}),
       agents: run.agents, tree: run.tree.map((a) => ({ ...a, name: a.name ?? s.agents[a.id]?.seat?.name })), errors: run.errors,
       permission: { n: x.permWait?.n ?? 0, totalMs: x.permWait?.totalMs ?? 0 }, outcomes: run.outcomes, ...(x.usage ? { usage: x.usage } : {}),
     };
@@ -269,8 +278,9 @@ export const outcomeOf = (m?: string): Interaction["outcome"] => {
 };
 
 /**
- * End sessions (and their agents) with no event for `ttlMs`. Pure. Pass cfg to promote queued agents of surviving sessions.
- * shortcut: only whole sessions are reaped, an agent silent inside a live session stays, add per-agent TTL if SubagentStop loss shows up.
+ * End sessions (and their agents) with no event for `ttlMs` (the summary ends at the session's last event). Pure. Pass cfg
+ * to promote queued agents of surviving sessions. A helper of a live session goes too when it has been silent for ttlMs/3
+ * and its lead finished a turn after the helper's last event (a ghost: interrupt or a lost SubagentStop); it files no outcome.
  */
 export function sweep(state: OfficeState, now: number, ttlMs: number, cfg?: OfficeConfig) {
   let s = state;
@@ -280,13 +290,59 @@ export function sweep(state: OfficeState, now: number, ttlMs: number, cfg?: Offi
     if (now - (x.lastAt ?? x.startedAt) <= ttlMs) continue;
     removed.sessions.push(x.id);
     removed.agents.push(...Object.values(s.agents).filter((a) => a.session === x.id).map((a) => a.id));
-    s = endSession(cfg, norm(s), x.id, now);
+    s = endSession(cfg, norm(s), x.id, now, x.lastAt ?? x.startedAt);
+  }
+  const ghosts = Object.values(s.agents).filter((a) => {
+    const last = a.lastAt ?? a.startedAt ?? now, turn = s.sessions[a.session]?.turnAt;
+    return now - last > ttlMs / 3 && turn !== undefined && turn > last;
+  }).map((a) => a.id);
+  if (ghosts.length) {
+    removed.agents.push(...ghosts);
+    const agents = Object.fromEntries(Object.entries(s.agents).filter(([id]) => !ghosts.includes(id)));
+    s = promote(cfg, { ...s, agents, queue: s.queue.filter((id) => id in agents) }, now);
   }
   return { state: s, removed };
 }
 
 const norm = (s: OfficeState): OfficeState =>
   s.track && s.tasks && s.conflicts && s.outcomes && s.summaries && s.nextTask ? s : { ...s, tasks: s.tasks ?? [], conflicts: s.conflicts ?? [], outcomes: s.outcomes ?? [], summaries: s.summaries ?? [], nextTask: s.nextTask ?? 1, track: s.track ?? { seen: [], starts: {}, touched: {} } };
+
+/** A helper takes a desk (or the queue) and the oldest same-type pending delegation as its task. */
+function startAgent(cfg: OfficeConfig, s: OfficeState, e: Extract<OfficeEvent, { type: "agent_start" }>): OfficeState {
+  if (s.agents[e.agentId] || Object.keys(s.agents).length >= LIMITS.agents) return s;
+  // an id that already stopped (a stop that arrived first, or a replayed start) must not come back as a ghost holding a desk
+  if (s.track!.seen.includes(`${e.session}|stopped|${e.agentId}`)) return s;
+  s = filterPending(s, (j) => (j.t ?? e.t) >= e.t - LIMITS.pendingTtlMs);
+  const role = roleFor(cfg, e.agentType);
+  const seat = allocate(cfg, s, role, e.session);
+  const key = `${e.session}|${bareType(e.agentType)}`;
+  const [job, ...rest] = s.pending[key] ?? [];
+  const parent = job?.from && s.agents[job.from] ? job.from : leadId(e.session);
+  const confidence = job && !rest.length ? "exact" : "guess"; // guess: parallel same-type delegations, or none matched
+  const agent: Agent = {
+    id: e.agentId, session: e.session, agentType: e.agentType, role, seat, parent, task: job?.text,
+    startedAt: e.t, lastAt: e.t, toolCount: 0, confidence, ...(seat ? { seatedAt: e.t, queueWaitMs: 0 } : {}),
+  };
+  const pending = { ...s.pending, [key]: rest };
+  if (!rest.length) delete pending[key];
+  let n: OfficeState = { ...s, agents: { ...s.agents, [e.agentId]: agent }, queue: seat ? s.queue : [...s.queue, e.agentId], pending };
+  n = patchTask(n, job?.task, { status: "running", agentId: e.agentId, owner: seat?.name ?? e.agentType, startedAt: e.t });
+  n = withRun(n, e.session, (r) => ({ ...r, agents: r.agents + 1,
+    tree: r.tree.length < LIMITS.tree ? [...r.tree, { id: e.agentId, ...(seat ? { name: seat.name } : {}), role, parent }] : r.tree }));
+  return say(n, { t: e.t, kind: "delegate", session: e.session, from: parent, to: e.agentId, text: job?.text ?? "", confidence });
+}
+
+/**
+ * A tool or stop from a helper whose SubagentStart never arrived: create it (recovered) from the session's oldest pending
+ * delegation, so it is never drawn as the lead and its stop files an outcome. An id that already stopped stays gone.
+ */
+function recoverAgent(cfg: OfficeConfig, s: OfficeState, session: string, agentId: string, t: number): OfficeState {
+  if (s.outcomes!.some((o) => o.agentId === agentId && o.session === session)) return s;
+  let oldest: [string, number] | undefined;
+  for (const [k, l] of Object.entries(s.pending)) if (k.startsWith(`${session}|`) && l.length && (!oldest || (l[0].t ?? t) < oldest[1])) oldest = [k.slice(session.length + 1), l[0].t ?? t];
+  const n = startAgent(cfg, s, { type: "agent_start", session, agentId, agentType: oldest?.[0] ?? "unknown", t });
+  return n.agents[agentId] ? { ...n, agents: { ...n.agents, [agentId]: { ...n.agents[agentId], recovered: true } } } : n;
+}
 
 export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): OfficeState {
   if (!safeId(e.session) || ("agentId" in e && e.agentId !== undefined && !safeId(e.agentId))) return state;
@@ -312,6 +368,7 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
     if (s.track!.seen.includes(k)) return s;
     s = { ...s, track: { ...s.track!, seen: [...s.track!.seen, k].slice(-LIMITS.track) } };
   }
+  if ((e.type === "tool" || e.type === "agent_stop") && e.agentId && !s.agents[e.agentId]) s = recoverAgent(cfg, s, e.session, e.agentId, e.t);
   const ag = "agentId" in e && e.agentId ? s.agents[e.agentId] : undefined;
   if (ag) s = { ...s, agents: { ...s.agents, [ag.id]: { ...ag, lastAt: e.t } } };
 
@@ -335,34 +392,14 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
         pending: { ...s.pending, [key]: [...(s.pending[key] ?? []), { from: e.from, text: e.text, t: e.t, id: e.id, task }] },
       };
     }
-    case "agent_start": {
-      if (s.agents[e.agentId] || Object.keys(s.agents).length >= LIMITS.agents) return s;
-      // an id that already stopped (a stop that arrived first, or a replayed start) must not come back as a ghost holding a desk
-      if (s.track!.seen.includes(`${e.session}|stopped|${e.agentId}`)) return s;
-      s = filterPending(s, (j) => (j.t ?? e.t) >= e.t - LIMITS.pendingTtlMs);
-      const role = roleFor(cfg, e.agentType);
-      const seat = allocate(cfg, s, role, e.session);
-      const key = `${e.session}|${bareType(e.agentType)}`;
-      const [job, ...rest] = s.pending[key] ?? [];
-      const parent = job?.from && s.agents[job.from] ? job.from : leadId(e.session);
-      const confidence = job && !rest.length ? "exact" : "guess"; // guess: parallel same-type delegations, or none matched
-      const agent: Agent = {
-        id: e.agentId, session: e.session, agentType: e.agentType, role, seat, parent, task: job?.text,
-        startedAt: e.t, lastAt: e.t, toolCount: 0, confidence, ...(seat ? { seatedAt: e.t, queueWaitMs: 0 } : {}),
-      };
-      const pending = { ...s.pending, [key]: rest };
-      if (!rest.length) delete pending[key];
-      let n: OfficeState = { ...s, agents: { ...s.agents, [e.agentId]: agent }, queue: seat ? s.queue : [...s.queue, e.agentId], pending };
-      n = patchTask(n, job?.task, { status: "running", agentId: e.agentId, owner: seat?.name ?? e.agentType, startedAt: e.t });
-      n = withRun(n, e.session, (r) => ({ ...r, agents: r.agents + 1,
-        tree: r.tree.length < LIMITS.tree ? [...r.tree, { id: e.agentId, ...(seat ? { name: seat.name } : {}), role, parent }] : r.tree }));
-      return say(n, { t: e.t, kind: "delegate", session: e.session, from: parent, to: e.agentId, text: job?.text ?? "", confidence });
-    }
+    case "agent_start":
+      return startAgent(cfg, s, e);
     case "agent_stop": {
       const a = s.agents[e.agentId];
       const { [e.agentId]: _, ...agents } = s.agents;
       s = { ...s, track: { ...s.track!, seen: [...s.track!.seen, `${e.session}|stopped|${e.agentId}`].slice(-LIMITS.track) } };
       let n = promote(cfg, { ...s, agents, queue: s.queue.filter((id) => id !== e.agentId) }, e.t);
+      if (n.sessions[e.session].waitBy === e.agentId) n = patchSession(n, e.session, clearWait(n.sessions[e.session], e.t));
       if (a) {
         const msg = e.message ?? a.report;
         const outcome = e.outcome ?? outcomeOf(msg); // a stored line without text carries the outcome it had
@@ -386,11 +423,12 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
       const a = e.agentId ? s.agents[e.agentId] : undefined;
       const sess = s.sessions[e.session];
       const agents = a ? { ...s.agents, [a.id]: { ...a, ...(e.message ? { report: e.message } : {}), doing: e.tool, detail: e.detail, why: e.why, busyAt: e.t, toolCount: (a.toolCount ?? 0) + 1 } } : s.agents;
-      // No agent id means the lead itself is working; only the lead's own activity answers its prompt (a helper's never does).
+      // No agent id means the lead itself is working. Only the one who raised the wait answers it (answers()); a helper's
+      // tool never lands in the session's doing, even for a helper the reducer could not create (agent cap).
       const sessions = { ...s.sessions, [sess.id]: {
-        ...sess, ...(e.agentId ? {} : clearWait(sess, e.t)), toolCounts: bump(sess.toolCounts, e.tool.slice(0, KEY_MAX), TOOLS_MAX),
+        ...sess, ...(answers(sess, e.agentId) ? clearWait(sess, e.t) : {}), toolCounts: bump(sess.toolCounts, e.tool.slice(0, KEY_MAX), TOOLS_MAX),
         ...(e.detail && WRITE_TOOLS.has(e.tool) ? { files: bump(sess.files, e.detail.slice(0, KEY_MAX), FILES_MAX) } : {}),
-        ...(a ? {} : { doing: e.tool, detail: e.detail, why: e.why, busyAt: e.t }),
+        ...(e.agentId ? {} : { doing: e.tool, detail: e.detail, why: e.why, busyAt: e.t }),
       } };
       const track = { ...s.track! };
       if (e.id) track.starts = lastKeys({ ...track.starts, [`${e.session}|${e.id}`]: e.t }, LIMITS.track);
@@ -414,7 +452,8 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
       const fail = e.ok ? {} : { lastError: e.error ?? "failed" };
       const patch = (x: { errors?: number }) => ({ doing: undefined, why: undefined, lastDurationMs, ...fail, errors: (x.errors ?? 0) + (e.ok ? 0 : 1) });
       let n: OfficeState = a ? { ...s, agents: { ...s.agents, [a.id]: { ...a, ...patch(a) } } }
-        : e.agentId ? s : patchSession(s, e.session, { ...patch(sess), ...clearWait(sess, e.t) });
+        : e.agentId ? s : patchSession(s, e.session, patch(sess));
+      if (answers(sess, e.agentId)) n = patchSession(n, e.session, clearWait(sess, e.t));
       if (k) { const { [k]: _, ...starts } = n.track!.starts; n = { ...n, track: { ...n.track!, starts } }; }
       let stats = n.sessions[e.session].toolStats;
       n = withRun(n, e.session, (r) => {
@@ -437,10 +476,17 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
         const n = patchSession(s, e.session, clearWait(s.sessions[e.session], e.t));
         return sum ? say(n, { t: e.t, kind: "message", session: e.session, from: leadId(e.session), to: "user", text: sum.slice(0, 140) }) : n;
       }
-      return say(patchSession(s, e.session, { prompt: text, ...clearWait(s.sessions[e.session], e.t) }), { t: e.t, kind: "prompt", session: e.session, from: "user", to: leadId(e.session), text });
+      return say(patchSession(s, e.session, { prompt: text, lastPrompt: text, result: undefined, promptAt: e.t, ...clearWait(s.sessions[e.session], e.t) }), { t: e.t, kind: "prompt", session: e.session, from: "user", to: leadId(e.session), text });
     }
-    case "turn_end":
-      return say(patchSession(s, e.session, { ...clearWait(s.sessions[e.session], e.t), doing: undefined, detail: undefined, why: undefined, prompt: undefined, ...(e.usage ? { usage: maxUsage(s.sessions[e.session].usage, e.usage) } : {}) }), { t: e.t, kind: "done", session: e.session, from: leadId(e.session), to: "user", text: "" });
+    case "turn_end": {
+      const x = s.sessions[e.session], text = firstLine(e.message);
+      let n = patchSession(s, e.session, { ...clearWait(x, e.t), doing: undefined, detail: undefined, why: undefined, prompt: undefined, result: text || undefined, turnAt: e.t,
+        ...(e.usage ? { usage: maxUsage(x.usage, e.usage) } : {}) });
+      // The lead's finished turn is an outcome too (its prompt -> its result line); an unprefixed answer stays undefined (neutral).
+      if (x.prompt || text) n = { ...n, outcomes: [{ session: e.session, project: x.project, agentId: leadId(e.session), lead: true as const, outcome: e.outcome ?? outcomeOf(e.message),
+        text, ...(x.prompt ? { task: x.prompt } : {}), t: e.t, ...(x.promptAt !== undefined ? { durationMs: Math.max(0, e.t - x.promptAt) } : {}) }, ...n.outcomes!].slice(0, LIMITS.outcomes) };
+      return say(n, { t: e.t, kind: "done", session: e.session, from: leadId(e.session), to: "user", text: "" });
+    }
     case "usage":
       return patchSession(s, e.session, { usage: maxUsage(s.sessions[e.session].usage, e.usage) });
     case "waiting": {
@@ -454,7 +500,7 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
       const cur = s.sessions[e.session];
       // A permission wait starts once (a repeated prompt keeps its start); a "turn" wait ends it and is not counted.
       const pw = waitKind === "permission" ? { permWait: { n: 0, totalMs: 0, ...cur.permWait, since: cur.permWait?.since ?? e.t } } : closePerm(cur, e.t);
-      return patchSession(s, e.session, { ...pw, waiting: true, waitKind, waitingText: e.text, ...(e.idle ? { doing: undefined, detail: undefined, why: undefined, prompt: undefined } : {}) });
+      return patchSession(s, e.session, { ...pw, waiting: true, waitKind, waitingText: e.text, waitBy: e.agentId, ...(e.idle ? { doing: undefined, detail: undefined, why: undefined, prompt: undefined } : {}) });
     }
   }
 }

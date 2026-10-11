@@ -28,7 +28,6 @@ jobs:
         env: { PERF_SECONDS: "30" } # a GPU-less runner renders ~3 fps: sample long enough for a stable p95
   typecheck:
     runs-on: ubuntu-latest
-    continue-on-error: true # non-blocking until the baseline is clean
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

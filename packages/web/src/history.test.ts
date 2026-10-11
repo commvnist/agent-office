@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { OfficeEvent } from "@agent-office/core";
-import { fetchHistory, historyRange, gantt, markers, pickRange, rangeStats, toCsv, waterfall, zoomView } from "./history.ts";
+import { awayCounts, fetchHistory, historyRange, gantt, markers, pickRange, rangeStats, toCsv, waterfall, zoomView } from "./history.ts";
 import { posterModel } from "./logic.ts";
 import { emptyState } from "@agent-office/core";
 import { MSG, t } from "./i18n.ts";
@@ -19,6 +19,14 @@ test("markers and gantt", () => {
   const g = gantt(E);
   assert.equal(g.rows.length, 1);
   assert.deepEqual(g.rows[0].bars.map((b) => [b.kind, b.s, b.e]), [["session", 0, 40], ["agent", 10, 30]]);
+});
+test("X2: a stored stop's outcome field wins over the message prefix; away counts use it", () => {
+  const stop = (o: object) => ev({ type: "agent_stop", session: "s", agentId: "a", t: 30, ...o });
+  const W = [E[0], E[1], stop({ outcome: "done" })];
+  assert.equal(waterfall(W).rows[1].outcome, "done");
+  assert.equal(waterfall([E[0], E[1], stop({ outcome: "empty" })]).rows[1].outcome, undefined);
+  assert.deepEqual(markers([stop({ outcome: "blocked" })]).map((m) => m.kind), ["blocked"]);
+  assert.deepEqual(awayCounts([stop({ outcome: "done" }), stop({ message: "BLOCKED: x" }), stop({ outcome: "blocked" }), stop({ outcome: "empty" })]), { done: 1, gaveUp: 2 });
 });
 test("csv quotes and defuses formulas", () => {
   assert.match(toCsv(E).split("\n")[3], /"'=x,""y"""/);

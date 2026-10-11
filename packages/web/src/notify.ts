@@ -3,14 +3,17 @@
 // alerts and nothing live is hidden. Never while the tab is focused unless configured, once per episode.
 import { office } from "./api.ts";
 import { store } from "./dom.ts";
-import { F } from "./flags.ts";
 import { HOT_MS, LONG_TOOL_MS, spendCrossed, spendTokens, sustained, titleFor, type ChimeKind, type RadarItem } from "./logic.ts";
 import { chime, chimePrefs } from "./chime.ts";
-import { STATUS } from "./theme.ts";
+import { KEY, STATUS } from "./theme.ts";
 import { look, waitKindOf } from "./triage.ts";
 
 /** A radar item's STATUS key, read from the live state (waiting -> permission or your turn). */
-export const kindOf = (i: RadarItem) => i.kind === "waiting" ? waitKindOf((office.source.liveEnvelope() ?? office.getEnvelope())?.state.sessions[i.key.slice(8)]) : i.kind;
+export const kindOf = (i: RadarItem) => i.kind === "waiting" ? waitKindOf((office.source.liveEnvelope() ?? office.getEnvelope())?.state.sessions[i.session ?? ""]) : i.kind;
+
+/** X8: "Stuck after" lives in Settings; NEEDS YOU reads it on every refresh. */
+export const STUCK_MIN = [1, 2, 5, 10];
+export const stuckMin = () => (STUCK_MIN.includes(Number(store.get("stuck"))) ? Number(store.get("stuck")) : 2);
 
 const flag = (k: string) => ({ get: () => store.get(k) === "1", set: (b: boolean) => store.set(k, b ? "1" : "0") });
 export const prefs = { desktop: flag("alert.desktop"), sound: flag("alert.sound"), focused: flag("alert.focused") };
@@ -39,7 +42,6 @@ export async function enableDesktop(): Promise<string> {
 
 let ctx: AudioContext | null = null;
 function beep() {
-  if (F.obs) return;
   try {
     ctx ??= new AudioContext();
     const o = ctx.createOscillator(), g = ctx.createGain();
@@ -78,8 +80,8 @@ const canvas32 = () => { const c = document.createElement("canvas"); c.width = c
 function idleIcon() {
   if (idle) return idle;
   const c = canvas32(), g = c.getContext("2d")!;
-  g.fillStyle = "#14121f"; g.beginPath(); g.roundRect(1, 1, 30, 30, 6); g.fill();
-  g.fillStyle = "#4de8ff"; g.fillRect(12, 7, 5, 18);
+  g.fillStyle = KEY.env[1]; g.beginPath(); g.roundRect(1, 1, 30, 30, 6); g.fill();
+  g.fillStyle = KEY.cyan; g.fillRect(12, 7, 5, 18);
   g.fillStyle = "#e8e6f5"; g.fillRect(19, 14, 7, 4);
   return (idle = c.toDataURL());
 }
@@ -93,7 +95,7 @@ function favicon(n: number, col: string = STATUS.permission.color) {
   const c = canvas32(), g = c.getContext("2d")!;
   g.fillStyle = col;
   g.beginPath(); g.arc(16, 16, 15, 0, 7); g.fill();
-  g.fillStyle = "#14121f"; g.font = "bold 20px sans-serif"; g.textAlign = "center"; g.textBaseline = "middle";
+  g.fillStyle = KEY.env[0]; g.font = "bold 20px sans-serif"; g.textAlign = "center"; g.textBaseline = "middle";
   g.fillText(String(Math.min(n, 9)), 16, 17);
   icon.href = c.toDataURL();
 }
@@ -160,12 +162,11 @@ export function update(items: RadarItem[], hot: { id: string; project: string }[
   for (const k of fired) if (k.includes(":") && !keys.has(k.split("@")[0])) fired.delete(k); // episode over: may alert again
   const tiers = (i: RadarItem) => TIERS.filter((m) => now - i.since >= m * 60_000);
   if (!primed) { primed = true; for (const i of items) { fired.add(i.key); for (const m of tiers(i)) fired.add(`${i.key}@${m}`); } return; } // what was already waiting at load is not news
-  const sess = (i: RadarItem) => (i.kind === "blocked" ? office.actors().find((a) => a.id === i.id)?.session : i.id.slice(5)); // lead:<session>
   for (const i of items) {
     if (i.kind === "stuck") continue;
     const word = look(kindOf(i)).label;
-    fire(i.key, `${i.label}: ${word}`, sess(i));
-    for (const m of tiers(i)) fire(`${i.key}@${m}`, `${i.label}: still ${word} after ${m} min`, sess(i));
+    fire(i.key, `${i.label}: ${word}`, i.session);
+    for (const m of tiers(i)) fire(`${i.key}@${m}`, `${i.label}: still ${word} after ${m} min`, i.session);
   }
   watchState(now, hot);
 }

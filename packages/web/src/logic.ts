@@ -62,26 +62,43 @@ export function coverFit(cw: number, ch: number, w: number, h: number) {
 
 /** Escalation tier by how long it has waited: 0 under 5 min, 1 under 15, 2 beyond. */
 export const tierOf = (ms: number) => (ms >= 900_000 ? 2 : ms >= 300_000 ? 1 : 0);
-export type RadarItem = { key: string; kind: "blocked" | "waiting" | "stuck"; id: string; label: string; project: string; since: number; tier: number; reason?: string };
+export type RadarItem = { key: string; kind: "blocked" | "waiting" | "stuck"; id: string; label: string; project: string; since: number; tier: number; reason?: string; session?: string };
 /**
- * Things that need a human: blocked agents, waiting sessions, sessions mid-turn with no event for `stuckMs`.
- * `since(key, fallback)` returns when the condition was first seen (caller keeps the map).
+ * Things that need a human: helpers that gave up, waiting sessions, sessions mid-turn with no event for `stuckMs`, helpers
+ * silent for 3x that. `since(key, fallback)` returns when the condition was first seen (caller keeps the map).
+ * C6: with `state.outcomes` (current daemons) a gave-up row is a blocked outcome of a live session that is newer than the
+ * session's latest prompt and not `seen`; it outlives the 45 s desk hold, a reload and a second page. Older daemons: blocked actors.
  */
-export function radar(actors: ActorInfo[], state: OfficeState, now: number, since: (key: string, fallback: number) => number, stuckMs = 120_000): RadarItem[] {
+export function radar(actors: ActorInfo[], state: OfficeState, now: number, since: (key: string, fallback: number) => number, stuckMs = 120_000, seen: (key: string) => boolean = () => false): RadarItem[] {
   const out: RadarItem[] = [];
   const add = (i: Omit<RadarItem, "tier">) => out.push({ ...i, tier: tierOf(now - i.since) });
-  for (const a of actors) {
-    if (!a.lead && a.status === "blocked") add({ key: `blocked:${a.id}`, kind: "blocked", id: a.id, label: a.label, project: a.project, since: since(`blocked:${a.id}`, now) });
+  if (state.outcomes) {
+    for (const o of state.outcomes) {
+      const s = state.sessions[o.session], key = gaveUpKey(o);
+      if (o.outcome !== "blocked" || o.lead || !s || o.t <= (s.promptAt ?? 0) || seen(key)) continue;
+      add({ key, kind: "blocked", id: o.agentId, label: o.name ?? o.role ?? o.agentId, project: o.project ?? s.project, since: o.t, reason: o.text, session: o.session });
+    }
+  } else for (const a of actors) {
+    if (!a.lead && a.status === "blocked") add({ key: `blocked:${a.id}`, kind: "blocked", id: a.id, label: a.label, project: a.project, since: since(`blocked:${a.id}`, now), session: a.session });
   }
   for (const s of Object.values(state.sessions)) {
     const id = `lead:${s.id}`;
-    if (s.waiting) add({ key: `waiting:${s.id}`, kind: "waiting", id, label: s.project, project: s.project, since: since(`waiting:${s.id}`, s.lastAt ?? now), reason: s.waitingText });
+    // X3: on your turn the lead's own last message is the reason, not "Claude is waiting for your input"
+    if (s.waiting) add({ key: `waiting:${s.id}`, kind: "waiting", id: s.waitBy ?? id, label: (s.waitBy && actors.find((x) => x.id === s.waitBy)?.label) || s.project, project: s.project, since: since(`waiting:${s.id}`, s.lastAt ?? now), reason: (s.waitKind !== "permission" && s.result) || s.waitingText, session: s.id });
     // a tool in flight (s.doing) may legitimately be silent for a long time: allow 3x
-    else if (s.prompt && s.lastAt && now - s.lastAt > (s.doing ? stuckMs * 3 : stuckMs)) add({ key: `stuck:${s.id}`, kind: "stuck", id, label: s.project, project: s.project, since: s.lastAt });
+    else if (s.prompt && s.lastAt && now - s.lastAt > (s.doing ? stuckMs * 3 : stuckMs)) add({ key: `stuck:${s.id}`, kind: "stuck", id, label: s.project, project: s.project, since: s.lastAt, session: s.id });
+  }
+  // C7: a seated helper silent for 3x the threshold (a lost stop or an interrupt), unless the wait it raised is open
+  for (const a of Object.values(state.agents)) {
+    const s = state.sessions[a.session];
+    if (!a.seat || !a.lastAt || now - a.lastAt <= stuckMs * 3 || (s?.waiting && s.waitBy === a.id)) continue;
+    add({ key: `stuck:${a.id}`, kind: "stuck", id: a.id, label: actors.find((x) => x.id === a.id)?.label ?? a.seat.name ?? a.role, project: s?.project ?? a.session, since: a.lastAt, session: a.session });
   }
   const rank = { blocked: 0, waiting: 1, stuck: 2 };
   return out.sort((a, b) => rank[a.kind] - rank[b.kind] || a.since - b.since);
 }
+/** The Seen key of a gave-up outcome (no "@": notify.ts uses it for escalation tiers). */
+export const gaveUpKey = (o: { agentId: string; t: number }) => `blocked:${o.agentId}:${o.t}`;
 
 /** Tab title: `(2) waiting: api - Agent Office` (first item that needs you); unchanged when nothing does. */
 export const titleFor = (items: RadarItem[], base = "Agent Office") => {
@@ -136,7 +153,7 @@ export const WHO: Record<string, (f: FeedItem) => string> = {
   prompt: (f) => `You → ${f.to}`,
   done: (f) => `${f.from} finished`,
   // plain sentences for a viewer: who did what, not who-to-whom
-  report: (f) => `${f.from} ${f.outcome === "blocked" ? "is blocked" : (f.outcome as string) === "partial" ? "is partly done" : "finished"}`,
+  report: (f) => `${f.from} ${f.outcome === "blocked" ? "gave up" : (f.outcome as string) === "partial" ? "is partly done" : f.outcome === "done" ? "finished" : "reported"}`, // C3: only DONE reads as finished
   delegate: (f) => `${f.from} → ${f.to}${f.confidence === "guess" ? " (?)" : ""}`,
   message: (f) => (f.to === "user" ? `${f.from} says` : `${f.from} → ${f.to}`),
   conflict: (f) => `${f.from} ↔ ${f.to} (possible conflict)`,

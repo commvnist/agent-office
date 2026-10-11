@@ -41,7 +41,11 @@ export function modal(dlg: HTMLElement, trigger: HTMLElement, onOpen?: () => voi
     document.removeEventListener("keydown", onKey);
     document.removeEventListener("pointerdown", onDown);
     onClose?.();
-    (trigger.isConnected ? trigger : back)?.focus(); // a trigger that is not on the page (the palette's): back to where focus was
+    // focus goes back to the trigger if it is on screen; a trigger folded into the header's More menu returns focus to More;
+    // one that is not on the page at all (the palette's) goes back to where focus was
+    const shown = (e: Element | null): e is HTMLElement => !!e?.isConnected && e.getClientRects().length > 0;
+    const more = document.querySelector('[aria-controls="menu-more"]');
+    (shown(trigger) ? trigger : shown(more) ? more : back)?.focus();
   }
   return { open, close, toggle: () => (dlg.hidden ? open() : close()) };
 }

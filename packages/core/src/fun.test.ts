@@ -21,28 +21,23 @@ test("first load is a quiet baseline", () => {
   assert.equal(r.mem.cursor, 1);
 });
 
-test("combo tiers, silent error reset, no negative events", () => {
+test("activity alone is never rewarded (no combos), errors emit nothing", () => {
   const a = (n: number, e = 0) => st([ag("a", { toolCount: n, errors: e })]);
-  let mem = base(a(0));
-  let r = stepFun(mem, a(0), a(5), 2000);
-  assert.deepEqual(r.out.map((e) => [e.kind, e.tier]), [["combo", 1]]);
-  r = stepFun(r.mem, a(5), a(10), 3000);
-  assert.deepEqual(r.out.filter((e) => e.kind === "combo").map((e) => e.tier), [2]);
-  r = stepFun(r.mem, a(10), a(12, 1), 4000); // error: reset, nothing emitted
+  let r = stepFun(base(a(0)), a(0), a(25), 2000);
   assert.deepEqual(r.out, []);
-  assert.equal(r.mem.agents.a.c, 1);
-  r = stepFun(r.mem, a(12, 1), a(32, 1), 5000);
-  assert.deepEqual(r.out.filter((e) => e.kind === "combo").map((e) => e.tier), [1, 2, 3]);
+  r = stepFun(r.mem, a(25), a(30, 1), 3000);
+  assert.deepEqual(r.out, []);
 });
 
 test("determinism and dedupe", () => {
-  const p = st([ag("a", { toolCount: 0 })]);
-  const n = st([ag("a", { toolCount: 5 })]);
+  const p = st([ag("a")]);
+  const n = st([], [se()], [rep(1, "a")]);
   const m = base(p);
   const r1 = stepFun(m, p, n, 2000), r2 = stepFun(m, p, n, 2000);
   assert.deepEqual(r1, r2);
   assert.equal(m.seen.length, 0); // input not mutated
-  const again = stepFun({ ...m, agents: { a: { c: 0, t: 0, e: 0, ed: 0, edT: 0 } }, seen: r1.mem.seen }, p, n, 2000);
+  assert.ok(r1.out.length > 0);
+  const again = stepFun({ ...m, seen: r1.mem.seen }, p, n, 2000);
   assert.deepEqual(again.out, []);
 });
 
@@ -100,11 +95,16 @@ test("delights are seeded, rare, done-only", () => {
   for (let i = 0; i < 400; i++) {
     const r = stepFun(base(p), p, st([], [se()], [rep(1, "a", { stoppedAt: i })]), 2000);
     const d = r.out.filter((e) => e.kind === "delight");
-    if (d.length) { hits++; assert.ok(d[0].rare && /^(Golden|A cat|Mini)/.test(d[0].text)); }
+    if (d.length) { hits++; assert.ok(d[0].rare && /^(Golden|A cat)/.test(d[0].text)); }
   }
   assert.ok(hits > 0 && hits < 40, String(hits));
   const blocked = stepFun(base(p), p, st([], [se()], [rep(1, "a", { outcome: "blocked", stoppedAt: 1 })]), 2000);
   assert.ok(!kinds(blocked).includes("delight"));
+  const hit = Array.from({ length: 400 }, (_, i) => i).find((i) => kinds(stepFun(base(p), p, st([], [se()], [rep(1, "a", { stoppedAt: i })]), 2000)).includes("delight"))!;
+  const waiting = stepFun(base(p), p, st([], [se({ waiting: true, waitKind: "turn" })], [rep(1, "a", { stoppedAt: hit })]), 2000);
+  assert.ok(!kinds(waiting).includes("delight"), "never while a session waits");
+  const gaveUp = { ...st([], [se({ promptAt: 0 })], [rep(1, "a", { stoppedAt: hit })]), outcomes: [{ session: "s", agentId: "b", outcome: "blocked" as const, text: "", t: 5 }] };
+  assert.ok(!kinds(stepFun(base(p), p, gaveUp, 2000)).includes("delight"), "never while a gave-up report stands");
 });
 
 test("memory stays bounded and caps output", () => {
@@ -122,10 +122,9 @@ test("memory stays bounded and caps output", () => {
   assert.deepEqual(JSON.parse(JSON.stringify(r.mem)), r.mem);
 });
 
-test("the lead gets no combos or 'on a roll' lines for work its agents did", () => {
+test("the lead gets no 'on a roll' lines for work its agents did", () => {
   const s0 = st([ag("a", { toolCount: 0 })], [se({ toolCounts: {} })]);
   const s1 = st([ag("a", { toolCount: 25 })], [se({ toolCounts: { Read: 25 }, doing: "Edit" })]);
   const r = stepFun(base(s0), s0, s1, 10_000);
   assert.ok(r.out.every((e) => !/^Lead/.test(e.text)), JSON.stringify(r.out));
-  assert.ok(r.out.some((e) => e.kind === "combo" && /^A:/.test(e.text))); // the agent itself still gets its combo
 });

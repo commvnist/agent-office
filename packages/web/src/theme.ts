@@ -20,7 +20,7 @@ export type Theme = {
 // Role shirts: muted, at least 30 degrees from every status hue (style guide), so only the yellow-green (69-124) and
 // blue-violet (223-324) ranges remain; neighbours differ in hue AND lightness so roles still separate under colour-vision
 // deficiency (the role glyph on the chest is the shape cue). Clamping the Okabe-Ito set into these ranges merged three roles.
-const ROLE_SHIRTS = ["#aac167", "#7586c7", "#55983e", "#be6ec4", "#5343a3", "#cd84b4", "#5cbc62", "#999999"];
+const ROLE_SHIRTS = ["#aac167", "#7586c7", "#55983e", "#be6ec4", "#5343a3", "#b08bd0", "#5cbc62", "#999999"];
 
 // ---- status vocabulary (one map for every surface: ring, dot, row accent, pill, toast, legend) ----
 /**
@@ -68,7 +68,7 @@ export const DEFAULT_THEME: Theme = {
   wall: { face: E[2], top: E[3], line: E[0], base: E[1], trim: E[4] },
   desk: { top: E[4], edge: E[5], front: E[3], inset: E[2] },
   outline: "#171421",
-  alert: { waiting: "#ffd84a", blocked: "#ff4a4a" },
+  alert: { waiting: STATUS.permission.color, blocked: STATUS.blocked.color }, // one alert palette (R4)
   nightMax: 0.32,
 };
 

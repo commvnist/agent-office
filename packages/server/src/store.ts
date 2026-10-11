@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, readFileSync, renameSync, statSync, chmodSync, unlinkSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { open, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { emptyState, reduce, sweep, SCHEMA_VERSION, type OfficeConfig, type OfficeEvent, type OfficeState } from "@agent-office/core";
+import { emptyState, pseudonym, reduce, sweep, SCHEMA_VERSION, type OfficeConfig, type OfficeEvent, type OfficeState } from "@agent-office/core";
 
 export const MAX_BYTES = 5 * 1024 * 1024;
 
@@ -13,13 +13,13 @@ export function appendRotating(file: string, line: string, max = MAX_BYTES) {
   if (fresh) try { chmodSync(file, 0o600); } catch { /* best effort on non-POSIX */ }
 }
 
-/** Retention: drop stored events older than `since` (and unparseable lines) from the log and its backup. Returns lines removed. */
-export function pruneEvents(file: string, since: number): number {
+/** Retention: drop stored events older than `since` (and unparseable lines) from the log and its backup. Returns lines removed. `timeOf` reads a line's time. */
+export function pruneEvents(file: string, since: number, timeOf = (l: string): unknown => JSON.parse(l)?.t): number {
   let removed = 0;
   for (const f of [file + ".1", file]) {
     let lines: string[];
     try { lines = readFileSync(f, "utf8").split("\n").filter(Boolean); } catch { continue; }
-    const keep = lines.filter((l) => { try { const e = JSON.parse(l); return typeof e?.t === "number" && e.t >= since; } catch { return false; } });
+    const keep = lines.filter((l) => { try { const t = timeOf(l); return typeof t === "number" && t >= since; } catch { return false; } });
     if (keep.length === lines.length) continue;
     removed += lines.length - keep.length;
     if (!keep.length) { unlinkSync(f); continue; }
@@ -60,8 +60,9 @@ function append(f: string, line: string) {
   if (fresh) try { chmodSync(f, 0o600); } catch { /* best effort on non-POSIX */ }
 }
 
-/** Append one event to today's day files (dir mode 0700, files 0600). `priv`: no text file is written at all. */
+/** Append one event to today's day files (dir mode 0700, files 0600). `priv`: no text file is written at all, and the project is a pseudonym. */
 export function appendEvent(home: string, e: OfficeEvent, priv: boolean) {
+  if (priv && e.type === "session_start") e = { ...e, project: pseudonym(e.session) };
   const dir = join(home, "events");
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const day = dayOf(e.t), f = join(dir, `${day}.jsonl`), tf = join(dir, `${day}.text.jsonl`);
@@ -95,10 +96,10 @@ async function scan(file: string, start: number, end: number, each: (line: strin
 const valid = (e: any): e is OfficeEvent => e && typeof e.t === "number" && typeof e.type === "string";
 
 /** The newest `cap` matching lines of one file range, oldest first, with their offsets. */
-async function collect(file: string, start: number, end: number, since: number, until: number, cap: number) {
+async function collect(file: string, start: number, end: number, since: number, until: number, cap: number, keep?: (e: OfficeEvent) => boolean) {
   let got: { e: OfficeEvent; o: number }[] = [];
   await scan(file, start, end, (line, o) => {
-    try { const e = JSON.parse(line); if (valid(e) && e.t >= since && e.t <= until) got.push({ e, o }); } catch { /* skip */ }
+    try { const e = JSON.parse(line); if (valid(e) && e.t >= since && e.t <= until && (!keep || keep(e))) got.push({ e, o }); } catch { /* skip */ }
     if (got.length > 2 * cap) got = got.slice(-cap);
   });
   return got.slice(-cap);
@@ -110,7 +111,7 @@ async function collect(file: string, start: number, end: number, since: number, 
  * `text`: rejoin the free text from the .text.jsonl files (absent text stays "", the timeline replays without it).
  * shortcut: idx seeking assumes append order is time order (the daemon stamps t on receipt); a clock jump back can hide events at a range edge, add a sort-on-read if that shows up.
  */
-export async function readEvents(home: string, o: { since?: number; until?: number; limit?: number; text?: boolean } = {}): Promise<{ events: OfficeEvent[]; more: boolean }> {
+export async function readEvents(home: string, o: { since?: number; until?: number; limit?: number; text?: boolean; keep?: (e: OfficeEvent) => boolean } = {}): Promise<{ events: OfficeEvent[]; more: boolean }> {
   const since = o.since ?? 0, until = o.until ?? Infinity, want = (o.limit ?? 5000) + 1;
   const dir = join(home, "events");
   let names: string[] = [];
@@ -126,7 +127,7 @@ export async function readEvents(home: string, o: { since?: number; until?: numb
     let idx: number[][] = [];
     try { idx = (await readFile(join(dir, `${day}.idx`), "utf8")).split("\n").map((l) => l.split(" ").map(Number)).filter((x) => x.length === 3 && x.every(Number.isFinite)); } catch { /* none: scan the day */ }
     const from = idx.filter((x) => x[0] < since).at(-1), to = idx.find((x) => x[0] > until);
-    const got = await collect(f, from?.[1] ?? 0, to?.[1] ?? Infinity, since, until, want - n);
+    const got = await collect(f, from?.[1] ?? 0, to?.[1] ?? Infinity, since, until, want - n, o.keep);
     if (o.text && got.length) {
       const need = new Map(got.map((g) => [g.o, g.e as Record<string, unknown>]));
       await scan(join(dir, `${day}.text.jsonl`), from?.[2] ?? 0, to?.[2] ?? Infinity, (line) => {
@@ -140,11 +141,25 @@ export async function readEvents(home: string, o: { since?: number; until?: numb
   }
   for (const f of [join(home, "events.jsonl"), join(home, "events.jsonl.1")]) {
     if (n >= want) break;
-    const got = await collect(f, 0, Infinity, since, until, want - n);
+    const got = await collect(f, 0, Infinity, since, until, want - n, o.keep);
     parts.unshift(got.map((g) => g.e)); n += got.length;
   }
   const events = parts.flat();
   return { events: events.slice(-(want - 1)), more: events.length >= want };
+}
+
+/** Everything but the high-volume tool traffic: what a restart needs to know who is in the office and what they were asked. */
+const lifecycle = (e: OfficeEvent) => e.type !== "tool" && e.type !== "tool_end" && e.type !== "message" && e.type !== "usage";
+/**
+ * The events a daemon boots from: the newest `limit` of the window, preceded by every older non-tool event of the window
+ * (session and agent starts and stops, delegations, prompts, waits), so a busy hour of tool calls cannot push the office out.
+ * shortcut: older events sharing the first recent event's millisecond are skipped (no offsets across the two reads); checkpoint state if that ever matters.
+ */
+export async function bootEvents(home: string, since: number, text: boolean, limit = 50_000): Promise<OfficeEvent[]> {
+  const recent = await readEvents(home, { since, limit, text });
+  if (!recent.more || !recent.events.length) return recent.events;
+  const old = await readEvents(home, { since, until: recent.events[0].t - 1, limit: 4 * limit, text, keep: lifecycle });
+  return [...old.events, ...recent.events];
 }
 
 /** Retention for day files: whole days ending before `since` go (structure, text, idx); text files of days ending before `textSince` go earlier. Returns files removed. */

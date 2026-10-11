@@ -1,7 +1,7 @@
 /*
  * Fun engine: derives glanceable delight from reducer state. Pure, deterministic, no I/O, no clock reads
- * (the hour is injectable). Nothing punishes, nothing is tied to viewer behaviour, combos reset quietly,
- * delights are seeded by ids so replays match. No progress, no scores, no history.
+ * (the hour is injectable). Nothing punishes, nothing is tied to viewer behaviour, nothing rewards raw activity (no
+ * combos), delights are seeded by ids so replays match and never fire while something needs you. No progress, no scores, no history.
  *
  * CONTRACT: the web client calls `stepFun(mem, prev, next, now)` on every applied envelope with its
  * in-process `FunMemory` (prev = state before the envelope, null on first load: baseline, emits nothing),
@@ -12,19 +12,18 @@ import type { Agent, OfficeState } from "./types.ts";
 
 export type FunEvent = {
   id: string;
-  kind: "commentary" | "highlight" | "delight" | "combo";
+  kind: "commentary" | "highlight" | "delight";
   text: string;
   t: number;
   actorId?: string;
   session?: string;
   rare?: boolean;
-  tier?: 1 | 2 | 3;
 };
 
 /** Ephemeral: never persisted. */
 export type FunMemory = {
-  /** Per agent (or `lead:<session>`): c combo, t tool total seen, e errors seen, ed edits in window, edT window start. <= MAX_AGENTS. */
-  agents: Record<string, { c: number; t: number; e: number; ed: number; edT: number }>;
+  /** Per agent (or `lead:<session>`): t tool total seen, e errors seen, ed edits in window, edT window start. <= MAX_AGENTS. */
+  agents: Record<string, { t: number; e: number; ed: number; edT: number }>;
   /** Per live session, dropped when it finishes. */
   sessions: Record<string, { peak: number; tools: number }>;
   /** Last interaction-log id consumed. */
@@ -38,12 +37,11 @@ export type FunMemory = {
 export const MAX_AGENTS = 64;
 export const MAX_SEEN = 200;
 const MAX_OUT = 6;
-const COMBOS = [5, 10, 20] as const;
 const WRITE = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 
 export const emptyFun = (): FunMemory => ({ agents: {}, sessions: {}, cursor: 0, seen: [], cmtAt: null, cmt: {} });
 
-const PRIORITY: FunEvent["kind"][] = ["highlight", "combo", "delight", "commentary"];
+const PRIORITY: FunEvent["kind"][] = ["highlight", "delight", "commentary"];
 
 /** Deterministic 0..1 from a string (FNV-1a). */
 export function rarity(seed: string): number {
@@ -51,7 +49,7 @@ export function rarity(seed: string): number {
   for (let i = 0; i < seed.length; i++) h = Math.imul(h ^ seed.charCodeAt(i), 16777619);
   return (h >>> 0) / 4294967296;
 }
-const DELIGHTS: [string, string][] = [["confetti-gold", "Golden confetti!"], ["cat-on-couch", "A cat wandered onto the couch."], ["disco-mini", "Mini disco break!"]];
+const DELIGHTS: [string, string][] = [["confetti-gold", "Golden confetti!"], ["cat-on-couch", "A cat wandered onto the couch."]];
 export const DELIGHT_RARITY = 0.04;
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
@@ -71,7 +69,7 @@ export function stepFun(mem: FunMemory, prev: OfficeState | null, next: OfficeSt
   const newSess = (): FunMemory["sessions"][string] => ({ peak: 0, tools: 0 });
 
   if (!prev) { // baseline: adopt what is already there without celebrating it
-    for (const e of cur) m.agents[e.key] = { c: 0, t: e.tools, e: e.errs, ed: 0, edT: now };
+    for (const e of cur) m.agents[e.key] = { t: e.tools, e: e.errs, ed: 0, edT: now };
     for (const id of Object.keys(next.sessions)) m.sessions[id] ??= newSess();
     m.cursor = lastId(next);
     return { mem: m, out: [] };
@@ -87,22 +85,17 @@ export function stepFun(mem: FunMemory, prev: OfficeState | null, next: OfficeSt
   };
   const cands: { tpl: string; actor: string; text: string; session?: string }[] = [];
 
-  // Per-entity diff: combo, edits, errors.
+  // Per-entity diff: edits.
   for (const e of cur) {
-    const s = (m.agents[e.key] ??= { c: 0, t: 0, e: 0, ed: 0, edT: now });
-    const d = e.tools - s.t, de = e.errs - s.e;
+    const s = (m.agents[e.key] ??= { t: 0, e: 0, ed: 0, edT: now });
+    const d = e.tools - s.t;
     s.t = e.tools; s.e = e.errs;
     const st = (m.sessions[e.session] ??= newSess());
     // A session's toolCounts include every agent's calls, so it alone feeds the session total, and the lead never
-    // gets combos or "on a roll" lines for work its agents did.
+    // gets "on a roll" lines for work its agents did.
     const isLead = e.key.startsWith("lead:");
     if (d > 0 && isLead) st.tools += d;
     if (isLead) continue;
-    if (de > 0) s.c = 0; // silent reset, no event
-    const before = s.c;
-    s.c += Math.max(0, d - Math.max(de, 0));
-    const crossed = COMBOS.filter((th) => before < th && s.c >= th);
-    for (const th of crossed) push("combo", `${e.key}:${th}:${e.tools}`, `${e.name}: ${th} tool calls in a row, no errors`, { actorId: e.key, session: e.session, tier: (COMBOS.indexOf(th) + 1) as 1 | 2 | 3 });
     // shortcut: any tool burst while the current tool is a write counts as edits, so batched steps over-count; track per-call tool names if that matters.
     if (d > 0 && e.doing && WRITE.has(e.doing)) {
       if (now - s.edT > 60_000 || s.ed === 0) { s.ed = 0; s.edT = now; }
@@ -128,6 +121,11 @@ export function stepFun(mem: FunMemory, prev: OfficeState | null, next: OfficeSt
   const fresh = next.log.filter((i) => i.id > m.cursor);
   m.cursor = lastId(next);
   const finishing = new Set(Object.keys(prev.sessions).filter((id) => !next.sessions[id]));
+  // No delight while anything needs you: a session waits, or a live session's latest turn has a gave-up report.
+  // shortcut: gave-up rows of ended sessions (until Seen, web-side) do not hold delights back; pass the web's list in if they should.
+  const alert = Object.values(next.sessions).some((x) => x.waiting) ||
+    (next.outcomes ?? []).some((o) => o.outcome === "blocked" && next.sessions[o.session] && o.t > (next.sessions[o.session].promptAt ?? 0)) ||
+    fresh.some((i) => i.kind === "report" && i.outcome === "blocked");
   for (const i of fresh) {
     if (i.kind === "done") finishing.add(i.session);
     if (i.kind !== "report" || (i.outcome !== "done" && i.outcome !== "blocked" && i.outcome !== "partial")) continue;
@@ -135,7 +133,7 @@ export function stepFun(mem: FunMemory, prev: OfficeState | null, next: OfficeSt
     const who = a ? nameOf(a) : i.from;
     const task = clip((a?.task ?? i.text ?? "").replace(/^\s*(?:DONE|BLOCKED|PARTIAL)\s*:\s*/i, "").trim() || "a task", 80); // the outcome word is already in the line
     push("highlight", `${i.session}:${i.id}`, `${who} ${i.outcome}: ${task}${i.durationMs !== undefined ? ` (${dur(i.durationMs)})` : ""}`, { actorId: i.from, session: i.session });
-    if (i.outcome !== "done") continue;
+    if (i.outcome !== "done" || alert) continue;
     const seed = `${i.session}|${i.from}|${i.stoppedAt ?? i.t}`;
     const r = rarity(seed);
     if (r < DELIGHT_RARITY) {

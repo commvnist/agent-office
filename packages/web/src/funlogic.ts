@@ -1,5 +1,4 @@
-// Pure parts of the DOM fun layer (toasts, palette, sparklines, rings, recap). No DOM, no pixi.
-import type { FunEvent, OfficeEvent } from "@agent-office/core";
+// Pure parts of the DOM fun layer (palette, highlight cards, sparklines, rings). No DOM, no pixi.
 
 // ---- command palette: subsequence scoring ----
 /** -1 when `q` is not a subsequence of `text`; higher is better (word starts and runs score, shorter text wins ties). */
@@ -21,30 +20,13 @@ export function rank<T>(q: string, items: readonly T[], text: (t: T) => string, 
   return items.map((it) => ({ it, s: fuzzy(q, text(it)) })).filter((x) => x.s >= 0).sort((a, b) => b.s - a.s).slice(0, max).map((x) => x.it);
 }
 
-// ---- toasts ----
-/** Only rare delights toast; highlights get cards and commentary the ticker. */
-export const toastKind = (kind: string) => kind === "delight";
-/** Rate limit: at most `max` toasts per `windowMs`; a rare event always passes. Returns the gate fn (stateful). */
-export function toastGate(max = 5, windowMs = 12_000) {
-  const at: number[] = [];
-  return (now: number, rare = false) => {
-    while (at.length && now - at[0] >= windowMs) at.shift();
-    if (!rare && at.length >= max) return false;
-    at.push(now);
-    return true;
-  };
-}
-
-export type ToastModel = { icon: string; title: string; line: string };
-export const toastModel = (e: Pick<FunEvent, "text">): ToastModel => ({ icon: "✦", title: "Delight", line: e.text });
-
 // ---- highlight card: "<who> <outcome>: <task> (<dur>)" ----
 export type Highlight = { who: string; what: string; dur: string; outcome: "done" | "blocked" | "partial" | "" };
 export function parseHighlight(text: string): Highlight {
   const m = /^(.+?) (done|blocked|partial): (.*?)(?: \(([^()]+)\))?$/s.exec(text);
   return m ? { who: m[1], outcome: m[2] as Highlight["outcome"], what: m[3], dur: m[4] ?? "" } : { who: "", what: text, dur: "", outcome: "" };
 }
-export const OUTCOME_GLYPH = { done: "✓", blocked: "✕", partial: "~", "": "•" } as const;
+export const OUTCOME_GLYPH = { done: "✓", blocked: "✕", partial: "~", "": "·" } as const;
 
 // ---- sparklines ----
 /** Count of `times` per bin, oldest first, `bins` bins of `binMs` ending at `now`. */
@@ -79,28 +61,4 @@ export function ringMath(vals: readonly number[], total: number, r0 = 11, step =
     const r = r0 - i * step, circ = 2 * Math.PI * r;
     return { r, circ, dash: total > 0 ? circ * Math.max(0, Math.min(1, v / total)) : 0 };
   });
-}
-
-export const fmtMs = (ms: number) => (ms <= 0 ? "none yet" : ms < 60_000 ? `${Math.round(ms / 1000)}s` : `${Math.floor(ms / 60_000)}m ${String(Math.round((ms % 60_000) / 1000)).padStart(2, "0")}s`);
-
-// ---- end-of-day recap model (from stored events; names only when `names` is on) ----
-export type Recap = { sessions: number; agents: number; tools: number; errors: number; busiestHour: number | null; longest: { tool: string; ms: number } | null };
-export function recapModel(events: readonly OfficeEvent[]): Recap {
-  const sess = new Set<string>(), agents = new Set<string>(), hours = new Array<number>(24).fill(0), open = new Map<string, { tool: string; t: number }>();
-  let tools = 0, errors = 0, longest: Recap["longest"] = null;
-  for (const e of events) {
-    sess.add(e.session);
-    if (e.type === "agent_start") agents.add(e.agentId);
-    if (e.type === "tool") {
-      tools++;
-      hours[new Date(e.t).getHours()]++;
-      if (e.id) open.set(e.id, { tool: e.tool, t: e.t });
-    } else if (e.type === "tool_end") {
-      if (!e.ok) errors++;
-      const o = e.id ? open.get(e.id) : undefined;
-      if (o && (!longest || e.t - o.t > longest.ms)) longest = { tool: o.tool, ms: e.t - o.t };
-    }
-  }
-  const top = Math.max(...hours);
-  return { sessions: sess.size, agents: agents.size, tools, errors, busiestHour: top > 0 ? hours.indexOf(top) : null, longest };
 }

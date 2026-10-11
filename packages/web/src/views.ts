@@ -1,8 +1,8 @@
 // Full-area views that sit over the stage: compact wall (#198, no canvas drawing, bare `wall` token in the URL hash) and daily timeline (#194).
 // shortcut: the canvas keeps running underneath (hiding it would give pixi a 0x0 resize); stop the ticker if CPU matters on a wall display.
 import { office } from "./api.ts";
-import { btn, el, renderIf } from "./dom.ts";
-import { MIN_SPAN, fetchHistory, historyRange, pickRange, panView, rangeStats, waterfall, zoomView, type View as Span } from "./history.ts";
+import { $, btn, el, renderIf } from "./dom.ts";
+import { MIN_SPAN, awayCounts, fetchHistory, historyRange, pickRange, panView, rangeStats, waterfall, zoomView, type View as Span } from "./history.ts";
 import { roleColor } from "./theme.ts";
 import { aggLine, look, outcomeLook, permLine, sessionAgg, statusKey, statusWord } from "./triage.ts";
 import { replayRange, toggleReplay } from "./modes.ts";
@@ -36,7 +36,7 @@ let wallGrid: HTMLElement, endedBox: HTMLElement;
 function renderEnded(box: HTMLElement) {
   const list = office.getEnvelope()?.state.summaries ?? [], now = Date.now();
   const rows = list.map((x) => ({ x, ago: fmtAge(now - x.endedAt) }));
-  renderIf(box, JSON.stringify(rows.map((r) => [r.x.session, r.x.endedAt, r.ago])), () => {
+  renderIf(box, JSON.stringify([rows.map((r) => [r.x.session, r.x.endedAt, r.ago]), hideText()]), () => {
     if (!rows.length) return [];
     const grid = el("div", "wallgrid");
     grid.append(...rows.map(({ x, ago }) => {
@@ -44,13 +44,13 @@ function renderEnded(box: HTMLElement) {
       // red only when the session got nothing done; mixed outcomes stay neutral and the counts carry the detail
       d.style.setProperty("--st", (o.blocked && !o.done && !o.partial ? look("blocked") : o.done ? outcomeLook("done") : outcomeLook("")).color);
       const outs = el("span", "k", `${t("agent", { n: x.agents })} · `);
-      outs.append(...([["done", o.done], ["partial", o.partial], ["blocked", o.blocked]] as const).flatMap(([k, n], i) => {
+      outs.append(...([["done", o.done], ["partial", o.partial], ["blocked", o.blocked], ...(o.empty ? [["empty", o.empty]] as const : [])] as const).flatMap(([k, n], i) => {
         const g = el("span", "", `${outcomeLook(k).glyph} ${n} ${outcomeLook(k).label}`); // "✓ 1 done", not a bare "✓ 1" (final review)
         g.title = `${n} ${outcomeLook(k).label}`;
         return i ? [" ", g] : [g];
       }));
       const perm = x.permission.n ? `${x.permission.n} permission wait${x.permission.n === 1 ? "" : "s"} · ${fmtDur(x.permission.totalMs)} total` : "no permission waits";
-      d.append(el("b", "", x.project), el("span", "", `ended ${ago === "just now" ? ago : `${ago} ago`} · ran ${fmtDur(x.durationMs)}`), outs,
+      d.append(el("b", "", x.project), el("span", "", `ended ${ago === "just now" ? ago : `${ago} ago`} · ran ${fmtDur(x.durationMs)}`), ...goal(x.prompt, x.result), outs,
         el("span", x.errors ? "er" : "k", `${x.errors} error${x.errors === 1 ? "" : "s"}`), el("span", "k", perm), el("span", "k", fmtTokens(x.usage) || "no tokens recorded"));
       return d;
     }));
@@ -59,24 +59,31 @@ function renderEnded(box: HTMLElement) {
     return [h, grid];
   });
 }
+/** P3: what a session is for and what came back (prompt, then "→ result"); none while text is hidden. */
+function goal(prompt?: string, result?: string): HTMLElement[] {
+  if (hideText()) return [];
+  const line = (cls: string, txt: string) => { const e = el("span", cls, txt); e.title = txt; return e; };
+  return [...(prompt ? [line("goal", prompt)] : []), ...(result ? [line("goal res", `→ ${result}`)] : [])];
+}
 function renderWall0(box: HTMLElement) {
   const e = office.getEnvelope(), now = Date.now();
   if (!e) return;
   const acts = office.actors();
   const tiles = office.sessions().map((s) => {
     const ss = e.state.sessions[s.id];
-    const agg = sessionAgg(acts.filter((a) => a.session === s.id).map((a) => statusKey(a.lead && s.waiting && a.status !== "blocked" ? "waiting" : a.status, ss)));
-    const state = s.waiting && !agg.agents ? statusKey("waiting", ss) : agg.worst;
+    const keyOf = (a: (typeof acts)[number]) => statusKey(a.lead && s.waiting && a.status !== "blocked" ? "waiting" : a.status, ss);
+    const mine = acts.filter((a) => a.session === s.id), agg = sessionAgg(mine.filter((a) => !a.lead).map(keyOf)); // X5: counts are helpers only
+    const state = s.waiting && !mine.length ? statusKey("waiting", ss) : sessionAgg(mine.map(keyOf)).worst;
     const errors = ss?.errors ?? 0;
     const perm = permLine(ss?.permWait, now, fmtDur);
-    return { s, state, age: fmtAge(now - s.startedAt), tok: fmtTokens(s.usage), errors, perm, line: aggLine(agg) };
+    return { s, state, age: fmtAge(now - s.startedAt), tok: fmtTokens(s.usage), errors, perm, line: aggLine(agg), helpers: agg.agents, prompt: ss?.prompt ?? ss?.lastPrompt, result: ss?.result };
   });
-  renderIf(box, JSON.stringify(tiles.map((x) => [x.s.id, x.s.project, x.state, x.age, x.tok, x.errors, x.s.agents, x.perm, x.line])), () =>
+  renderIf(box, JSON.stringify([tiles.map((x) => [x.s.id, x.s.project, x.state, x.age, x.tok, x.errors, x.helpers, x.perm, x.line, x.prompt, x.result]), hideText()]), () =>
     tiles.length ? tiles.map((x) => {
       const b = el("button", "tile");
       b.type = "button";
       b.style.setProperty("--st", look(x.state).color);
-      b.append(el("b", "", x.s.project), el("span", "", statusWord(x.state)), el("span", "k", [x.age, t("agent", { n: x.s.agents }), x.line].filter(Boolean).join(" · ")),
+      b.append(el("b", "", x.s.project), el("span", "", statusWord(x.state)), ...goal(x.prompt, x.result), el("span", "k", [x.age, t("helper", { n: x.helpers }), x.line].filter(Boolean).join(" · ")),
         el("span", "k", x.tok || "no tokens yet"), el("span", x.errors ? "er" : "k", `${x.errors} error${x.errors === 1 ? "" : "s"}`));
       if (x.perm) b.append(el("span", "k", x.perm));
       b.addEventListener("click", () => { office.select(x.s.lead); setView(""); });
@@ -92,6 +99,9 @@ let tl: TL | null = null, tlToken = 0;
 /** The History range (X3, P2): a preset, or custom from/to. Recomputed on every reset so "Today" and "7 days" follow the clock. */
 const RANGES = [["last", "Since your last visit"], ["today", "Today"], ["day", "Last 24 hours"], ["week", "Last 7 days"], ["custom", "Custom range"]] as const;
 let rangeKey: (typeof RANGES)[number][0] = "last", custom = { since: 0, until: 0 }, range = { since: 0, until: 0 };
+/** X6: a moment to open History at (a departed helper's row); the first load pre-selects a minute either side. */
+let focusAt = 0;
+const AROUND_MS = 30 * 60_000;
 /** "since you were last here" (X3): the time this page was last visible, from the previous visit. */
 const lastSeen = Number(store.get("lastSeen")) || 0;
 const seen = () => { if (!document.hidden) store.set("lastSeen", String(Date.now())); };
@@ -115,7 +125,8 @@ async function loadTimeline(msg: HTMLElement, redraw: () => void, how: "reset" |
     const events = how === "older" ? [...got, ...prev] : how === "refresh" ? [...prev, ...got] : got;
     const w = waterfall(events), full = { t0: w.t0, t1: Math.max(w.t1, w.t0 + MIN_SPAN) };
     // keep a zoomed range across the 30 s refresh; a fitted view follows the data
-    const pre = !tl && lastSeen > full.t0 && lastSeen < full.t1 ? { t0: lastSeen, t1: full.t1 } : null; // first load: pre-select what happened while away
+    const pre = tl ? null : focusAt ? { t0: Math.max(full.t0, focusAt - 60_000), t1: Math.min(full.t1, focusAt + 60_000) }
+      : lastSeen > full.t0 && lastSeen < full.t1 ? { t0: lastSeen, t1: full.t1 } : null; // first load: pre-select the moment asked for, else what happened while away
     tl = { events, w, full, limited: how === "refresh" ? tl!.limited : limited, view: tl && !tl.fit ? tl.view : full, sel: tl ? tl.sel : pre, fit: !tl || tl.fit };
     msg.hidden = true;
     if (!w.rows.length) { msg.hidden = false; msg.className = "k pad"; msg.textContent = tl.limited ? "No sessions in the newest page of this range: Load older." : "No stored events in this range. Pick a wider range, or run a Claude Code session; the daemon keeps its history."; }
@@ -158,7 +169,7 @@ function buildTimeline(root: HTMLElement) {
     const r = tl.sel ?? tl.view, st = rangeStats(tl.w, r);
     const dur = st.ms < 60_000 ? `${(st.ms / 1000).toFixed(st.ms < 10_000 ? 1 : 0)}s` : fmtAge(st.ms);
     const what = `${stamp(r.t0, true)} to ${stamp(r.t1, true)} · ${dur} · ${t("event", { n: st.events })} · ${t("agent", { n: st.agents })}`;
-    const away = tl.sel && tl.sel.t0 === lastSeen ? "Since you were last here: " : "Selected ";
+    const away = tl.sel && tl.sel.t0 === lastSeen && !focusAt ? "Since you were last here: " : "Selected ";
     return (tl.sel ? `${away}${what} (double-click to zoom, or Replay this range)` : `Showing ${what}`) + (tl.limited ? " · older events in this range are not loaded yet (Load older)" : "");
   }
   function draw() {
@@ -307,7 +318,7 @@ function buildTimeline(root: HTMLElement) {
   for (const [v, l] of RANGES) { const o = el("option", "", l); o.value = v; sel.append(o); }
   const when = (label: string) => { const i = el("input"), w = el("label", "k", `${label} `); i.type = "datetime-local"; w.append(i); w.hidden = true; return { i, w }; };
   const { i: from, w: fromW } = when("From"), { i: to, w: toW } = when("To");
-  const setCustom = () => { custom = { since: from.valueAsNumber ? new Date(from.value).getTime() : 0, until: to.valueAsNumber ? new Date(to.value).getTime() : 0 }; if (custom.since) reload(); };
+  const setCustom = () => { focusAt = 0; custom = { since: from.valueAsNumber ? new Date(from.value).getTime() : 0, until: to.valueAsNumber ? new Date(to.value).getTime() : 0 }; if (custom.since) reload(); };
   from.addEventListener("change", setCustom); to.addEventListener("change", setCustom);
   sel.addEventListener("change", () => { rangeKey = sel.value as typeof rangeKey; fromW.hidden = toW.hidden = rangeKey !== "custom"; if (rangeKey !== "custom" || custom.since) reload(); });
   const older = btn("Load older", "Load the page of events before the oldest one shown", () => { older.disabled = true; void loadTimeline(msg, redrawAll, "older").finally(() => { older.disabled = false; }); });
@@ -326,10 +337,50 @@ function buildTimeline(root: HTMLElement) {
       el("span", "lgi k", "Click a row to find that agent. Drag to select a range, double-click to zoom, wheel/pinch zoom, +/-/0 keys. Times are local."));
   };
   const redrawAll = () => { legendFill(); draw(); };
-  return { load: async () => { await loadTimeline(msg, redrawAll); }, draw };
+  const local = (ms: number) => { const d = new Date(ms - new Date(ms).getTimezoneOffset() * 60_000); return d.toISOString().slice(0, 16); }; // datetime-local wants local time
+  /** Custom range of half an hour either side of `t` (until now), the moment pre-selected. */
+  const at = (t: number) => {
+    focusAt = t; rangeKey = "custom";
+    custom = { since: t - AROUND_MS, until: t + AROUND_MS < Date.now() ? t + AROUND_MS : 0 };
+    sel.value = "custom"; fromW.hidden = toW.hidden = false;
+    from.value = local(custom.since); to.value = custom.until ? local(custom.until) : "";
+    reload();
+  };
+  sel.addEventListener("change", () => { focusAt = 0; });
+  return { load: async () => { await loadTimeline(msg, redrawAll); }, draw, at };
+}
+
+/** P4: on load after an absence, one dismissible "Since you left" block over the stage, counted from /history (counts only, no text). */
+const AWAY_MS = 30 * 60_000;
+async function sinceYouLeft() {
+  if (!lastSeen || Date.now() - lastSeen < AWAY_MS) return;
+  // shortcut: counts come from the newest page of /history (HISTORY_LIMIT events); a longer absence undercounts, page with until if it matters
+  let c: ReturnType<typeof awayCounts>;
+  try { c = awayCounts((await fetchHistory(lastSeen, 0, office.source.private)).events); } catch { return; }
+  if (!c.done && !c.gaveUp) return; // nothing came back: the pill already says what needs you
+  let need = 0;
+  const box = el("div", "hl away"), line = el("span", "tt");
+  box.setAttribute("role", "status");
+  const paint = () => {
+    line.replaceChildren(el("b", "", `Since you left (${fmtAge(Date.now() - lastSeen)} ago)`),
+      el("span", "", `${c.done} done · ${c.gaveUp} gave up · ${need} need${need === 1 ? "s" : ""} you`));
+  };
+  const onRadar = (e: Event) => { need = (e as CustomEvent<number>).detail; paint(); };
+  const close = () => { box.remove(); document.removeEventListener("ao:radar", onRadar); };
+  document.addEventListener("ao:radar", onRadar);
+  const x = btn("×", "Dismiss", close, "b sm");
+  x.setAttribute("aria-label", "Dismiss since you left");
+  const acts = el("span", "ra");
+  acts.append(btn("History", "Open History since your last visit (3)", () => { close(); setView("timeline"); }, "b sm"), x);
+  paint();
+  box.append(line, acts);
+  $("hl").prepend(box);
 }
 
 let setView: (v: View) => void = () => {};
+let historyAt: (t: number) => void = () => {};
+/** X6: open History around the moment `t` (Recently done or NEEDS YOU rows of helpers that have left the floor). */
+export const showHistoryAt = (t: number) => historyAt(t);
 let shown: View = "";
 /** For kiosk.ts and the palette: switch views without clicking toolbar buttons. */
 export const showView = (v: View) => setView(v);
@@ -412,6 +463,7 @@ export function bindViews(tools: HTMLElement) {
     if (v === "wall") renderWall(grid);
     if (v === "timeline") void timeline.load();
   };
+  historyAt = (at) => { if (cur !== "timeline") setView("timeline"); timeline.at(at); };
   office.subscribe(() => { if (cur === "wall" || pipGrid) renderWall(grid); });
   setInterval(() => { if (cur === "wall" || pipGrid) renderWall(grid); }, 1000); // ages tick between snapshots
   setInterval(() => { if (cur === "timeline") void timeline.load(); }, REFRESH_MS);
@@ -423,6 +475,7 @@ export function bindViews(tools: HTMLElement) {
   addEventListener("hashchange", () => { const v = parseLink(location.hash).v; if (v !== cur) setView(v); });
   const v0 = parseLink(location.hash).v;
   if (v0) setView(v0);
+  void sinceYouLeft();
   // Escape: the top layer only. Dialogs stop the event first (dialog.ts); presenter preventDefaults it; leaving presenter takes the Esc, not the Wall.
   addEventListener("keydown", (e) => {
     if (e.key !== "Escape" || !cur || e.defaultPrevented || document.body.classList.contains("presenter")) return;

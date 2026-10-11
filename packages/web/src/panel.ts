@@ -1,8 +1,7 @@
-// Panel shell and small global chrome: collapsible/resizable side panel with mobile drawer (#74), presenter (#94) and
-// overlay (#95) modes, settings popover (#67/#69/#71), legend + first-run explainer + connection banner (#89).
+// Panel shell and small global chrome: collapsible/resizable side panel with mobile drawer (#74), presenter mode (#94), settings popover (#67/#69/#71), legend + first-run explainer + connection banner (#89).
 import { office } from "./api.ts";
 import { $, btn, el, store } from "./dom.ts";
-import { enableDesktop, mutes, prefs, spendLimit } from "./notify.ts";
+import { STUCK_MIN, enableDesktop, mutes, prefs, spendLimit, stuckMin } from "./notify.ts";
 import { chimePrefs, testChime } from "./chime.ts";
 import { settings, setAmbientPaused } from "./settings.ts";
 import { captionText, whoLine } from "./logic.ts";
@@ -22,7 +21,6 @@ import "./chrome.css";
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 const PANEL_W = { min: 260, max: 640 };
 const body = document.body;
-export const OVERLAY = F.overlay;
 
 // ---- panel ----
 function bindPanel() {
@@ -77,7 +75,7 @@ function bindPanel() {
   new ResizeObserver(() => dispatchEvent(new Event("resize"))).observe($("stage"));
 }
 
-// ---- presenter / overlay ----
+// ---- presenter ----
 const savedScale = () => clamp(Number(store.get("scale")) || 1, 0.8, 2);
 let capTimer: ReturnType<typeof setTimeout> | undefined;
 /** Canvas text scale plus the DOM `--ts` var (#161). */
@@ -91,7 +89,7 @@ function setPresenter(on: boolean) {
   applyScale(on ? Math.max(1.5, savedScale()) : savedScale());
   $("pr").setAttribute("aria-pressed", String(on));
   $("px").hidden = !on;
-  if (!OVERLAY) $("caption").hidden = !on; // presenter keeps the bar up for the counts; overlay shows it per feed item
+  $("caption").hidden = !on; // presenter keeps the bar up for the counts
   if (on) $("cap-who").textContent = $("cap-text").textContent = "";
 }
 function bindPresenter() {
@@ -102,7 +100,7 @@ function bindPresenter() {
     if ((e.key === "p" || e.key === "P") && !ignoreKey(e)) setPresenter(!body.classList.contains("presenter"));
   });
   office.onFeed((f) => {
-    if (!body.classList.contains("presenter") && !OVERLAY) return;
+    if (!body.classList.contains("presenter")) return;
     const cap = $("caption");
     $("cap-who").textContent = whoLine(f);
     $("cap-text").textContent = hideText() ? "" : captionText(f); // stream-safe / private: names only
@@ -177,6 +175,14 @@ function bindSettings(tools: HTMLElement) {
   row("Beep when chimes are off", check(prefs.sound.get(), prefs.sound.set), "One plain beep per alert, for when chimes are off");
   box.append(btn("Test chime", "Plays one short tone", testChime));
 
+  // X8: the NEEDS YOU threshold lives here, not inside the list
+  sec("Needs you");
+  const stuck = el("select");
+  for (const m of STUCK_MIN) stuck.append(Object.assign(el("option", "", `${m} min`), { value: String(m) }));
+  stuck.value = String(stuckMin());
+  stuck.addEventListener("change", () => store.set("stuck", stuck.value));
+  row("Stuck after silence of", stuck, "NEEDS YOU lists a session silent mid-turn for this long (3x while a tool runs) and a helper silent for 3x this long.");
+
   sec("Notifications");
   const dn = btn("Enable desktop notifications", "Asks the browser for permission", async (b) => { b.textContent = `Notifications: ${await enableDesktop()}`; });
   if (prefs.desktop.get()) dn.textContent = "Notifications: on";
@@ -215,7 +221,7 @@ function bindSettings(tools: HTMLElement) {
   const ss = check(streamSafe(), setStreamSafe);
   ss.disabled = F.streamSafe !== null; // ?streamsafe=0|1 in the URL decides
   row("Stream-safe", ss);
-  box.append(el("p", "k", "Hides the same text only while showing others: Present, Kiosk, the Sessions and History views and the stream overlay."));
+  box.append(el("p", "k", "Hides the same text only while showing others: Present, Kiosk, the Sessions and History views."));
   const dp = el("p", "k");
   box.append(dp);
 
@@ -224,7 +230,7 @@ function bindSettings(tools: HTMLElement) {
   proto.append(pl, el("p", "k", "Read-only here: set \"protocol\": \"office\" or \"observe\" in office.json."));
   const fillInfo = () => {
     const p = protocolOf();
-    pl.replaceChildren(el("b", "", p === "observe" ? "observe" : "office (nudged)"), document.createTextNode(`: ${PROTOCOL[p] ?? PROTOCOL.office}`));
+    pl.replaceChildren(el("b", "", p === "observe" ? "observe" : "office (protocol on)"), document.createTextNode(`: ${PROTOCOL[p] ?? PROTOCOL.office}`));
     dp.textContent = office.privacy ? "The daemon is blanking text for everyone (office.json privacy)." : "";
   };
 
@@ -239,7 +245,7 @@ function bindSettings(tools: HTMLElement) {
   // apply persisted choices
   if (rm !== null) office.setReducedMotion(rm === "1");
   applyType();
-  applyScale(OVERLAY ? Math.max(1.6, savedScale()) : savedScale());
+  applyScale(savedScale());
 }
 
 // ---- first-run intro (B3): one short paragraph and its own "Got it" row; Help keeps the full explainer and the legend ----
@@ -298,9 +304,6 @@ function banner() {
 }
 
 export function bindPanelChrome(tools: HTMLElement) {
-  if (OVERLAY) body.classList.add("overlay");
-  if (F.obs) body.classList.add("obs");
-  if (F.size) { body.classList.add("obs-fixed"); body.style.setProperty("--ow", `${F.size[0]}px`); body.style.setProperty("--oh", `${F.size[1]}px`); }
   bindPanel();
   setLang();
   staleEl = el("div");
@@ -311,9 +314,7 @@ export function bindPanelChrome(tools: HTMLElement) {
   const pr = btn("Present", "Presenter mode (P): big captions, panel hidden", () => {});
   pr.id = "pr";
   pr.setAttribute("aria-pressed", "false");
-  const overlay = () => open(`${location.pathname}?overlay=1`, "_blank", "noopener");
-  group(tools, "Display").append(pr, btn("Stream overlay", "Open the transparent stream overlay (OBS browser source) in a new window; text is hidden there unless ?streamsafe=0", overlay));
-  register("Display: Stream overlay (new window)", overlay);
+  group(tools, "Display").append(pr);
   bindPresenter();
   register("Display: Present (P)", () => setPresenter(!body.classList.contains("presenter")));
   bindViews(tools);

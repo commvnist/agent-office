@@ -35,7 +35,7 @@ test("next step names the terminal; tree runs lead -> self -> helpers", () => {
 
 test("done rows prefer state.outcomes and fall back to feed reports", () => {
   const o = [{ session: "s", agentId: "a1", name: "Priya", outcome: "done", text: "DONE: shipped", task: "ship", t: 2 }];
-  assert.deepEqual(doneRows(o, [], () => "proj")[0], { key: "a1@2", agentId: "a1", name: "Priya", project: "proj", outcome: "done", text: "shipped", task: "ship", t: 2 });
+  assert.deepEqual(doneRows(o, [], () => "proj")[0], { key: "a1@2", agentId: "a1", session: "s", name: "Priya", project: "proj", outcome: "done", text: "shipped", task: "ship", t: 2 });
   const feed = [{ kind: "report", fromId: "b", from: "Bo", text: "BLOCKED: no key", t: 1, outcome: "blocked", session: "s" }, { kind: "prompt", from: "you", text: "x", t: 0 }];
   assert.deepEqual(doneRows(undefined, feed, (s) => s.toUpperCase()).map((r) => [r.name, r.project, r.text]), [["Bo", "S", "no key"]]);
 });
@@ -54,7 +54,7 @@ test("permLine counts completed waits and the open one; topTools ranks by calls"
 test("session aggregate: counts per bucket, worst by STATUS_ORDER, non-zero line", () => {
   const a = sessionAgg(["working", "blocked", "turn", "working", "idle"]);
   assert.deepEqual(a, { agents: 5, working: 2, waiting: 1, blocked: 1, worst: "turn" });
-  assert.equal(aggLine(a), "2 working · 1 waiting · 1 blocked");
+  assert.equal(aggLine(a), "2 working · 1 waiting · 1 gave up");
   assert.deepEqual(sessionAgg([]), { agents: 0, working: 0, waiting: 0, blocked: 0, worst: "idle" });
   assert.equal(aggLine(sessionAgg(["idle"])), "");
   assert.equal(sessionAgg(["blocked", "working"]).worst, "blocked");

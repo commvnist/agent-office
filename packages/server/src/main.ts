@@ -5,13 +5,13 @@ import { join, normalize, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import {
-  reduce, sweep, capacityFor, roleFor, leadRoster, introFor, outcomeOf, safeId, SCHEMA_VERSION,
+  reduce, sweep, capacityFor, roleFor, leadRoster, introFor, outcomeOf, pseudonym, safeId, SCHEMA_VERSION,
   type OfficeConfig, type OfficeEvent, type OfficeState,
 } from "@agent-office/core";
 import { adapt, clip } from "./adapter.ts";
 import { validateConfig, unknownKeys } from "./config.ts";
 import { summarize } from "./digest.ts";
-import { appendRotating, appendEvent, readEvents, pruneEvents, pruneDays, replay, strip } from "./store.ts";
+import { appendRotating, appendEvent, bootEvents, readEvents, pruneEvents, pruneDays, replay, strip } from "./store.ts";
 import { fit, publicState, lodState, diffEnvelope, type Snap } from "./snapshot.ts";
 import { readNarration, readUsage, newLedger, tallyUsage, ledgerTotal, type Ledger } from "./usage.ts";
 
@@ -75,16 +75,18 @@ const EVENTS = join(DIR, "events.jsonl");
 const historyMs = () => (cfg.historyHours ?? 168) * 3600_000;
 const textMs = () => Math.min(cfg.textHours ?? Infinity, cfg.historyHours ?? 168) * 3600_000;
 /** Retention: delete stored events older than historyHours and stored text older than textHours (boot and hourly). */
+const RAW_LOG = join(DIR, "events.log");
 const prune = () => {
   try {
+    pruneEvents(RAW_LOG, Date.now() - historyMs(), (l) => Date.parse(l.slice(0, 24))); // the opt-in raw log (AGENT_OFFICE_LOG): ISO time prefix
     const n = pruneEvents(EVENTS, Date.now() - historyMs());
     const f = pruneDays(DIR, Date.now() - historyMs(), Date.now() - textMs());
     if (n || f) log(`history: pruned ${n} legacy events and ${f} day files (historyHours ${cfg.historyHours ?? 168}, textHours ${cfg.textHours ?? cfg.historyHours ?? 168})`);
   } catch (e) { log("history prune:", (e as Error).message); }
 };
 prune();
-// shortcut: replay the last 50k events of the retention window (a busy hour can exceed the 5k default and drop session starts); raise it if sessions come back as "recovered"
-let state: OfficeState = replay(cfg, (await readEvents(DIR, { since: Date.now() - historyMs(), limit: 50_000, text: !cfg.privacy })).events, Date.now(), ttlMs());
+// The last 50k events of the retention window, preceded by every older start/stop/prompt in it (bootEvents).
+let state: OfficeState = replay(cfg, await bootEvents(DIR, Date.now() - historyMs(), !cfg.privacy), Date.now(), ttlMs());
 let rev = 0, events = 0, lastEventAt = 0;
 /** Re-read office.json; a change must reach clients (and the envelope cache) whichever request noticed it first. */
 const refreshConfig = () => { if (!reloadConfig()) return false; rev++; push(); return true; };
@@ -233,7 +235,11 @@ function onEvent(payload: any, res: ServerResponse) {
   const total = ["PostToolUse", "Stop", "SubagentStop"].includes(hook) ? sessionUsage(payload, Date.now(), hook !== "PostToolUse") : undefined;
   for (const e of evs) {
     if (e.type === "agent_stop" && !c.privacy) e.usage = readUsage(payload.agent_transcript_path, payload.cwd);
-    else if (e.type === "turn_end") e.usage = total;
+    else if (e.type === "turn_end") {
+      e.usage = total;
+      e.outcome = outcomeOf(e.message); // stamped like agent_stop's, so a replay without text keeps it
+      if (c.privacy) delete e.message; // privacy: the lead's answer never enters state or disk
+    }
     if ("usage" in e && !e.usage) delete e.usage;
   }
   const sid = evs[0]?.session;
@@ -301,7 +307,7 @@ function handle(req: IncomingMessage, res: ServerResponse, allowedHosts: Set<str
       try {
         let payload: unknown;
         try { payload = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { return void res.writeHead(400).end(); }
-        if (process.env.AGENT_OFFICE_LOG && !cfg.privacy) appendRotating(join(DIR, "events.log"), `${new Date().toISOString()} ${Buffer.concat(chunks).toString("utf8").trim()}`);
+        if (process.env.AGENT_OFFICE_LOG && !cfg.privacy) appendRotating(RAW_LOG, `${new Date().toISOString()} ${Buffer.concat(chunks).toString("utf8").trim()}`);
         onEvent(payload, res);
       } catch (e) { log("event error:", e); if (!res.headersSent) res.writeHead(500).end(); }
     });
@@ -336,10 +342,11 @@ function handle(req: IncomingMessage, res: ServerResponse, allowedHosts: Set<str
       // Streamed out in slices of 500 events, waiting for the socket to drain: a 20k-event page never builds one big string.
       readEvents(DIR, { since, until, limit, text: !priv }).then(async ({ events, more }) => {
         res.writeHead(200, { "content-type": "application/json" });
+        const closed = new Promise((r) => res.once("close", r)); // one listener per response, not one per slice
         res.write(`{"schema":${SCHEMA_VERSION},"epoch":${JSON.stringify(EPOCH)},"more":${more},"events":[`);
         for (let i = 0; i < events.length && !res.destroyed; i += 500) {
           const part = events.slice(i, i + 500).map((e) => JSON.stringify(priv ? strip(e) : e)).join(",");
-          if (!res.write((i ? "," : "") + part)) await new Promise((r) => { res.once("drain", r); res.once("close", r); }); // a closed client must not leave this waiting
+          if (!res.write((i ? "," : "") + part)) await Promise.race([new Promise((r) => res.once("drain", r)), closed]); // a closed client must not leave this waiting
         }
         res.end("]}");
       }).catch(fail);
@@ -353,9 +360,9 @@ function handle(req: IncomingMessage, res: ServerResponse, allowedHosts: Set<str
         desks: (({ free, total }) => ({ used: total - free, total, cap: total }))(capacityFor(cfg, state)), events, lastEventAt: lastEventAt || undefined };
       // ?session=<id prefix or project> narrows to matching sessions: one line each, or `sessions` in JSON.
       const q = u.searchParams.get("session");
-      const per = Object.values(state.sessions).filter((x) => !q || x.id.startsWith(q) || x.project === q).map((x) => {
+      const per = Object.values(state.sessions).filter((x) => !q || x.id.startsWith(q) || (priv ? pseudonym(x.id) : x.project) === q).map((x) => {
         const own = agents.filter((a) => a.session === x.id);
-        return { session: x.id, project: x.project, state: x.waiting ? "waiting" : x.doing || own.some((a) => a.doing) ? "working" : "idle",
+        return { session: x.id, project: priv ? pseudonym(x.id) : x.project, state: x.waiting ? "waiting" : x.doing || own.some((a) => a.doing) ? "working" : "idle",
           agents: own.length, errors: x.errors ?? 0, lastAt: x.lastAt, tokens: x.usage ? x.usage.input + x.usage.output : undefined };
       });
       if (q && !per.length) return json(res, 404, { error: "no such session" });

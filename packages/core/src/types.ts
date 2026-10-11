@@ -61,11 +61,12 @@ export type OfficeEvent = Base &
     /** One agent talking to another (e.g. SendMessage). `to` is an agent id or a name hint. */
     | { type: "message"; session: string; from?: string; to: string; text: string; id?: string; t: number }
     | { type: "prompt"; session: string; text: string; t: number }
-    | { type: "turn_end"; session: string; usage?: Usage; t: number }
+    /** `message`: first line of the lead's last message (Stop `last_assistant_message`; absent in privacy). `outcome` is stamped by the daemon on the stored line, as for agent_stop. */
+    | { type: "turn_end"; session: string; usage?: Usage; message?: string; outcome?: Interaction["outcome"]; t: number }
     /** Running token total of the session (lead + subagent transcripts), refreshed during the turn. */
     | { type: "usage"; session: string; usage: Usage; t: number }
-    /** kind: "permission" = a permission prompt (needs you now), "turn" = Claude is at the prompt (your turn). */
-    | { type: "waiting"; session: string; text?: string; idle?: boolean; kind?: "permission" | "turn"; t: number }
+    /** kind: "permission" = a permission prompt (needs you now), "turn" = Claude is at the prompt (your turn). `idle`: the turn is over. `agentId`: the helper that raised it (absent for the lead). */
+    | { type: "waiting"; session: string; agentId?: string; text?: string; idle?: boolean; kind?: "permission" | "turn"; t: number }
   );
 
 /** A source of events (Claude Code hooks today); must never throw, returns [] for input it cannot use. */
@@ -122,6 +123,8 @@ export type Agent = {
   lastDurationMs?: number; // duration of the last finished tool
   report?: string; // its hand-back report, held until agent_stop
   lastAt?: number; // time of this agent's last event (start, tool, tool_end); compare against siblings to spot a silent helper
+  /** Created from a tool or stop whose SubagentStart never arrived (role and task from the oldest pending delegation, if any). */
+  recovered?: boolean;
 };
 
 export type Session = {
@@ -131,11 +134,21 @@ export type Session = {
   /** Why it waits (set with waiting, cleared with it): "permission" = a permission prompt, "turn" = your turn. */
   waitKind?: "permission" | "turn";
   waitingText?: string;
+  /** The helper (agent id) that raised the wait; absent when the lead did. That agent's next event ends the wait. */
+  waitBy?: string;
   startedAt: number;
   doing?: string;
   detail?: string;
   busyAt?: number;
-  prompt?: string;
+  prompt?: string; // the prompt of the turn in progress (cleared at turn_end)
+  /** The latest real prompt, kept after its turn ends (replaced by the next one). */
+  lastPrompt?: string;
+  /** First line of the lead's last finished turn (cleared by the next prompt). */
+  result?: string;
+  /** Time of the latest real prompt. */
+  promptAt?: number;
+  /** Time of the latest turn_end. */
+  turnAt?: number;
   why?: string;
   cwd?: string;
   branch?: string;
@@ -159,9 +172,11 @@ export type Session = {
   toolStats?: Record<string, { n: number; fail: number; p50: number; p95: number }>;
 };
 
-/** After-action summary of an ended session (session_end or idle sweep). Counts and structure only, no free text. */
+/** After-action summary of an ended session (session_end or idle sweep). Counts and structure, plus the last prompt and result (blanked in privacy). */
 export type Summary = {
+  /** endedAt: the session_end time, or its last event when the idle sweep ended it. */
   session: string; project: string; startedAt: number; endedAt: number; durationMs: number;
+  prompt?: string; result?: string;
   /** Agents started in the session; `tree` holds the first 64. */
   agents: number;
   tree: { id: string; name?: string; role: string; parent: string }[];
@@ -191,9 +206,9 @@ export type Task = {
   endedAt?: number;
 };
 
-/** A finished delegation: one-line result and the task it answered. */
+/** A finished delegation (or a lead's finished turn, `lead: true`, agentId `lead:<session>`, task = its prompt): one-line result and the task it answered. */
 export type Outcome = {
-  session: string; project?: string; agentId: string; name?: string; role?: string;
+  session: string; project?: string; agentId: string; name?: string; role?: string; lead?: true;
   /** Same values as Interaction.outcome; absent when the report had no DONE:/BLOCKED:/PARTIAL: prefix. */
   outcome?: "done" | "blocked" | "partial" | "empty";
   text: string; task?: string; t: number; durationMs?: number;

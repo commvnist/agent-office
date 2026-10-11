@@ -4,12 +4,11 @@ import { emptyState } from "@agent-office/core";
 import { office } from "./api.ts";
 import { $, btn, download, el } from "./dom.ts";
 import { FALLBACK_CFG, Playback, demoScript, simEnvelope } from "./sim.ts";
-import { recording, shareRecap, sharePoster, toggleRecording } from "./record.ts";
+import { recording, sharePoster, toggleRecording } from "./record.ts";
 import { HISTORY_LIMIT, fetchHistory, markers, toCsv, toJsonl, type Marker } from "./history.ts";
 import { group } from "./toolbar.ts";
 import { register } from "./palette.ts";
 import { copyLink } from "./actions.ts";
-import { GIF_NOTE, armGif, cancelGif, gifArmed, saveGif } from "./gifrec.ts";
 import { t } from "./i18n.ts";
 import { whoLine } from "./logic.ts";
 import type { OfficeEvent } from "@agent-office/core";
@@ -144,33 +143,11 @@ export function bindModes(tools: HTMLElement, bar: HTMLElement) {
     b.textContent = recording() ? "Stop rec" : "Record";
     note(s);
   });
-  const recap = async (b?: HTMLButtonElement) => { if (b) b.disabled = true; note(await shareRecap()); if (b) b.disabled = false; };
-  // GIF: the first press arms a rolling 8 s buffer, the second saves it; the palette can cancel
-  const gifBtn = btn("Record GIF", "Arm a rolling buffer of the last 8 seconds of the canvas (10 fps), press again to save a .gif. Nothing is kept while it is not armed.", async (b) => {
-    if (!gifArmed()) {
-      armGif();
-      b.textContent = "Save GIF";
-      b.setAttribute("aria-pressed", "true");
-      note(`GIF armed: buffering the last 8 s. ${GIF_NOTE}`);
-      return;
-    }
-    b.disabled = true;
-    note("encoding GIF…");
-    note(await saveGif((i, n) => note(`encoding GIF ${i}/${n}`)));
-    b.disabled = false;
-    b.textContent = "Record GIF";
-    b.setAttribute("aria-pressed", "false");
-  });
-  gifBtn.setAttribute("aria-pressed", "false");
   const linkBtn = btn("Copy link", "Copy a URL that restores the selection, scope, view and filters. Nothing is sent anywhere.", async () => note(await copyLink()));
-  out.append(recBtn, gifBtn, linkBtn, btn("Share", "Download a PNG poster: office snapshot, counts and names (speech bubbles in the snapshot can show text; Private blanks them)", sharePoster),
-    btn("Recap", "Download a \"Today in the office\" PNG: sessions, busiest hour, longest tool, top files (names only when Private)", (b) => void recap(b)));
+  out.append(recBtn, linkBtn, btn("Share", "Download a PNG poster: office snapshot, counts and names (speech bubbles in the snapshot can show text; Private blanks them)", sharePoster));
   register("Export: Copy link", () => linkBtn.click());
-  register("Export: Record GIF (arm, then run again to save)", () => gifBtn.click());
-  register("Export: Cancel GIF buffer", () => { cancelGif(); gifBtn.textContent = "Record GIF"; gifBtn.setAttribute("aria-pressed", "false"); note("GIF buffer cleared"); });
   register("Export: Record video (.webm)", () => recBtn.click());
   register("Export: Share poster (PNG)", () => void sharePoster());
-  register("Export: Recap (PNG)", () => void recap());
   register("Setup: Private on / off", () => office.source.setPrivate(!office.source.private));
   document.addEventListener("ao-rec-stop", () => { recBtn.textContent = "Record"; $("rec-note").textContent = "saved"; });
   const noteEl = el("span", "note chip");

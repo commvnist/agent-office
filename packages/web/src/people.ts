@@ -328,7 +328,7 @@ export const personTex = (look: Look, dir: Dir, pose: Pose, frame: number, o: Po
   const fr = pose === "walk" ? frame % WALK_FRAMES : pose === "sit" || pose === "sit-glance" ? frame % 2 : 0;
   const key = `${lookKey(look)}:${dir}${pose}${fr}${expr}${o.lift ? "L" : ""}${o.dip ? "D" : ""}${o.think ? "T" : ""}${o.sip ? "S" : ""}${o.raise ? "R" : ""}${o.drop ?? 0}${settings.reducedMotion ? "r" : ""}`;
   let t = people.get(key);
-  if (!t) people.set(key, (t = person(look, dir, pose, fr, { ...o, expr }).outline(theme().outline).texture()));
+  if (!t) people.set(key, (t = person(look, dir, pose, fr, { ...o, expr }).outline(theme().outline, true).texture())); // selective: soft on the lit edge (R8)
   return t;
 };
 

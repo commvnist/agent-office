@@ -54,8 +54,9 @@ test("chime gate dedupes keys and rate-limits globally and per kind", () => {
 
 test("caption wording: plain sentences, report prefixes not repeated, lead notes read as the lead speaking", () => {
   const f = (o: Partial<FeedItem>): FeedItem => ({ id: 1, t: 0, kind: "report", session: "s", from: "Dev", to: "shop", text: "DONE: added the model", ...o } as FeedItem);
-  assert.equal(whoLine(f({})), "Dev finished");
-  assert.equal(whoLine(f({ outcome: "blocked" })), "Dev is blocked");
+  assert.equal(whoLine(f({ outcome: "done" })), "Dev finished");
+  assert.equal(whoLine(f({ outcome: "blocked" })), "Dev gave up");
+  assert.equal(whoLine(f({ outcome: undefined, text: "notes" })), "Dev reported", "C3: an unprefixed report is not 'finished'");
   assert.equal(captionText(f({})), "added the model");
   assert.equal(captionText(f({ kind: "prompt", text: "DONE is a word" })), "DONE is a word");
   assert.equal(whoLine(f({ kind: "message", from: "shop", to: "user", text: "Report: DONE: x" })), "shop says");

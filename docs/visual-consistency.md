@@ -38,7 +38,7 @@ one rule set in `packages/web/src/snap.ts`. The goal: nothing looks misaligned, 
 ## Floors and session badges
 
 - Floors: desks 64..127 and 128..191 repeat the first floor's plan three pod rows lower (`deskPos`, `floorTop`, `podRow` in `layout.ts`);
-  the one room grows downward, so every id in the registry stays append-only (`footprint.test.ts` grows to 192 desks). Pod rows, not
+  the one room grows downward, so every id in the registry stays append-only (`footprint.test.ts` grows to the 128-desk cap). Pod rows, not
   pod indices, drive conduit rows and wing tints. The minimap draws a rule and a number per floor; PageUp/PageDown move between floors.
 - Session badges (`main.ts` `drawBadges`, collapse above 12 helpers): screen-space overlays through `dev()`, centred on the session's
   first pod (above it once opened), stacked with `stackLabels` inside the visible floor and fed to `obstacles` (`actor.ts`) so tags,
@@ -78,7 +78,7 @@ Growing the office only adds: ids not in `NOT_STABLE` never move (core test).
 2. Web: read it from `this.geo` (add a derived field in `sceneGeometry` if needed, with an assertion in `geometry.test.ts`).
    Never compute tile positions in `scene.ts`.
 3. Position through `place()`; overlays through `dev()`.
-4. Run `npm test` (`geometry.test.ts` sweeps 8..64 desks x 1..8 lobby slots; `footprint.test.ts` adds 72..192 desks across floors).
+4. Run `npm test` (`geometry.test.ts` sweeps 8..64 desks x 1..8 lobby slots; `footprint.test.ts` adds 72..128 desks across floors).
 
 ## QA checklist (visual)
 

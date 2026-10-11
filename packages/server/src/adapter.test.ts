@@ -21,6 +21,17 @@ test("a question prompt is your turn, a tool permission prompt is permission", (
   const n = (message: string) => adapt({ hook_event_name: "Notification", session_id: "s", notification_type: "permission_prompt", message })[0] as { kind?: string };
   assert.equal(n("Claude needs your permission to use AskUserQuestion").kind, "turn");
   assert.equal(n("Claude needs your permission to use Bash").kind, "permission");
+  assert.equal((n("Claude needs your permission to use AskUserQuestion") as { idle?: boolean }).idle, undefined, "a question does not end the turn");
+  const idle = adapt({ hook_event_name: "Notification", session_id: "s", notification_type: "idle_prompt", message: "Claude is waiting for your input" })[0] as { idle?: boolean };
+  assert.equal(idle.idle, true);
+});
+
+test("a helper's notification names the helper; Stop carries the first line of the lead's answer", () => {
+  const [w] = adapt({ hook_event_name: "Notification", session_id: "s", agent_id: "h1", notification_type: "permission_prompt", message: "Claude needs your permission to use Bash" }, 1);
+  assert.equal((w as { agentId?: string }).agentId, "h1");
+  const [e] = adapt({ hook_event_name: "Stop", session_id: "s", last_assistant_message: "Done, token=abc123secret\nmore" }, 1);
+  assert.deepEqual(e, { type: "turn_end", session: "s", message: "Done, token=[redacted]", t: 1 });
+  assert.deepEqual(adapt({ hook_event_name: "Stop", session_id: "s" }, 1), [{ type: "turn_end", session: "s", t: 1 }]);
 });
 
 test("Agent tool call yields a tool event plus a delegation with the task text", () => {

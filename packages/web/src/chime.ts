@@ -1,7 +1,6 @@
 // Opt-in chimes (default OFF): generated WebAudio tones, no files. The AudioContext is created on the first user gesture
 // (the browser autoplay rule); while it is not running a chime is simply skipped.
 import { store } from "./dom.ts";
-import { F } from "./flags.ts";
 import { chimeGate, type ChimeKind } from "./logic.ts";
 
 const flag = (k: string, def: string) => ({ get: () => (store.get(k) ?? def) === "1", set: (b: boolean) => store.set(k, b ? "1" : "0") });
@@ -24,7 +23,6 @@ const gate = chimeGate();
 
 /** Play one chime for `key` if enabled, unmuted, audible, not a repeat and inside the rate limits. */
 export function chime(kind: ChimeKind, key: string, force = false) {
-  if (F.obs) return; // OBS preset: a capture page never makes sound
   if (!force && (!chimePrefs.on.get() || chimePrefs.mute.get())) return;
   if (!ctx || ctx.state !== "running" || !chimePrefs.volume) return;
   if (!force && !gate(kind, key, Date.now())) return;

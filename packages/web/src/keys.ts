@@ -8,11 +8,12 @@ import { cycleFollow, jumpLatest } from "./actions.ts";
 import { openPalette, register } from "./palette.ts";
 import { STATUS, STATUS_ORDER } from "./theme.ts";
 import { statusWord } from "./triage.ts";
+import { cycleNeed } from "./ui.ts"; // a cycle (ui -> panel -> keys -> ui) that is safe: only called from a key handler
 
 // X7: the key map grouped by the loop it serves; the long tail lives in the command palette
 const KEYMAP: [string, [string, string][]][] = [
   ["Triage", [
-    ["n / N", "Next / previous agent or session that needs you"],
+    ["n / N", "Next / previous row of NEEDS YOU"],
     ["f", "Zoom to and follow the selected agent"],
     ["Esc", "Close the top dialog or view; then clear the selection; then the session scope"],
   ]],
@@ -34,7 +35,6 @@ const KEYMAP: [string, [string, string][]][] = [
   ]],
 ];
 const STREAM: [string, string][] = [
-  ["?overlay or ?preset=obs-1080 / obs-720", "Transparent page for an OBS Browser Source: panel and toolbar hidden, sound and toasts off, text hidden"],
   ["?kiosk", "Wallboard: fullscreen, rotates office / sessions, holds the office while something needs you; Esc leaves"],
   ["?streamsafe=0|1", "Override Stream-safe (Settings > Privacy)"],
 ];
@@ -94,7 +94,7 @@ export function bindKeys(tools: HTMLElement) {
       btn("Command palette (Ctrl+K)", "Every action, agent and session by name", () => { m.close(); openPalette(); }),
       sec("Legend"), ...legend().map(([k, v], i) => kv(k, v, false, i < STATUS_ORDER.length ? STATUS[STATUS_ORDER[i]].color : "")),
       ...KEYMAP.flatMap(([g, rows]) => [sec(`Keys: ${g}`), ...rows.map(([k, v]) => kv(k, v, true))]),
-      sec("Streaming and wall displays"), ...STREAM.map(([k, v]) => kv(k, v, true)),
+      sec("Wall displays"), ...STREAM.map(([k, v]) => kv(k, v, true)),
       sec("About"), ...facts.map(([k, v]) => kv(k, v)));
   });
   register("Open Help", () => m.open());
@@ -108,7 +108,7 @@ export function bindKeys(tools: HTMLElement) {
   addEventListener("keydown", (e) => {
     if (ignoreKey(e)) return;
     const acts = office.actors();
-    if (e.key === "n" || e.key === "N") cycle(acts.filter((a) => a.status === "waiting" || a.status === "blocked").map((a) => a.id), e.key === "n" ? 1 : -1, "Nothing needs you right now");
+    if (e.key === "n" || e.key === "N") cycleNeed(e.key === "n" ? 1 : -1);
     else if (e.key === "[" || e.key === "]") cycle(acts.map((a) => a.id), e.key === "]" ? 1 : -1, "No agents on the floor");
     else if (e.key === "/") {
       e.preventDefault();

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Interaction } from "@agent-office/core";
-import { planInteraction, alertsFor, statusOf, isWorking, boardLines, pickStroller, feedItem, cleanText, uniqueNames, stackLabels, longToolMs, toolKind, skyAt, clampBox, hopPose, stepDrop, popScale, quirkAt, toolIcon, HOP_MS, idleTier, pickPartner, microPose, yieldsTo, stepHold, holds, doorHold, tetherAlpha, loadLevel, sessionHue, shrinkFloor, YIELD_MAX_MS, SLIP_MS, type PlanCtx, type Shrink } from "./choreo.ts";
+import { planInteraction, alertsFor, statusOf, isWorking, boardLines, pickStroller, feedItem, cleanText, uniqueNames, stackLabels, longToolMs, toolKind, skyAt, clampBox, hopPose, stepDrop, popScale, quirkAt, toolIcon, HOP_MS, idleTier, microPose, yieldsTo, stepHold, holds, doorHold, tetherAlpha, loadLevel, sessionHue, shrinkFloor, YIELD_MAX_MS, SLIP_MS, type PlanCtx, type Shrink } from "./choreo.ts";
 
 const it = (o: Partial<Interaction>): Interaction => ({ id: 1, t: 1000, kind: "delegate", session: "s", from: "lead:s", to: "a1", text: "do it", ...o });
 const ctx = (log: Interaction[] = [], ids = ["lead:s", "a1", "a2"]): PlanCtx => ({ has: (i) => ids.includes(i), resolve: (h) => ids.find((i) => i === h), log });
@@ -22,8 +22,9 @@ test("two delegations within 4s become a huddle, spaced ones do not", () => {
 test("report: blocked stays, done leaves; prefixes stripped; no actor, no action", () => {
   const rep = (o: Partial<Interaction>) => it({ kind: "report", from: "a1", to: "lead:s", ...o });
   assert.deepEqual(planInteraction(rep({ outcome: "blocked", text: "BLOCKED: no creds" }), ctx()), [{ k: "block", id: "a1", text: "no creds", by: "lead:s" }]);
-  assert.deepEqual(planInteraction(rep({ outcome: "done", text: "DONE: shipped" }), ctx()), [{ k: "report", from: "a1", to: "lead:s", text: "shipped" }]);
-  assert.deepEqual(planInteraction(rep({ outcome: "empty", text: "" }), ctx()), [{ k: "report", from: "a1", to: "lead:s", text: "Done." }]);
+  assert.deepEqual(planInteraction(rep({ outcome: "done", text: "DONE: shipped" }), ctx()), [{ k: "report", from: "a1", to: "lead:s", text: "shipped", done: true }]);
+  assert.deepEqual(planInteraction(rep({ outcome: "empty", text: "" }), ctx()), [{ k: "report", from: "a1", to: "lead:s", text: "(no report)", done: false }], "no report is never 'Done.' (S3)");
+  assert.deepEqual(planInteraction(rep({ text: "could not find the config" }), ctx()), [{ k: "report", from: "a1", to: "lead:s", text: "could not find the config", done: false }], "an unprefixed report is not a success");
   assert.deepEqual(planInteraction(rep({}), ctx([], ["lead:s"])), []);
 });
 
@@ -170,15 +171,6 @@ test("idle ladder: tiers by silence, coffee then couch", () => {
   assert.equal(pickStroller([{ id: "a", lastActive: 0, strolledAt: 0 }], 100_000)?.where, "couch"); // 100s silent
 });
 
-test("pair chat only within one session, both idle and off cooldown", () => {
-  const c = (id: string, session: string, lastActive = 0, strolledAt = 0) => ({ id, session, lastActive, strolledAt });
-  const now = 100_000;
-  assert.equal(pickPartner([c("a", "s1"), c("b", "s1")], "a", now), "b");
-  assert.equal(pickPartner([c("a", "s1"), c("b", "s2")], "a", now), null); // never across sessions
-  assert.equal(pickPartner([c("a", "s1"), c("b", "s1", 90_000)], "a", now), null); // b is busy
-  assert.equal(pickPartner([c("a", "s1"), c("b", "s1", 0, 90_000)], "a", now), null); // b strolled lately
-});
-
 test("micro-posture is seeded: same inputs, same pose; only in the first 1.5s of a slot", () => {
   const seen = new Set<string | null>();
   for (let t = 0; t < 200_000; t += 250) { assert.equal(microPose(t, 777), microPose(t, 777)); seen.add(microPose(t, 777)); }
@@ -251,7 +243,7 @@ test("stackLabels: a downward-preferring box (lead plaque) never goes up over it
   assert.ok(dy.every((d) => d >= 0), JSON.stringify(dy));
 });
 
-import { pushCapped, sipState, courierDue, MAX_QUEUED, COURIER_GAP_MS } from "./choreo.ts";
+import { pushCapped, sipState, MAX_QUEUED } from "./choreo.ts";
 test("pushCapped is FIFO and drops the oldest past the cap", () => {
   const q: number[] = [];
   for (let i = 0; i < MAX_QUEUED + 3; i++) pushCapped(q, i);
@@ -265,25 +257,6 @@ test("sipState: only in tier 1 and only when calm; still never sips", () => {
   for (let t = 0; t < 200_000; t += 250) { assert.notEqual(sipState(10_000, true, true, t, 7), "sip"); if (sipState(10_000, true, false, t, 7) === "sip") sips++; }
   assert.ok(sips > 0);
 });
-test("courierDue: rate cap, alert, live and ambient gates", () => {
-  const ok = { live: false, alert: false, ambient: true };
-  const t = 10 * COURIER_GAP_MS + COURIER_GAP_MS - 1; // late in a period: its seeded moment has passed
-  assert.equal(courierDue(t, 0, ok), true);
-  assert.equal(courierDue(t, t - 1000, ok), false);
-  assert.equal(courierDue(t, 0, { ...ok, alert: true }), false);
-  assert.equal(courierDue(t, 0, { ...ok, live: true }), false);
-  assert.equal(courierDue(t, 0, { ...ok, ambient: false }), false);
-});
-
-test("courier guard: waits for a walker within 2.2 tiles, ghosts within 1, ignores far ones", async () => {
-  const { courierGuard } = await import("./choreo.ts");
-  const T = 16;
-  assert.deepEqual(courierGuard(0, 0, [{ x: 100, y: 0 }], T), { wait: false, fade: false });
-  assert.deepEqual(courierGuard(0, 0, [{ x: 30, y: 0 }], T), { wait: true, fade: false });
-  assert.deepEqual(courierGuard(0, 0, [{ x: 10, y: 0 }], T), { wait: true, fade: true });
-  assert.deepEqual(courierGuard(0, 0, [], T), { wait: false, fade: false });
-});
-
 test("stackLabels: an alert flag pushes other tags away but not its owner's (A8)", () => {
   const me = {}, other = {};
   const flag = { x: 50, y: 0, w: 10, h: 10, pri: 2, own: me };
@@ -311,4 +284,11 @@ test("session collapse: on above 12 helpers, off again at 10; worst state follow
   assert.equal(w("blocked", "waiting"), "turn");
   assert.equal(worstState([{ s: "waiting", wait: "turn" }, { s: "waiting", wait: "permission" }]), "permission");
   assert.equal(w("queued"), "idle");
+});
+
+test("alertsFor: a helper's permission prompt rings on that helper, not the lead (C1)", () => {
+  const st = { sessions: { s: { id: "s", waiting: true, waitBy: "h1" } }, agents: { h1: { id: "h1" } } } as unknown as Parameters<typeof alertsFor>[0];
+  assert.deepEqual([...alertsFor(st, [], (x) => `lead:${x}`)], [["h1", "waiting"]]);
+  const gone = { ...st, agents: {} } as unknown as Parameters<typeof alertsFor>[0];
+  assert.deepEqual([...alertsFor(gone, [], (x) => `lead:${x}`)], [["lead:s", "waiting"]], "unknown agent: falls back to the lead");
 });

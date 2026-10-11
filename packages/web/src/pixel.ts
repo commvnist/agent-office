@@ -31,7 +31,8 @@ export class Grid {
    * hue-shifted version of its darkest neighbouring fill; `c` is the fallback when that cannot be darker than the fill
    * (very dark fills, non-hex fills such as baked-alpha shadows). Always an opaque hex colour.
    */
-  outline(c: string) {
+  /** `lit`: on the top-left (key-light) side the outline is a soft step of the fill it borders, not the deep line: selective outlining. */
+  outline(c: string, lit = false) {
     const add: number[] = [], pick = new Map<string, string>();
     const col = (fill: string) => {
       let o = pick.get(fill);
@@ -55,7 +56,9 @@ export class Grid {
         const l = !f ? 3 : HEX.test(f) ? luma(f) : 1;
         if (f && l < bl) { bl = l; best = f; }
       }
-      return col(best);
+      // lit side: the figure is to the right or below and not to the left or above this pixel
+      const litSide = lit && !this.get(x - 1, y) && !this.get(x, y - 1) && (this.get(x + 1, y) || this.get(x, y + 1));
+      return litSide && HEX.test(best) ? shade(best, -0.25) : col(best);
     });
     add.forEach((i, k) => (this.cells[i] = out[k]));
     return this;

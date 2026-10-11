@@ -5,7 +5,7 @@ import { sceneGeometry, selfCheck, type SceneGeometry } from "./geometry.ts";
 import { art, dev, place } from "./snap.ts";
 import { bake, Grid, hash, hsl, mix } from "./pixel.ts";
 import { shade } from "./color.ts";
-import { KEY, theme } from "./theme.ts";
+import { KEY, theme, STATUS } from "./theme.ts";
 import { office } from "./api.ts";
 import { boardModel, COLS, ledgerLines, SUMMARY_MS, type Board, type Col, type Memo } from "./board.ts";
 import { podOwners, projectHue } from "./logic.ts";
@@ -33,11 +33,15 @@ const E = KEY.env, CY = hexNum(KEY.cyan), CY_OFF = hexNum(KEY.cyanOff), WARM = h
 /**
  * `tool` = last tool name (monitor glyph), `count` = tool calls so far (desk clutter), `stale` = long quiet (dim monitor),
  * `role` = occupant's role (desk-top item), `flash` = ms stamp of a "ship-it" wave (monitors blink green for 1.2s, staggered),
- * `waiting` = occupant needs the user (lamp pulses gold), `prompt` = the session's last user prompt (pod caption),
+ * `waiting` = occupant needs the user (a steady lamp in the wait kind's status colour, R2), `prompt` = the session's last user prompt (pod caption),
  */
 export type SeatState = { used: boolean; working: boolean; tool?: string; count?: number; stale?: boolean; project?: string; role?: string; flash?: number; waiting?: boolean; prompt?: string;
   /** `load` = tool calls in the last 30 s (0 idle .. 3 busy): lights the desk power rail. `queueDepth` = queued items for the agent (chip stack). `idleMs` = real silence (desaturates the desk). `hue` = session identity hue (floor trim). */
-  load?: 0 | 1 | 2 | 3; mug?: boolean; queueDepth?: number; idleMs?: number; hue?: number };
+  load?: 0 | 1 | 2 | 3; mug?: boolean; queueDepth?: number; idleMs?: number; hue?: number;
+  /** The occupant is hidden by session collapse: its chair hides too (an empty chair reads as a top hat), the desk keeps its activity (R1). */
+  folded?: boolean;
+  /** Why it waits: permission (amber lamp) or your turn (cyan lamp); defaults to permission. */
+  waitKind?: "permission" | "turn" };
 
 type Desk = { s: Sprite; accent: string; chair: Sprite | null; overflowTier: number | null; deco: Graphics | null; decoKey: string; shown: number; pod: number; by: number; v: 0 | 1; idx: number; sh: Sprite[]; used: boolean; chairAt: number; sty: 0 | 1 | 2 };
 const BUILD_MS = 400, RISE = 6; // build-in fade/rise
@@ -65,7 +69,7 @@ const lightTex = (kind: string) => smooth(bake(32, 26, (c) => {
   g.addColorStop(0, `rgba(${rgb},0.16)`); g.addColorStop(1, `rgba(${rgb},0)`);
   c.fillStyle = g; c.beginPath(); c.moveTo(13, 12); c.lineTo(19, 12); c.lineTo(27, 25); c.lineTo(5, 25); c.fill();
 }));
-const lampTex = () => smooth(bake(14, 14, (c) => radial(c, 7, 7, 7, 7, "255,216,74", 0.5)));
+const lampTex = () => smooth(bake(14, 14, (c) => radial(c, 7, 7, 7, 7, "255,255,255", 0.5))); // white: tinted by wait kind
 // weather art (baked once, shared across scenes)
 let wxTex: { cloud: Texture; sun: Texture } | null = null;
 const wxTextures = () => (wxTex ??= {
@@ -80,7 +84,6 @@ const wxTextures = () => (wxTex ??= {
     return g.texture();
   })(),
 });
-const DISCO = [0xffa6ff, 0xa6ffff, 0xffffa6];
 type WxWin = { x: number; cloud: Sprite; sun: Sprite; drops: Sprite[]; flash: Sprite };
 type Pod = {
   x: number; y: number; w: number; h: number; g: Graphics; owner: string; hue: number; plaque: Text | null; key: string;
@@ -151,8 +154,6 @@ export class Scene {
   private flashUntil = 0;
   private shakeUntil = 0;
   private floorS: Sprite | null = null;
-  private discoUntil = 0;
-  private discoOn = false;
   private catS: Sprite | null = null;
   private catUntil = 0;
   private ys: Container;
@@ -597,11 +598,11 @@ export class Scene {
   }
 
   /** Monitor glyph by tool kind (#102), lamp shade, role item and drawn over the desk sprite. */
-  private drawDeco(g: Graphics, o: { working: boolean; tool?: string; count: number; role?: string; v: number; waiting: boolean; flash: boolean; used: boolean; load: number; depth: number; mug: boolean; filed?: string }) {
+  private drawDeco(g: Graphics, o: { working: boolean; tool?: string; count: number; role?: string; v: number; waiting: boolean; turn: boolean; flash: boolean; used: boolean; load: number; depth: number; mug: boolean; filed?: string }) {
     g.clear();
     const px = (x: number, y: number, col: string) => g.rect(x, y, 1, 1).fill(col);
     if (o.filed) { g.rect(1, 3, 4, 3).fill(KEY.paper).rect(1, 3, 4, 1).fill(FILED[o.filed] ?? "#8b93ad"); return; } // a filed result left on the empty desk
-    if (o.v === 0) g.rect(3, 0, 3, 1).fill(o.working ? KEY.warm : o.waiting ? "#ffd84a" : E[3]);
+    if (o.v === 0) g.rect(3, 0, 3, 1).fill(o.working ? KEY.warm : o.waiting ? STATUS[o.turn ? "turn" : "permission"].color : E[3]);
     const r = o.role ?? "";
     if (/qa|test/.test(r)) { g.rect(6, 0, 2, 3).fill(E[1]).rect(6, 1, 2, 1).fill(E[3]); px(7, 0, "#5be37d"); }
     else if (/design|front/.test(r)) { g.rect(6, 1, 2, 2).fill(KEY.paper); px(7, 0, "#c9604a"); }
@@ -696,11 +697,11 @@ export class Scene {
         const used = !!st?.used, working = used && !!st?.working;
         const el = st?.flash ? now - st.flash - d.idx * 60 : -1; // ship-it wave: 120ms green blink per desk, staggered
         const flash = !settings.reducedMotion && el >= 0 && el < 120 && now - st!.flash! < 1200;
-        const o = { working, tool: working ? st?.tool : undefined, count: used ? st?.count ?? 0 : 0, role: used ? st?.role : undefined, v: d.v, waiting: used && !working && !!st?.waiting, flash, used, load: used ? st?.load ?? 0 : 0, mug: used && !!st?.mug, depth: used ? st?.queueDepth ?? 0 : 0 };
+        const o = { working, tool: working ? st?.tool : undefined, count: used ? st?.count ?? 0 : 0, role: used ? st?.role : undefined, v: d.v, waiting: used && !working && !!st?.waiting, turn: st?.waitKind === "turn", flash, used, load: used ? st?.load ?? 0 : 0, mug: used && !!st?.mug, depth: used ? st?.queueDepth ?? 0 : 0 };
         const f = this.filed.get(id);
         if (f && (used || now - f.t > FILED_MS)) this.filed.delete(id); // tidied once someone sits down or after a while
         const filed = !used ? this.filed.get(id)?.kind : undefined;
-        const key = `${o.tool ?? ""}|${o.count}|${o.role ?? ""}|${+working}${+o.waiting}${+flash}|${+used}${o.load}.${o.depth}${+o.mug}|${filed ?? ""}`;
+        const key = `${o.tool ?? ""}|${o.count}|${o.role ?? ""}|${+working}${+o.waiting}${+o.turn}${+flash}|${+used}${o.load}.${o.depth}${+o.mug}|${filed ?? ""}`;
         if (key !== d.decoKey) { d.decoKey = key; this.drawDeco(d.deco, { ...o, filed }); }
       }
     }
@@ -711,10 +712,13 @@ export class Scene {
       if (d.chair) d.chair.alpha = a;
       d.sh.forEach((x) => (x.alpha = a));
     }
-    if (!settings.reducedMotion) for (const d of this.desks.values()) { // chairs scoot in on arrival and push back on departure
-      if (!d.chair || d.pod < 0 || d.chairAt === 0) continue;
-      const k = Math.min(1, (now - d.chairAt) / (d.used ? 260 : 150)), vis = d.used || now - d.chairAt < CHAIR_LINGER_MS; // a vacated chair stays pushed back, honestly 'recently left', then is tidied
+    for (const [id, d] of this.desks) { // chairs scoot in on arrival and push back on departure; a folded occupant's chair hides
+      if (!d.chair) continue;
+      const lingering = d.pod >= 0 && !settings.reducedMotion && d.chairAt > 0 && now - d.chairAt < CHAIR_LINGER_MS; // a vacated chair stays pushed back, honestly 'recently left', then is tidied
+      const vis = (d.used || lingering) && !this.state.get(id)?.folded;
       if (d.chair.visible !== vis) { d.chair.visible = vis; d.sh[1].visible = vis; }
+      if (settings.reducedMotion || d.pod < 0 || d.chairAt === 0) continue;
+      const k = Math.min(1, (now - d.chairAt) / (d.used ? 260 : 150));
       d.chair.y = art(d.by - T - 4 * (d.used ? 1 - k : k));
     }
     for (const [p, t] of this.born) { // new pods fade and rise in; existing desks never move
@@ -840,10 +844,6 @@ export class Scene {
     this.flashUntil = now + 70;
     this.shakeUntil = now + 160;
   }
-  /** Floor tint cycles three colours until `until`. */
-  disco(until: number) {
-    if (burstAllowed()) this.discoUntil = until;
-  }
   /** Couch seat spots in art px (see choreo.couchSeats), in a stable order: index = delight seat. */
   couchSpots() {
     return this.l.decor.filter((d) => d.kind === "couch").flatMap((d) => couchSeats(d, T));
@@ -869,14 +869,10 @@ export class Scene {
     for (const w of this.wxWins) if (w.flash.visible !== flash) w.flash.visible = flash;
     const sh = anim && now < this.shakeUntil ? (Math.floor((this.shakeUntil - now) / 30) % 2 ? 1 : -1) : 0;
     if (this.sky.x !== sh) this.sky.x = this.wx.x = sh;
-    const disco = anim && now < this.discoUntil;
-    if (disco && this.floorS) this.floorS.tint = DISCO[Math.floor(now / 400) % 3];
-    else if (this.discoOn && this.floorS) this.floorS.tint = 0xffffff;
-    this.discoOn = disco;
     if (this.catS?.visible && now >= this.catUntil) this.catS.visible = false;
   }
 
-  /** Desk lights (working: pool + tool-coloured spill + lamp; waiting: pulsing gold lamp), pooled additive sprites, and dust in the shafts. */
+  /** Desk lights (working: pool + tool-coloured spill + lamp; waiting: a steady lamp in the wait kind's colour, never pulsing), pooled additive sprites, and dust in the shafts. */
   private tickLights(now: number) {
     const night = this.night.alpha, still = settings.reducedMotion;
     let n = 0;
@@ -900,11 +896,12 @@ export class Scene {
         const k = toolKind(st!.tool);
         g.texture = this.lightTexs.get(k) ?? this.lightTexs.set(k, lightTex(k)).get(k)!;
         place(g, d.s.x - 4.5, d.s.y - 6.5);
-        g.alpha = 0.75 + night;
+        g.alpha = 0.75 + night; g.tint = 0xffffff; // pooled: a sprite last used as a waiting lamp keeps its tint otherwise
       } else {
         g.texture = this.lightTexs.get("lamp") ?? this.lightTexs.set("lamp", lampTex()).get("lamp")!;
         place(g, d.s.x - 2.5, d.s.y - 6.5);
-        g.alpha = still ? 0.6 : 0.35 + 0.35 * Math.sin(now / 320); // waiting: lamp pulses gold
+        g.tint = Number.parseInt(STATUS[st!.waitKind === "turn" ? "turn" : "permission"].color.slice(1), 16);
+        g.alpha = 0.6; // steady: "your turn" never pulses and alerts only move in their first seconds (owner rule, R2)
       }
     }
     // dust drifts only inside the window light; off at night and under reduced motion
@@ -941,7 +938,7 @@ export class Scene {
     const outs = office.getEnvelope()?.state.outcomes ?? [], ledger = outs.length > 0;
     const bd = this.board!, any = tasks.length > 0 && !ledger;
     if (ledger) for (const c of this.cards) if (c.visible) c.visible = false;
-    const fs = Math.max(8, Math.floor(sc * 5)); // no upper cap: the board text keeps its size relative to the board, so zooming in makes it larger
+    const fs = Math.max(1, Math.floor(sc * 5)); // world-relative both ways (O3): the board text keeps its size relative to the board
     const colW = (b.w * T - 6) / 4, chars = Math.floor((colW * sc) / (fs * 0.72)); // 0.72: headroom so a header never runs into the next column's text
     const key = `${fs}|${chars}|${any}|${ledger ? `${outs[0].t}.${outs.length}` : ""}`;
     if (key !== this.colKey) {

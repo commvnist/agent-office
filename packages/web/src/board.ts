@@ -19,8 +19,9 @@ export function boardModel(tasks: readonly Task[], memo: Memo, now: number): Boa
   return { cols, counts, summary: parts.join(", ") };
 }
 
-/** Outcome marks on the wall ledger: shape, not colour, carries the result. */
-export const LEDGER_MARK: Record<string, string> = { done: "✓", partial: "~", blocked: "x", empty: "·" };
+/** Outcome marks and words on the wall ledger: shape, not colour, carries the result. C3: only DONE earns ✓; empty or unknown is "reported". */
+export const LEDGER_MARK: Record<string, string> = { done: "✓", partial: "~", blocked: "x" };
+const WORD: Record<string, string> = { done: "done", partial: "partly done", blocked: "gave up" };
 /**
  * The wall board as an outcomes ledger (critique V1/J3): newest finished delegations first, one line each,
  * "✓ project: result" clipped to `chars`. Falls back to the task text, then to the bare outcome, so a blanked
@@ -28,8 +29,8 @@ export const LEDGER_MARK: Record<string, string> = { done: "✓", partial: "~", 
  */
 export function ledgerLines(outs: readonly Outcome[] | undefined, max: number, chars: number): string[] {
   return (outs ?? []).slice(0, Math.max(0, max)).map((o) => {
-    const what = (o.text || o.task || "").replace(/^\s*(DONE|BLOCKED|PARTIAL)\s*:\s*/i, "").replace(/\s+/g, " ").trim() || (o.outcome ?? "done"); // the mark already says the outcome
-    const line = `${LEDGER_MARK[o.outcome ?? "done"] ?? "·"} ${o.project || o.session.slice(0, 8)}: ${what}`;
+    const what = (o.text || o.task || "").replace(/^\s*(DONE|BLOCKED|PARTIAL)\s*:\s*/i, "").replace(/\s+/g, " ").trim() || (WORD[o.outcome ?? ""] ?? "reported"); // the mark already says the outcome
+    const line = `${LEDGER_MARK[o.outcome ?? ""] ?? "·"} ${o.project || o.session.slice(0, 8)}: ${what}`;
     return line.length > chars ? `${line.slice(0, Math.max(1, chars - 1))}…` : line;
   });
 }

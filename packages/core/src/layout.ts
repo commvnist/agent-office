@@ -21,8 +21,8 @@ export type Layout = {
 const key = (t: Tile) => `${t.x},${t.y}`;
 
 /** Desks per floor (16 pods: pod rows of 6, 6 and 4) and floors; demand above one floor opens the next, stacked below it in the one world. */
-export const FLOOR_DESKS = 64, MAX_FLOORS = 3;
-/** 192 desks: just under the reducer's own cap (LIMITS.agents = 200), so enforceSeats and the visible queue stay reachable; a 4th floor would hold at most 8. */
+export const FLOOR_DESKS = 64, MAX_FLOORS = 2;
+/** 128 desks: the largest whole-floor office that passes the perf gate (at 192 the display objects ran over budget; owner: cap at what passes). Beyond it agents queue visibly ("+N waiting for a desk"). */
 export const MAX_DESKS = FLOOR_DESKS * MAX_FLOORS;
 export const PODS_PER_ROW = 6;
 const FLOOR_ROWS = 3; // pod rows per floor

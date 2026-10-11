@@ -8,6 +8,17 @@
 .tg-views .b[aria-pressed=true]::before{content:none} /* the filled segment is the mark; a check would shift the switch */
 .mpop{position:absolute;top:calc(100% + 6px);inset-inline-end:0;z-index:20;display:flex;flex-direction:column;align-items:stretch;gap:4px;min-width:200px;padding:8px;background:var(--panel);border:1px solid var(--line);border-radius:6px;box-shadow:0 8px 24px #0008}
 .mpop .b{text-align:start}
+/* O4: folded header groups render open inside More, each under its name (the phone sheet's pattern) */
+#menu-more .mtg{display:none}
+#menu-more .mpop[hidden]{display:flex!important}
+#menu-more .mpop{position:static;min-width:0;padding:0;border:0;box-shadow:none;background:none}
+#menu-more .tgrp{flex-direction:column;align-items:stretch}
+#menu-more .tg-display::before,#menu-more .tg-export::before{content:attr(aria-label);font-size:calc(11px * var(--ts,1));letter-spacing:.1em;text-transform:uppercase;color:var(--mute)}
+#menu-more .tg-setup{flex-direction:row}
+#menu-more>.chip{align-self:flex-start}
+.away{cursor:default;align-items:center} .away .ra{flex-direction:row;padding:0}
+.goal{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--soft)}
+#done .more-done{margin:8px var(--pad)}
 /* Dialogs (C1-C6): a sticky title row with a close button, scroll shadows when the content runs on, never past the window */
 .dlg{position:absolute;right:calc(var(--sw) + 8px);top:calc(var(--top-h,40px) + 8px);z-index:6;border:1px solid var(--line);border-radius:6px;padding:12px;width:300px;max-height:calc(100dvh - var(--top-h,40px) - 72px);overflow:auto;display:flex;flex-direction:column;gap:8px}
 .dlg,#settings{background:linear-gradient(var(--panel) 30%,transparent) center top/100% 40px no-repeat local,linear-gradient(transparent,var(--panel) 70%) center bottom/100% 40px no-repeat local,radial-gradient(farthest-side at 50% 0,#000a,transparent) center top/100% 10px no-repeat scroll,radial-gradient(farthest-side at 50% 100%,#000a,transparent) center bottom/100% 10px no-repeat scroll,var(--panel);box-shadow:0 12px 32px #000a}
@@ -23,7 +34,7 @@
 #help p{margin:0;line-height:1.5} #help > .b{align-self:flex-start}
 kbd{font:inherit;border:1px solid var(--line);border-radius:3px;padding:0 4px}
 #settings{max-height:80vh;overflow:auto}
-#stale{position:fixed;left:0;right:0;bottom:0;z-index:40;background:#e0524a;color:#fff;font-weight:700;text-align:center;padding:4px 8px}
+#stale{position:fixed;left:0;right:0;bottom:0;z-index:40;background:var(--off);color:var(--ink);font-weight:700;text-align:center;padding:4px 8px}
 .view{position:fixed;left:0;top:var(--top-h,34px);right:var(--sw,0px);bottom:0;z-index:4;background:var(--bg);overflow:auto}
 /* #top's gradient is transparent at its bottom edge; under a view it must be solid or the moving canvas shows through */
 body:has(.view:not([hidden])) #top{background:var(--bg)}
@@ -38,7 +49,7 @@ body:has(.view:not([hidden])) #top{background:var(--bg)}
 .tlwrap canvas{position:sticky;top:0;display:block;cursor:crosshair}
 .tl-legend{display:flex;flex-wrap:wrap;gap:4px 12px;padding:0 16px 8px;font-size:calc(11px * var(--ts,1))}
 .tl-legend .sw{display:inline-block;width:10px;height:10px;margin-inline-end:4px;border-radius:2px}
-.frozen-chip{position:fixed;left:12px;top:calc(var(--top-h,34px) + 6px);z-index:41;background:var(--acc);color:#14121f;font-weight:700;padding:4px 8px;border-radius:6px;display:flex;gap:8px;align-items:center}
+.frozen-chip{position:fixed;left:12px;top:calc(var(--top-h,34px) + 6px);z-index:41;background:var(--acc);color:var(--ink);font-weight:700;padding:4px 8px;border-radius:6px;display:flex;gap:8px;align-items:center}
 #settings input[type=number]{width:96px;background:var(--raise);color:inherit;border:1px solid var(--line);border-radius:4px}
 .sess.pc{border-inline-start:3px solid var(--pc)} /* project accent; radar and feed rows keep their kind stripe and get a dot */
 .rdw.pc::before,.it.pc::before{content:"";flex:none;align-self:flex-start;width:8px;height:8px;margin:12px 0 0 8px;border-radius:50%;background:var(--pc)}
@@ -57,33 +68,29 @@ body:has(.view:not([hidden])) #top{background:var(--bg)}
 .cb canvas{width:18px;height:18px;image-rendering:pixelated;border-radius:50%}
 .cb.working{--ring:var(--good)} .cb.thinking{--ring:var(--acc)} .cb.waiting{--ring:var(--warn)} .cb.blocked{--ring:var(--bad)} .cb.idle{--ring:var(--line)}
 .cb.queued{--ring:var(--mute);border-style:dashed}
-.cb[data-g]:not([data-g=""])::after{content:attr(data-g);position:absolute;top:-6px;inset-inline-end:-6px;min-width:15px;height:15px;border-radius:8px;background:var(--ring);color:#14121f;font:800 11px/15px ui-monospace,monospace;text-align:center;box-shadow:0 0 0 1.5px var(--bg)} /* A2: the status glyph, never colour alone */
+.cb[data-g]:not([data-g=""])::after{content:attr(data-g);position:absolute;top:-6px;inset-inline-end:-6px;min-width:15px;height:15px;border-radius:8px;background:var(--ring);color:var(--ink);font:800 11px/15px ui-monospace,monospace;text-align:center;box-shadow:0 0 0 1.5px var(--bg)} /* A2: the status glyph, never colour alone */
 .cb[aria-pressed=true]{box-shadow:0 0 0 2px var(--acc)}
 /* hook: session identity on chips (project colour + 2-letter glyph) needs data-session/--pc on .cb in colonists.ts; the DOM only has the status ring and portrait today */
 .cb.more{width:auto;min-width:24px;padding:0 6px;border:1px solid var(--line);border-radius:12px;color:var(--soft);cursor:pointer;font-size:calc(11px * var(--ts,1));white-space:nowrap}
 #hl{position:absolute;inset-inline-end:calc(var(--sw) + 12px);top:calc(var(--top-h,40px) + var(--cb-h,0px) + 8px);z-index:3;display:flex;flex-direction:column;gap:8px;align-items:flex-end;pointer-events:none}
-.hl,.toast{pointer-events:auto;display:flex;gap:8px;align-items:flex-start;text-align:start;max-width:min(340px,80vw);box-sizing:border-box;background:var(--panel);border:1px solid var(--line);border-inline-start:3px solid var(--glow);border-radius:3px;padding:8px 12px;cursor:pointer;animation:fx-in .2s cubic-bezier(0.16,1,0.3,1)}
-.toast{flex-direction:column;align-items:stretch;gap:4px;cursor:default} .toast .tmain{display:flex;gap:8px;align-items:flex-start;background:none;border:0;padding:0;text-align:start;cursor:pointer} .toast .b{align-self:flex-start}
+.hl{pointer-events:auto;display:flex;gap:8px;align-items:flex-start;text-align:start;max-width:min(340px,80vw);box-sizing:border-box;background:var(--panel);border:1px solid var(--line);border-inline-start:3px solid var(--glow);border-radius:3px;padding:8px 12px;cursor:pointer;animation:fx-in .2s cubic-bezier(0.16,1,0.3,1)}
 .hl.done{border-inline-start-color:var(--st-working)} .hl.blocked{border-inline-start-color:var(--st-blocked)} .hl.partial{border-inline-start-color:var(--st-idle)}
-.hl.still,.toast.still{animation:fade .15s ease-out}
+.hl.still{animation:fade .15s ease-out}
 @keyframes fade{from{opacity:0}to{opacity:1}}
-.hl .hg,.toast .ti{flex:none;font-size:calc(16px * var(--ts,1));line-height:1.2}
+.hl .hg{flex:none;font-size:calc(16px * var(--ts,1));line-height:1.2}
 .tt{display:flex;flex-direction:column;min-width:0;word-break:break-word} .tt span{color:var(--soft)}
 @keyframes fx-in{from{opacity:0;transform:translateX(calc(16px * var(--dir)))}to{opacity:1;transform:none}}
-#fxbl{position:absolute;inset-inline-start:12px;bottom:12px;z-index:3;display:flex;flex-direction:column;gap:8px;align-items:flex-start;pointer-events:none}
-body.tick #fxbl{bottom:38px} body.tick.presenter #caption{bottom:44px}
-#toasts{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+body.tick.presenter #caption{bottom:44px}
 #ticker{position:absolute;inset-inline:0 var(--sw);bottom:0;z-index:3;height:26px;display:flex;align-items:center;padding:0 16px;box-sizing:border-box;overflow:hidden;white-space:nowrap;background:color-mix(in srgb,var(--panel) 88%,transparent);border-top:1px solid var(--line);color:var(--soft)}
 #ticker{visibility:hidden;opacity:0;transition:opacity .4s,visibility .4s} #ticker.show{visibility:visible;opacity:1}
 #ticker span{overflow:hidden;text-overflow:ellipsis}
-body.overlay #colony,body.overlay #toasts,body.overlay #hl{display:none}
 .sp{display:flex;align-items:center;gap:8px;padding:4px 16px;color:var(--acc)} .sp .k:last-child{color:var(--soft)} .sp .k:first-child{min-width:78px}
-/* events/min + tokens/min: a 24px strip pinned to the stage bottom (inside the panel DOM, so visibility:visible beats the collapsed panel's hidden); presenter/overlay/kiosk hide #side and with it the strip */
+/* events/min + tokens/min: a 24px strip pinned to the stage bottom (inside the panel DOM, so visibility:visible beats the collapsed panel's hidden); presenter/kiosk hide #side and with it the strip */
 #spark:empty{display:none}
 #spark{position:fixed;inset-inline:0 var(--sw);bottom:0;z-index:3;height:24px;box-sizing:border-box;display:flex;align-items:center;gap:24px;padding:0 16px;visibility:visible;overflow:hidden;white-space:nowrap;background:color-mix(in srgb,var(--panel) 94%,transparent);border-top:1px solid var(--line)}
 #spark .sp{padding:0;gap:8px} #spark .sp .k:first-child{min-width:0} #spark svg{flex:none;height:16px}
 body.tick #spark{bottom:26px}
-#mm{bottom:32px} #fxbl{bottom:36px} body.tick #fxbl{bottom:62px}
+#mm{bottom:32px}
 @media (max-width:480px){#spark{gap:12px} #spark svg{display:none}}
 @media (max-width:800px){body:not(.collapsed) #spark{inset-inline-end:min(var(--swx,340px),92vw)}}
 .sess{position:relative} .sess.hasr{padding-inline-end:48px} .sess .rings{position:absolute;inset-inline-end:12px;top:8px}
@@ -112,7 +119,7 @@ input[type=number],input[type=text],input:not([type]){box-sizing:border-box;padd
    and the camera fits the stage above the sheet (main.ts sheetPx). #fit is the phone's "fit all / follow" toggle. */
 #fit{position:absolute;inset-inline-start:8px;bottom:36px;z-index:3}
 body.tick #fit{bottom:62px} /* the ticker lifts the meter strip by 26px: stay above both */
-body.overlay #fit,body.presenter #fit,body.kiosk #fit{display:none}
+body.presenter #fit,body.kiosk #fit{display:none}
 @media (max-width:800px){
   #side{inset-inline:0;top:auto;bottom:0;width:auto;height:45dvh;border-inline-start:0;border-top:1px solid var(--line);border-radius:12px 12px 0 0;box-shadow:0 -8px 24px #0008}
   #handle{display:none}
@@ -137,3 +144,5 @@ body.overlay #fit,body.presenter #fit,body.kiosk #fit{display:none}
 @media (max-width:800px){
   #stats{letter-spacing:0;font-size:calc(11px * var(--ts,1))}
 }
+
+#top.f-stats #stats{display:none} /* O4: counts that cannot fit are dropped, never shown as a stray character */

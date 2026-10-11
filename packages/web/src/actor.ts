@@ -27,7 +27,7 @@ export type Alert = "waiting" | "blocked";
 /** What a waiting lead waits for: a permission prompt (act now) or the end of its turn (your move). */
 export type WaitKind = "permission" | "turn";
 const BUBBLE_STYLE: Record<BubbleKind, { bg: number; fg: number; border: number }> = {
-  say: { bg: 0xffffff, fg: 0x1d1b2b, border: 0x1d1b2b },
+  say: { bg: 0xe4e0d4, fg: 0x1d1b2b, border: 0x1d1b2b }, // a paper tint, not pure white: white is for lights and text (R6)
   report: { bg: 0xe6ffe9, fg: 0x143a1c, border: 0x1f6b33 },
   user: { bg: 0xdbe9ff, fg: 0x13294d, border: 0x2a5cb8 },
   tool: { bg: 0x2a2d3f, fg: 0xcfd6ff, border: 0x555b82 },
@@ -168,7 +168,8 @@ export class Actor {
   low = false; // LOD: see setLod
   readonly pip = new Graphics(); // LOD status pip, screen space
   demoted = false; // tag swapped for the pip because the floor was too crowded
-  onScreen = true; // after syncUi: off-screen tags are not stacked (their floor rect is not the visible one)
+  onScreen = true;
+  private ringScr = { x: 0, y: 0, w: 0, h: 0 }; // the world ring's screen box after syncUi (label stacking) // after syncUi: off-screen tags are not stacked (their floor rect is not the visible one)
   private headPip = { x: 0, y: 0 };
   private pipKey = "";
   private flr: Rect = { x: 0, y: 0, w: 0, h: 0 }; // floor bounds in screen px, valid when `floor` is set
@@ -205,7 +206,9 @@ export class Actor {
     const shadow = new Graphics().ellipse(0, -1, 6, 2.5).fill({ color: 0x000000, alpha: 0.28 });
     this.sprite.anchor.set(0.5, 1);
     this.emoteSprite.anchor.set(0.5, 1);
-    this.c.addChild(shadow, this.sprite, this.emoteSprite);
+    // the alert ring sits behind the figure (R5): its back arc frames the person, the face and a raised hand stay visible
+    this.ring.position.set(0, -12);
+    this.c.addChild(shadow, this.ring, this.sprite, this.emoteSprite);
     this.c.eventMode = "static";
     this.c.cursor = "pointer";
     // hit box padded by ~8 screen px so it stays grabbable at fit zoom (#117)
@@ -218,7 +221,7 @@ export class Actor {
     this.glyph.texture = emoteTex("exclaim");
     this.ring.visible = this.mark.visible = this.glyph.visible = false;
     this.pip.visible = false;
-    this.ui.addChild(this.ring, this.mark, this.prog, this.glyph, this.edge, this.plate, this.tag, this.pip);
+    this.ui.addChild(this.mark, this.prog, this.glyph, this.edge, this.plate, this.tag, this.pip);
     uiLayer.addChild(this.ui);
   }
 
@@ -485,7 +488,8 @@ export class Actor {
     const glancing = seated && this.glanceMs > 0;
     if (this.glanceMs > 0) this.glanceMs -= ms;
     // idle fidget only after a quiet spell, never during alerts, emotes or speech
-    const calm = !moving && !still && !settings.ambientPaused && !this.alert && !this.working && !this.emote && !this.speech && now - this.busyAt > 6000;
+    // quirks (yawn, phone, sip) only when truly idle: a helper between tools is still generating, so it never qualifies (S8)
+    const calm = !moving && !still && !settings.ambientPaused && !this.alert && !this.working && !this.thinking && !this.emote && !this.speech && now - this.busyAt > 6000;
     const quirk = calm ? quirkAt(now, this.h) : null;
     const expr: Expr = this.alert === "blocked" ? "stuck" : this.alert === "waiting" ? "worry"
       : this.emote?.e === "check" || this.emote?.e === "heart" ? "happy" : quirk ?? (seated && this.working ? "focus" : "neutral");
@@ -562,7 +566,8 @@ export class Actor {
     }
     const couched = !!this.perch && this.perch.k >= 1; // lounging: head sits ~4px lower than standing
     const headY = dev(sy - (this.sitting ? 20 : couched ? 24 : 28) * sc - 6);
-    if (this.tagAbove && this.sitting) { this.tag.y = dev(headY - this.tag.height - 1); if (floor) this.clampTag(); }
+    // upper-row tag sits above the emote's space (emotes are <= 9 art px tall, bottom 19 px above the feet), so it never covers its own thought cloud (O1); bubbles stack above it
+    if (this.tagAbove && this.sitting) { this.tag.y = dev(sy - 29 * sc - this.tag.height - 1); if (floor) this.clampTag(); }
     const toolY = headY - stagger;
     // 120ms pop-in, 150ms fade-out (#109)
     const fade = (b: { left: number; born: number }) => (settings.reducedMotion ? 1 : Math.max(0, Math.min(1, (this.t - b.born) / 120, b.left / 150)));
@@ -579,12 +584,13 @@ export class Actor {
       this.toolBubble.node.alpha = fade(this.toolBubble);
       this.toolBubble.node.position.set(sx, toolY);
     }
-    // rings + alert glyph live in screen space so the night overlay never dims them
-    // alerts move only for their first 4 s (then hold still); "your turn" never pulses: it is calm, not urgent
+    // the alert glyph lives in screen space so the night overlay never dims it; the ring is in the world, behind the figure
+    // alerts move only for their first 4 s (then hold still); "your turn" never pulses: it is calm, not urgent. The pulse is two
+    // stepped frames (full, dimmed), never a fractional scale that blurs the pixel ring (R5).
     const fresh = this.alert && !settings.reducedMotion && !(this.alert === "waiting" && this.waitKind === "turn") && this.t - this.alertAt < 4000;
-    const pulse = fresh ? 1 + 0.08 * Math.sin((this.t * Math.PI * 2) / (this.alert === "blocked" ? 900 : 1400)) : 1;
-    this.ring.position.set(sx, dev(sy - 12 * sc));
-    this.ring.scale.set(Math.round(sc * pulse * 4) / 4); // quarter steps keep the pixel ring crisp
+    this.ring.alpha = fresh && Math.floor(this.t / (this.alert === "blocked" ? 225 : 350)) % 2 ? 0.55 : 1;
+    const rt = this.ring.texture;
+    this.ringScr.x = sx; this.ringScr.y = dev(sy - 12 * sc); this.ringScr.w = rt.width * sc; this.ringScr.h = rt.height * sc;
     this.mark.position.set(sx, dev(sy - (this.sitting ? 9 : 12) * sc));
     this.mark.scale.set(sc, sc * (this.sitting ? 0.82 : 1)); // a seated figure is shorter: keep the brackets hugging it
     const gs = Math.max(2, sc * 1.6);
@@ -636,8 +642,8 @@ export class Actor {
   /** Screen boxes of the alert flag (anchor bottom-centre) and ring (centred): other agents' tags must not cover them (A8). */
   alertBoxes(out: Box[]) {
     if (!this.alert || !this.glyph.visible || this.low) return;
-    const w = this.glyph.width, h = this.glyph.height, rw = this.ring.width, rh = this.ring.height;
-    out.push({ x: this.glyph.x, y: this.glyph.y - h, w, h, pri: 2, own: this }, { x: this.ring.x, y: this.ring.y - rh / 2, w: rw, h: rh, pri: 2, own: this });
+    const w = this.glyph.width, h = this.glyph.height, r = this.ringScr;
+    out.push({ x: this.glyph.x, y: this.glyph.y - h, w, h, pri: 2, own: this }, { x: r.x, y: r.y - r.h / 2, w: r.w, h: r.h, pri: 2, own: this });
   }
   /** Apply a stacking offset and redraw the dark backing plate (#F3). */
   placeTag(dy: number, hide = false) {

@@ -1,17 +1,9 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Agent Office</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<script>
-/* before the app: ?overlay (bare), ?preset=obs[-1080|-720] mean overlay=1; overlay loads Private unless ?streamsafe=0 or the Settings choice is off */
-(function(){try{var q=new URLSearchParams(location.search),ov=/^obs(-(1080|720))?$/.test(q.get("preset")||"")||(q.has("overlay")&&q.get("overlay")!=="0");if(!ov)return;
-var ss=q.get("streamsafe"),st=null;try{st=localStorage.getItem("ao.streamsafe")}catch(e){}
-var off=ss==="0"||(ss===null&&st==="0"),ch=false;
-if(q.get("overlay")!=="1"){q.set("overlay","1");ch=true}
-if(!off&&q.get("private")!=="1"){q.set("private","1");ch=true}
-if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
-</script>
 <style>
-  :root{--bg:#14121f;--panel:#1d1a2e;--line:#322d4d;--fg:#e8e6f5;--mute:#aaa6c6;--acc:#7fe3ff;--glow:#7fe3ff;--ease:cubic-bezier(0.16,1,0.3,1);--glow2:#ff3ea5;--warn:#ffb86b;--warn-ink:color-mix(in srgb,var(--warn) 35%,var(--fg));--bad:#ff8a80;--bad-ink:color-mix(in srgb,var(--bad) 45%,var(--fg));--good-ink:color-mix(in srgb,var(--good) 45%,var(--fg));--good:#5be37d;--raise:#2a2645;--soft:#cfcde6;--off:#e0524a;--prompt:#ffd84a;--msg:#d58cff;--dir:1;--pad:16px;color-scheme:dark;accent-color:var(--acc)}
+  /* R3: --bg --panel --line --raise --ink --acc --glow --glow2 --warn --bad --good --off --prompt come from theme.ts KEY/STATUS (ui.ts writes them at boot) */
+  :root{--fg:#e8e6f5;--mute:#aaa6c6;--ease:cubic-bezier(0.16,1,0.3,1);--warn-ink:color-mix(in srgb,var(--warn) 35%,var(--fg));--bad-ink:color-mix(in srgb,var(--bad) 45%,var(--fg));--good-ink:color-mix(in srgb,var(--good) 45%,var(--fg));--soft:#cfcde6;--msg:#d58cff;--dir:1;--pad:16px;color-scheme:dark;accent-color:var(--acc)}
   :root[dir=rtl]{--dir:-1}
   body{--sw:var(--swx,340px)}
   html,body{margin:0;height:100%;height:100dvh;background:var(--bg);color:var(--fg);font-family:var(--font,ui-monospace,Menlo,Consolas,monospace);font-size:calc(13px * var(--ts,1));line-height:var(--lh,normal);letter-spacing:var(--ls,normal);overflow:hidden}
@@ -26,10 +18,10 @@ if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
   /* not fully opaque: an opaque header over the canvas makes Chromium drop the canvas' bottom header-height rows from screenshots */
   :root:root #top{background:color-mix(in srgb,var(--panel) 99%,transparent);border-bottom:1px solid var(--line);font-size:calc(11px * var(--ts,1));text-transform:uppercase;letter-spacing:.08em}
   #top .chip{text-transform:none;letter-spacing:.02em}
-  #top .wm{flex:none;display:block;fill:#9af6ff} /* L2: the wall sign's 3x5 pixel font (KEY.cyan) at a whole 2x, so it stays crisp; chrome.test.ts checks the path */
+  #top .wm{flex:none;display:block;fill:var(--acc)} /* L2: the wall sign's 3x5 pixel font (KEY.cyan) at a whole 2x, so it stays crisp; chrome.test.ts checks the path */
   #top .live{width:6px;height:6px;border-radius:50%;background:var(--good);flex:none}
   #top .live:not(.off){display:none} /* B9: connected is the normal state, so only "offline" is drawn */
-  #top .live.off{background:var(--off);width:auto;height:auto;padding:0 8px;color:#14121f;font-size:calc(11px * var(--ts,1))}
+  #top .live.off{background:var(--off);width:auto;height:auto;padding:0 8px;color:var(--ink);font-size:calc(11px * var(--ts,1))}
   #top .live.off::after{content:"offline"}
   #stats{flex:0 100 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--mute);font-variant-numeric:tabular-nums;letter-spacing:.06em}
   #stats:empty{display:none}
@@ -39,15 +31,15 @@ if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
   .chip:empty{display:none}
   .grow{flex:1 1 0;min-width:0}
   /* the one NEEDS YOU signal (A3/B6): a pill in the loudest status colour, glyph + word + name; LIVE chip during replay (Z6) */
-  #need{--st:var(--warn);flex:0 1 auto;min-width:20ch;max-width:min(44ch,40vw);min-block-size:24px;border:0;border-radius:12px;padding:0 12px;background:var(--st);color:#14121f;font-weight:700;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+  #need{--st:var(--warn);flex:0 1 auto;min-width:20ch;max-width:min(80ch,50vw);min-block-size:24px;border:0;border-radius:12px;padding:0 12px;background:var(--st);color:var(--ink);font-weight:700;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
   #need.live-chip{background:none;color:var(--fg);border:1px solid var(--acc)}
   #empty{display:none;position:absolute;inset-inline:0 var(--sw);top:36%;text-align:center;pointer-events:none}
   #empty .card{display:inline-block;max-width:min(420px,86%);box-sizing:border-box;padding:16px 20px;background:var(--panel);border:1px solid var(--line);border-radius:8px;color:var(--soft);line-height:1.6;pointer-events:auto}
   #empty h2{margin:0 0 8px;font-size:calc(15px * var(--ts,1));color:var(--fg)}
   #empty code{color:var(--acc)}
   #empty .b{margin-top:12px}
-  #caption{position:absolute;inset-inline:5% calc(var(--sw) + 5%);bottom:max(12px,env(safe-area-inset-bottom));text-align:center;font-size:30px;line-height:1.3;background:#14121fcc;color:#e8e6f5;padding:12px 18px;border-radius:8px;pointer-events:none}
-  #caption b{display:block;color:#8fb7ff;font-size:.7em}
+  #caption{position:absolute;inset-inline:5% calc(var(--sw) + 5%);bottom:max(12px,env(safe-area-inset-bottom));text-align:center;font-size:30px;line-height:1.3;background:color-mix(in srgb,var(--bg) 80%,transparent);color:#e8e6f5;padding:12px 18px;border-radius:8px;pointer-events:none}
+  #caption b{display:block;color:var(--acc);font-size:.7em}
   #caption b:empty,#caption span:empty{display:none}
   #cap-stats{display:none;font-size:.6em;color:#cfcde6}
   body.presenter #cap-stats{display:block}
@@ -59,7 +51,7 @@ if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
   .b{background:color-mix(in srgb,var(--raise) 55%,transparent);border:1px solid var(--line);border-radius:2px;padding:4px 8px;cursor:pointer;white-space:nowrap;transition:border-color .15s var(--ease),background-color .15s var(--ease),box-shadow .15s var(--ease)}
   .b:hover,.b:focus-visible{border-color:var(--glow);box-shadow:0 0 0 1px color-mix(in srgb,var(--glow) 35%,transparent)} .b[aria-pressed=true]{background:var(--acc);color:var(--bg)} .b[aria-pressed=true]::before{content:"✓\a0"} /* B2: filled plus a non-colour mark */
   .b.sm{padding:0 8px;font-size:calc(11px * var(--ts,1));min-block-size:24px;min-inline-size:24px}
-  #tg{flex:none} #tg .cnt{display:inline-block;min-width:16px;padding:0 4px;border-radius:8px;background:var(--st-permission,var(--warn));color:#14121f;font-weight:700}
+  #tg{flex:none} #tg .cnt{display:inline-block;min-width:16px;padding:0 4px;border-radius:8px;background:var(--st-permission,var(--warn));color:var(--ink);font-weight:700}
   .note{padding:4px var(--pad);color:var(--mute);font-size:calc(11px * var(--ts,1));text-wrap:balance}
   .cnt{font-weight:400;font-variant-numeric:tabular-nums}
   /* B4: one heading token for every panel section */
@@ -143,16 +135,12 @@ if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
   /* privacy: blur free text in the DOM too (the canvas is blanked by ?private=1) */
   body.priv #card .tx,body.priv #card .k+*,body.priv .dn .why,body.priv .it .tx,body.priv .cwd .k,body.priv #sessions .k,body.priv .rd .why,body.priv .sess .pr,body.priv .r .sub,body.priv .trow .tl,body.priv .tile,body.priv #files .hf{filter:blur(5px)}
   body.collapsed{--sw:0px} body.collapsed #side{visibility:hidden;border-inline-start:0} /* no transform: it would become the containing block of the pinned #spark strip */
-  body.presenter #side,body.presenter #top,body.overlay #side,body.overlay #top,body.overlay #empty{display:none}
-  body.presenter,body.overlay,body.kiosk{--sw:0px}
+  body.presenter #side,body.presenter #top{display:none}
+  body.presenter,body.kiosk{--sw:0px}
   body.kiosk #side,body.kiosk #top,body.kiosk #colony{display:none}
-  body.obs #ticker{display:none}
-  body.obs-fixed #stage{inset:0 auto auto 0;width:var(--ow);height:var(--oh)}
   #px{position:fixed;top:10px;inset-inline-end:10px;z-index:30;opacity:.55}
   #px:hover,#px:focus-visible{opacity:1}
   body.presenter #px{display:block}
-  body.overlay,html:has(body.overlay){background:transparent} /* OBS browser source: html is not inside body, so it needs :has() */
-  body.overlay #caption{font-size:36px}
   .b:disabled{opacity:.45;cursor:not-allowed}
   @media (max-width:800px){
     body,body.collapsed{--sw:0px}
@@ -162,14 +150,15 @@ if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
     #need{order:9;flex:1 1 100%;max-width:none;min-block-size:32px} /* H2: its own row, name + state, tap to open */
     #top b{flex:none;overflow:visible}
   }
-  @media (max-width:1500px){#top .wm{display:none}} /* a crowded header drops the wordmark first; the wall sign carries the name */
+  @media (max-width:1500px){#top .wm{width:47px;height:5px}} /* R3: a small 1x wordmark below 1500px; fitHeader drops it first when the header is full */
+  #top.f-wm .wm{display:none}
   @media (max-width:800px){#nudge,.pl,.grow{display:none}}
   @media (pointer:coarse){
     .b,.b.sm,#filters select,.r,.rd,.dn,.sname,.crumb,.chip,#need{min-block-size:44px;min-inline-size:44px}
     #handle{width:24px;margin-inline-start:-12px}
   }
-  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important} .it,.hl,.toast{animation:fade .15s ease-out!important}} /* no movement, keep a fade (A16) */
-  @media (prefers-contrast:more){:root{--line:#8d86bd;--mute:#d6d3ec;--soft:#efeefa}}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important} .it,.hl{animation:fade .15s ease-out!important}} /* no movement, keep a fade (A16) */
+  @media (prefers-contrast:more){:root{--line:#8d86bd!important;--mute:#d6d3ec;--soft:#efeefa}}
   @media (forced-colors:active){
     .b[aria-pressed=true],.r[aria-pressed=true]{outline:2px solid Highlight}
     .rdw,.it,.r{border-inline-start-color:CanvasText}
@@ -179,7 +168,7 @@ if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
 </style></head>
 <body>
 <div id="stage" role="main" aria-label="Agent Office"></div>
-<div id="top"><span class="live" id="live" role="img" aria-label="connected" title="connected"></span><svg class="wm" role="img" aria-label="Agent Office" width="94" height="10" viewBox="0 0 47 5" shape-rendering="crispEdges"><path d="M1 0h1v1h-1zM0 1h1v1h-1zM2 1h1v1h-1zM0 2h1v1h-1zM1 2h1v1h-1zM2 2h1v1h-1zM0 3h1v1h-1zM2 3h1v1h-1zM0 4h1v1h-1zM2 4h1v1h-1zM5 0h1v1h-1zM6 0h1v1h-1zM4 1h1v1h-1zM4 2h1v1h-1zM6 2h1v1h-1zM4 3h1v1h-1zM6 3h1v1h-1zM5 4h1v1h-1zM6 4h1v1h-1zM8 0h1v1h-1zM9 0h1v1h-1zM10 0h1v1h-1zM8 1h1v1h-1zM8 2h1v1h-1zM9 2h1v1h-1zM8 3h1v1h-1zM8 4h1v1h-1zM9 4h1v1h-1zM10 4h1v1h-1zM12 0h1v1h-1zM13 0h1v1h-1zM12 1h1v1h-1zM14 1h1v1h-1zM12 2h1v1h-1zM14 2h1v1h-1zM12 3h1v1h-1zM14 3h1v1h-1zM12 4h1v1h-1zM14 4h1v1h-1zM16 0h1v1h-1zM17 0h1v1h-1zM18 0h1v1h-1zM17 1h1v1h-1zM17 2h1v1h-1zM17 3h1v1h-1zM17 4h1v1h-1zM24 0h1v1h-1zM25 0h1v1h-1zM26 0h1v1h-1zM24 1h1v1h-1zM26 1h1v1h-1zM24 2h1v1h-1zM26 2h1v1h-1zM24 3h1v1h-1zM26 3h1v1h-1zM24 4h1v1h-1zM25 4h1v1h-1zM26 4h1v1h-1zM28 0h1v1h-1zM29 0h1v1h-1zM30 0h1v1h-1zM28 1h1v1h-1zM28 2h1v1h-1zM29 2h1v1h-1zM28 3h1v1h-1zM28 4h1v1h-1zM32 0h1v1h-1zM33 0h1v1h-1zM34 0h1v1h-1zM32 1h1v1h-1zM32 2h1v1h-1zM33 2h1v1h-1zM32 3h1v1h-1zM32 4h1v1h-1zM36 0h1v1h-1zM37 0h1v1h-1zM38 0h1v1h-1zM37 1h1v1h-1zM37 2h1v1h-1zM37 3h1v1h-1zM36 4h1v1h-1zM37 4h1v1h-1zM38 4h1v1h-1zM41 0h1v1h-1zM42 0h1v1h-1zM40 1h1v1h-1zM40 2h1v1h-1zM40 3h1v1h-1zM41 4h1v1h-1zM42 4h1v1h-1zM44 0h1v1h-1zM45 0h1v1h-1zM46 0h1v1h-1zM44 1h1v1h-1zM44 2h1v1h-1zM45 2h1v1h-1zM44 3h1v1h-1zM44 4h1v1h-1zM45 4h1v1h-1zM46 4h1v1h-1z"/></svg><button id="need" type="button" hidden></button><span id="stats" role="img"></span><span id="badge" class="chip" hidden></span><button id="stop-sample" class="b sm" type="button" hidden>Stop sample</button><span class="grow"></span><button id="privchip" class="chip" type="button" aria-pressed="false"></button><span id="nudge" class="chip" hidden title="Office protocol: sessions get a short roster and report-format note when they start. Settings > Office protocol.">nudged</span><span id="top-tools"><div id="tools" role="toolbar" aria-label="Views and menus"></div></span><button id="tg" class="b" type="button" aria-controls="side" aria-expanded="true">Panel</button></div>
+<div id="top"><span class="live" id="live" role="img" aria-label="connected" title="connected"></span><svg class="wm" role="img" aria-label="Agent Office" width="94" height="10" viewBox="0 0 47 5" shape-rendering="crispEdges"><path d="M1 0h1v1h-1zM0 1h1v1h-1zM2 1h1v1h-1zM0 2h1v1h-1zM1 2h1v1h-1zM2 2h1v1h-1zM0 3h1v1h-1zM2 3h1v1h-1zM0 4h1v1h-1zM2 4h1v1h-1zM5 0h1v1h-1zM6 0h1v1h-1zM4 1h1v1h-1zM4 2h1v1h-1zM6 2h1v1h-1zM4 3h1v1h-1zM6 3h1v1h-1zM5 4h1v1h-1zM6 4h1v1h-1zM8 0h1v1h-1zM9 0h1v1h-1zM10 0h1v1h-1zM8 1h1v1h-1zM8 2h1v1h-1zM9 2h1v1h-1zM8 3h1v1h-1zM8 4h1v1h-1zM9 4h1v1h-1zM10 4h1v1h-1zM12 0h1v1h-1zM13 0h1v1h-1zM12 1h1v1h-1zM14 1h1v1h-1zM12 2h1v1h-1zM14 2h1v1h-1zM12 3h1v1h-1zM14 3h1v1h-1zM12 4h1v1h-1zM14 4h1v1h-1zM16 0h1v1h-1zM17 0h1v1h-1zM18 0h1v1h-1zM17 1h1v1h-1zM17 2h1v1h-1zM17 3h1v1h-1zM17 4h1v1h-1zM24 0h1v1h-1zM25 0h1v1h-1zM26 0h1v1h-1zM24 1h1v1h-1zM26 1h1v1h-1zM24 2h1v1h-1zM26 2h1v1h-1zM24 3h1v1h-1zM26 3h1v1h-1zM24 4h1v1h-1zM25 4h1v1h-1zM26 4h1v1h-1zM28 0h1v1h-1zM29 0h1v1h-1zM30 0h1v1h-1zM28 1h1v1h-1zM28 2h1v1h-1zM29 2h1v1h-1zM28 3h1v1h-1zM28 4h1v1h-1zM32 0h1v1h-1zM33 0h1v1h-1zM34 0h1v1h-1zM32 1h1v1h-1zM32 2h1v1h-1zM33 2h1v1h-1zM32 3h1v1h-1zM32 4h1v1h-1zM36 0h1v1h-1zM37 0h1v1h-1zM38 0h1v1h-1zM37 1h1v1h-1zM37 2h1v1h-1zM37 3h1v1h-1zM36 4h1v1h-1zM37 4h1v1h-1zM38 4h1v1h-1zM41 0h1v1h-1zM42 0h1v1h-1zM40 1h1v1h-1zM40 2h1v1h-1zM40 3h1v1h-1zM41 4h1v1h-1zM42 4h1v1h-1zM44 0h1v1h-1zM45 0h1v1h-1zM46 0h1v1h-1zM44 1h1v1h-1zM44 2h1v1h-1zM45 2h1v1h-1zM44 3h1v1h-1zM44 4h1v1h-1zM45 4h1v1h-1zM46 4h1v1h-1z"/></svg><button id="need" type="button" hidden></button><span id="stats" role="img"></span><span id="badge" class="chip" hidden></span><button id="stop-sample" class="b sm" type="button" hidden>Stop sample</button><span class="grow"></span><button id="privchip" class="chip" type="button" aria-pressed="false"></button><span id="nudge" class="chip" hidden title="Office protocol: sessions get a short roster and report-format note when they start. Settings > Office protocol.">protocol on</span><span id="top-tools"><div id="tools" role="toolbar" aria-label="Views and menus"></div></span><button id="tg" class="b" type="button" aria-controls="side" aria-expanded="true">Panel</button></div>
 <button id="fit" class="b sm" type="button" hidden>Fit all</button>
 <button id="px" class="b" type="button" hidden>Exit presenter (Esc / P)</button>
 <div id="empty"><div class="card" role="region" aria-label="Getting started"><h2>The office is empty</h2>
@@ -188,7 +177,6 @@ if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
   <button id="empty-sample" class="b" type="button">Play a sample</button> <span class="k">(fake data, to see how it looks)</span></div></div>
 <div id="colony" hidden role="group" aria-label="Agents"></div>
 <div id="hl"></div>
-<div id="fxbl"><div id="toasts" aria-live="polite"></div></div>
 <div id="ticker" role="status" aria-live="off"><span></span></div>
 <div id="caption" hidden aria-hidden="true"><small id="cap-stats"></small><b id="cap-who"></b><span id="cap-text"></span></div>
 <div id="live-region" class="sr" role="status" aria-live="polite"></div>
@@ -199,7 +187,7 @@ if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
   <div id="pbody">
     <div id="modebar"></div>
     <div id="banner" role="status" hidden></div>
-    <section id="radar" aria-label="Needs you"><h2>NEEDS YOU <span class="cnt" id="n-radar"></span></h2><div id="radar-list" role="list"></div><div id="radar-opts" class="note"></div></section>
+    <section id="radar" aria-label="Needs you"><h2>NEEDS YOU <span class="cnt" id="n-radar"></span></h2><div id="radar-list" role="list"></div></section>
     <div id="intro" hidden>Each Claude Code session is a lead at the door; the helpers it delegates to sit at desks. NEEDS YOU lists what waits on you: click a row to see why and what to do. Help (?) explains the rest.</div>
     <section id="card-sec" aria-label="Selected" hidden><nav id="crumb" aria-label="Scope"></nav><div id="card" aria-live="off"></div></section>
     <section id="done-sec" aria-label="Recently done"><h2>RECENTLY DONE <span class="cnt" id="n-done"></span></h2><div id="done"></div></section>

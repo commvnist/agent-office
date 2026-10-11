@@ -24,7 +24,7 @@ export function sessionAgg(keys: StatusKey[]) {
 }
 /** "2 working · 1 waiting": the non-zero counts only, "" when everyone is idle. */
 export const aggLine = (a: ReturnType<typeof sessionAgg>) =>
-  [a.working && `${a.working} working`, a.waiting && `${a.waiting} waiting`, a.blocked && `${a.blocked} blocked`].filter(Boolean).join(" · ");
+  [a.working && `${a.working} working`, a.waiting && `${a.waiting} waiting`, a.blocked && `${a.blocked} gave up`].filter(Boolean).join(" · ");
 
 /** A NEEDS YOU row that is not a STATUS (a session silent mid-turn). */
 export const STUCK = { color: STATUS.idle.color, glyph: "…", label: "no activity" } as const;
@@ -61,17 +61,19 @@ export function tree<A extends Act>(actors: readonly A[], id: string): { up: A[]
   return { up: got(self.chain).reverse(), self, down: got(self.children) };
 }
 
-export type DoneRow = { key: string; agentId: string; name: string; project: string; outcome: string; text: string; task: string; t: number };
-type Outcome = { session: string; project?: string; agentId: string; name?: string; role?: string; outcome?: string; text: string; task?: string; t: number };
+export type DoneRow = { key: string; agentId: string; session: string; name: string; project: string; outcome: string; text: string; task: string; t: number };
+type Outcome = { session: string; project?: string; agentId: string; lead?: boolean; name?: string; role?: string; outcome?: string; text: string; task?: string; t: number };
 type Report = { kind: string; fromId?: string; from: string; text: string; t: number; outcome?: string; session?: string };
 /** state.outcomes when the daemon sends them (newest first), else the report items still in the feed. */
 export function doneRows(outcomes: readonly Outcome[] | undefined, feed: readonly Report[], projectOf: (sid: string) => string, max = 8): DoneRow[] {
-  if (outcomes) return outcomes.slice(0, max).map((o) => ({ key: `${o.agentId}@${o.t}`, agentId: o.agentId, name: o.name ?? o.role ?? o.agentId, project: o.project ?? projectOf(o.session), outcome: o.outcome ?? "", text: dropOutcome(o.text ?? ""), task: o.task ?? "", t: o.t }));
-  return feed.filter((f) => f.kind === "report").slice(0, max).map((f) => ({ key: `${f.fromId}@${f.t}`, agentId: f.fromId ?? "", name: f.from, project: projectOf(f.session ?? ""), outcome: f.outcome ?? "", text: dropOutcome(f.text), task: "", t: f.t }));
+  // a lead's own turn (C4) is named by its project
+  if (outcomes) return outcomes.slice(0, max).map((o) => ({ key: `${o.agentId}@${o.t}`, agentId: o.agentId, session: o.session, name: (o.lead ? o.project : o.name ?? o.role) ?? o.agentId, project: o.project ?? projectOf(o.session), outcome: o.outcome ?? "", text: dropOutcome(o.text ?? ""), task: o.task ?? "", t: o.t }));
+  return feed.filter((f) => f.kind === "report").slice(0, max).map((f) => ({ key: `${f.fromId}@${f.t}`, agentId: f.fromId ?? "", session: f.session ?? "", name: f.from, project: projectOf(f.session ?? ""), outcome: f.outcome ?? "", text: dropOutcome(f.text), task: "", t: f.t }));
 }
-/** Outcome glyph and word: done is quiet (working green), gave up uses the blocked status, partial and unknown stay neutral. */
-export const outcomeLook = (o: string): Look =>
-  o === "blocked" ? STATUS.blocked : o === "done" ? { color: STATUS.working.color, glyph: "✓", label: "done" } : o === "partial" ? { color: STATUS.idle.color, glyph: "~", label: "partly done" } : { color: STATUS.idle.color, glyph: "•", label: "finished" };
+/** Outcome glyph and word: done is quiet (working green), gave up uses the blocked status, partial stays neutral; C3: an
+ * empty or unprefixed report is never "done": a neutral "reported". */
+export const outcomeLook = (o: string | undefined): Look =>
+  o === "blocked" ? STATUS.blocked : o === "done" ? { color: STATUS.working.color, glyph: "✓", label: "done" } : o === "partial" ? { color: STATUS.idle.color, glyph: "~", label: "partly done" } : { color: STATUS.idle.color, glyph: "·", label: "reported" };
 
 // ---- derived signals (contract 1); absent from older daemons ----
 type PermWait = NonNullable<Session["permWait"]>;

@@ -3,14 +3,16 @@
 import { office, type ActorInfo, type FeedItem } from "./api.ts";
 import { hotFiles, leadId } from "@agent-office/core";
 import { $, announce as domAnnounce, btn, clip, copy, el, renderIf, store, sync } from "./dom.ts";
-import { bySession, burnHot, captionText, burnRate, cdCommand, filterFeed, fmtAge, fmtDur, fmtTokens, projectHue, quietBefore, radar, rosterGroups, sanitizeFilters, statusGroups, summary, sumUsage, urgency, usageTotal, whoLine, type FeedFilter, type RadarItem } from "./logic.ts";
+import { bySession, burnHot, gaveUpKey, captionText, burnRate, cdCommand, filterFeed, fmtAge, fmtDur, fmtTokens, projectHue, quietBefore, radar, rosterGroups, sanitizeFilters, statusGroups, summary, sumUsage, urgency, usageTotal, whoLine, type FeedFilter, type RadarItem } from "./logic.ts";
 import { bindPanelChrome } from "./panel.ts";
 import { backToLive, bindModes, toggleSample } from "./modes.ts";
-import { STATUS, STATUS_ORDER } from "./theme.ts";
+import { KEY, STATUS, STATUS_ORDER } from "./theme.ts";
 import { clipWords, doneRows, dropOutcome, look, nextStep, outcomeLook, permLine, sessionAgg, aggLine, statusKey, statusWord, topTools, tree } from "./triage.ts";
 import * as notify from "./notify.ts";
 import { bindFun, ringsEl } from "./fundom.ts";
 import { bindColonists } from "./colonists.ts";
+import { showHistoryAt } from "./views.ts";
+import { fitHeader } from "./toolbar.ts";
 import { buildLink, parseLink, toolTracker, type ToolCall } from "./sharelogic.ts";
 import { hideText } from "./stream.ts";
 
@@ -33,6 +35,11 @@ const keyOf = (a: ActorInfo) => statusKey(effStatus(a), stateOf()?.sessions[a.se
 /** Status chip: colour from the shared map, plus glyph and word (never colour alone). */
 const chip = (k: Parameters<typeof look>[0]) => { const c = el("span", "stc", statusWord(k)); c.style.setProperty("--st", look(k).color); return c; };
 
+// R3: the chrome is on the scene's value key: one source (theme.ts) for the env steps, the cyan, the neon and the status colours
+const E = KEY.env;
+for (const [k, v] of Object.entries({ bg: E[1], panel: E[2], line: E[3], raise: E[3], ink: E[0], acc: KEY.cyan, glow: KEY.cyan, glow2: KEY.neon, warn: STATUS.permission.color,
+  bad: STATUS.blocked.color, good: STATUS.working.color, off: STATUS.blocked.color, prompt: KEY.warm })) document.documentElement.style.setProperty(`--${k}`, v);
+
 // ---- aria live regions: structure only, batched in dom.ts; blocked/waiting go to the assertive one ----
 const announce = (s: string, hot = false) => domAnnounce(s, hot, office.source.mode === "live" ? Infinity : 3);
 
@@ -40,18 +47,25 @@ const announce = (s: string, hot = false) => domAnnounce(s, hot, office.source.m
 const firstSeen = new Map<string, number>();
 let radarKeys = new Set<string>();
 let items: RadarItem[] = [];
-const STUCK_MIN = [1, 2, 5, 10];
-let stuckMin = STUCK_MIN.includes(Number(store.get("stuck"))) ? Number(store.get("stuck")) : 2;
 const SNOOZE_MS = 30 * 60_000;
 const snoozed = new Map<string, number>(Object.entries(loadJson<Record<string, number>>("snooze", {})));
 const lastReport = (id: string) => office.feed.find((i) => i.kind === "report" && i.fromId === id && i.text)?.text;
-
+/** C6: gave-up rows marked Seen (this browser, like snooze); pruned to the outcomes the daemon still holds. */
+const seenGaveUp = new Set<string>(loadJson<string[]>("gaveup.seen", []));
+const saveSeen = () => store.set("gaveup.seen", JSON.stringify([...seenGaveUp]));
+/** Select an agent, or for one that has left the floor open History at that moment (X6); a live row during a replay goes back to live first. */
+function openAt(id: string, t: number, session?: string) {
+  if (office.source.mode !== "live" && office.actors().every((a) => a.id !== id)) backToLive();
+  if (office.actors().some((a) => a.id === id)) pick(id);
+  else { showHistoryAt(t); if (session && office.actors().some((a) => a.id === leadId(session))) office.select(leadId(session)); }
+}
 const RANKED = [...STATUS_ORDER, "stuck"];
 /** Z6: NEEDS YOU, the header pill, title, favicon and chimes read the LIVE envelope, also during Replay and Sample. */
 function renderRadar(now: number) {
   const sim = office.source.mode !== "live", env = sim ? office.source.liveEnvelope() : office.getEnvelope();
   // shortcut: during a simulation the live blocked helpers are not known (main.ts holds them per displayed scene); live waits and stalls are
-  const all = env ? radar(sim ? [] : office.actors(), env.state, now, (k, fb) => firstSeen.get(k) ?? (firstSeen.set(k, fb), fb), stuckMin * 60_000) : [];
+  const all = env ? radar(sim ? [] : office.actors(), env.state, now, (k, fb) => firstSeen.get(k) ?? (firstSeen.set(k, fb), fb), notify.stuckMin() * 60_000, (k) => seenGaveUp.has(k)) : [];
+  if (env?.state.outcomes) { const live = new Set(env.state.outcomes.map(gaveUpKey)); let gone = false; for (const k of seenGaveUp) if (!live.has(k)) gone = seenGaveUp.delete(k); if (gone) saveSeen(); }
   all.sort((a, b) => RANKED.indexOf(notify.kindOf(a)) - RANKED.indexOf(notify.kindOf(b)) || a.since - b.since); // permission is the loudest (V3)
   const keys = new Set(all.map((i) => i.key));
   for (const k of firstSeen.keys()) if (!keys.has(k)) firstSeen.delete(k);
@@ -61,9 +75,9 @@ function renderRadar(now: number) {
   items = all.filter((i) => !snoozed.has(i.key));
   for (const i of items) if (!radarKeys.has(i.key) && i.kind !== "stuck") announce(`${i.label}: ${look(notify.kindOf(i)).label}`, true);
   radarKeys = new Set(items.map((i) => i.key));
-  const why = (i: RadarItem) => dropOutcome(i.reason ?? (i.kind === "blocked" ? lastReport(i.id) ?? "" : "")).trim();
+  const why = (i: RadarItem) => dropOutcome(i.reason || (i.kind === "blocked" ? lastReport(i.id) ?? "" : "")).trim();
   // a live row during a replay: go back to live first, then find it there
-  const open = (i: RadarItem) => { if (sim) backToLive(); pick(i.id); };
+  const open = (i: RadarItem) => { if (sim) backToLive(); openAt(i.id, i.since, i.session); };
   renderIf($("radar-list"), JSON.stringify([sim, items.map((i) => `${i.key}|${notify.kindOf(i)}|${fmtAge(now - i.since)}|${why(i)}`)]), () =>
     items.length
       ? items.map((i) => {
@@ -83,7 +97,8 @@ function renderRadar(now: number) {
         const go = btn("Open", sim ? "Back to live and focus it" : "Focus it in the office", () => open(i), "b sm pri");
         go.setAttribute("aria-label", `Open ${i.label}`);
         acts.append(go);
-        if (i.kind !== "blocked") acts.append(btn("Snooze", "Hide this for 30 minutes", () => { snoozed.set(i.key, Date.now() + SNOOZE_MS); store.set("snooze", JSON.stringify(Object.fromEntries(snoozed))); refresh(); }, "b sm"));
+        if (i.kind === "blocked") acts.append(btn("Seen", "Mark as seen: it leaves NEEDS YOU on every page of this browser (the next prompt in its session clears it too)", () => { seenGaveUp.add(i.key); saveSeen(); refresh(); }, "b sm"));
+        else acts.append(btn("Snooze", "Hide this for 30 minutes", () => { snoozed.set(i.key, Date.now() + SNOOZE_MS); store.set("snooze", JSON.stringify(Object.fromEntries(snoozed))); refresh(); }, "b sm"));
         w.append(b, acts);
         return w;
       })
@@ -173,7 +188,7 @@ function renderCard() {
   const last = (p: (i: FeedItem) => boolean) => f.find((i) => p(i) && i.text);
   const report = last((i) => i.kind === "report" && i.fromId === a.id)?.text;
   // the reason for the state, up front: the lead's prompt text, or the helper's report; never the "BLOCKED:" prefix twice (A9)
-  const reason = k === "permission" || k === "turn" ? sess?.waitingText ?? "" : k === "blocked" ? dropOutcome(report ?? "no report text") : "";
+  const reason = k === "turn" ? (a.lead && sess?.result) || sess?.waitingText || "" : k === "permission" ? sess?.waitingText ?? "" : k === "blocked" ? dropOutcome(report ?? "no report text") : "";
   const rows: [string, string][] = [["role", a.lead ? "session lead" : a.role], ["session", a.project]];
   if (a.doing) rows.push(["last tool", `${a.doing}${a.detail ? " · " + a.detail : ""}`]);
   if (a.why) rows.push(["why", a.why]);
@@ -205,7 +220,7 @@ function renderCard() {
     const put = (key: string, v: string, cls = "") => { kv.append(el("span", "k", key), el("span", cls, v)); };
     if (by) put(a.lead ? "asked by" : "delegated by", by, "tx");
     else if (a.task) put("task", a.task, "tx");
-    put("next", office.source.mode === "live" ? nextStep(k, a.project, lead?.label) : "This is a replay or sample: nothing to do.");
+    if (k !== "working" && k !== "idle") put("next", office.source.mode === "live" ? nextStep(k, a.project, lead?.label) : "This is a replay or sample: nothing to do."); // X8: no "next: Nothing to do" row
     for (const [key, v] of rows) put(key, v, key === "folder" || key === "why" || key === "last tool" ? "tx" : "");
     out.push(kv);
     // X2: lead -> ... -> this agent -> its helpers, each one click away
@@ -239,23 +254,26 @@ function renderCard() {
 }
 
 // ---- Recently done (V1 in the panel): state.outcomes newest first, else the reports still in the feed ----
+let doneAll = false;
 function renderDone(now: number) {
-  const rows = doneRows((stateOf() as { outcomes?: Parameters<typeof doneRows>[0] } | undefined)?.outcomes, office.feed, projectOf);
-  $("n-done").textContent = rows.length ? `(${rows.length})` : "";
+  const all = doneRows(stateOf()?.outcomes, office.feed, projectOf, Infinity), rows = doneAll ? all : all.slice(0, 8);
+  $("n-done").textContent = all.length ? `(${all.length})` : "";
   const hide = hideText();
-  renderIf($("done"), JSON.stringify([rows.map((r) => [r.key, fmtAge(now - r.t)]), hide]), () => rows.length ? rows.map((r) => {
+  renderIf($("done"), JSON.stringify([rows.map((r) => [r.key, fmtAge(now - r.t)]), all.length, doneAll, hide]), () => [...(rows.length ? rows.map((r) => {
     const o = outcomeLook(r.outcome), b = el("button", "dn");
     b.type = "button";
     b.style.setProperty("--st", o.color);
     const head = el("span", "rh"), g = el("span", "stc", `${o.glyph} ${o.label}`);
     g.style.setProperty("--st", o.color);
-    head.append(g, el("b", "", ` ${r.name}`), el("span", "k", ` · ${r.project} · ${fmtAge(now - r.t)}`));
+    head.append(g, el("b", "", ` ${r.name}`), el("span", "k", ` · ${r.name === r.project ? "" : `${r.project} · `}${fmtAge(now - r.t)}`)); // a lead row is named by its project
     b.append(head);
     const text = r.text || r.task;
     if (text && !hide) { b.append(el("span", "why", clipWords(text, 120))); b.title = r.task ? `${text}\n\ntask: ${r.task}` : text; }
-    b.addEventListener("click", () => { if (office.actors().some((x) => x.id === r.agentId)) pick(r.agentId); else announce(`${r.name} has left the floor`); });
+    b.addEventListener("click", () => openAt(r.agentId, r.t, r.session));
+    if (!office.actors().some((x) => x.id === r.agentId)) b.title = `${b.title ? `${b.title}\n\n` : ""}Left the floor: opens History at that time`;
     return b;
-  }) : [el("div", "k pad", "Nothing finished yet: when a helper reports back (done, gave up, partly done) it is listed here.")]);
+  }) : [el("div", "k pad", "Nothing finished yet: when a session's turn or a helper's report comes back (done, gave up, partly done) it is listed here.")]),
+  ...(all.length > 8 ? [btn(doneAll ? "Show fewer" : `Show all (${all.length})`, "List every outcome the daemon keeps", () => { doneAll = !doneAll; renderDone(Date.now()); }, "b sm more-done")] : [])]);
 }
 
 // ---- sessions (#91 #36) + usage / burn rate (#185 #186) ----
@@ -280,24 +298,25 @@ function renderSessions(now: number) {
   const st = stateOf();
   const acts = office.actors();
   const list = office.sessions();
-  const rows = list.map((s) => ({ s, last: st?.sessions[s.id]?.lastAt, prompt: st?.sessions[s.id]?.prompt, perm: permLine(signals(s.id)?.permWait, now, fmtDur), u: urgency(s, acts), rate: rateOf(s.id, now), c: ringCounts(acts, s.id), g: sessionAgg(acts.filter((a) => a.session === s.id).map(keyOf)) }))
+  const rows = list.map((s) => ({ s, last: st?.sessions[s.id]?.lastAt, prompt: st?.sessions[s.id]?.prompt ?? st?.sessions[s.id]?.lastPrompt, result: st?.sessions[s.id]?.result, perm: permLine(signals(s.id)?.permWait, now, fmtDur), u: urgency(s, acts), rate: rateOf(s.id, now), c: ringCounts(acts, s.id), g: sessionAgg(acts.filter((a) => a.session === s.id && !a.lead).map(keyOf)), worst: sessionAgg(acts.filter((a) => a.session === s.id).map(keyOf)).worst }))
     .sort((a, b) => a.u - b.u || a.s.project.localeCompare(b.s.project));
   const tot = sumUsage(list.map((s) => s.usage));
   $("n-sess").textContent = rows.length ? `(${rows.length})` : "";
-  renderIf($("sessions"), JSON.stringify([rows.map((r) => [r.s, r.prompt, r.u, r.perm, r.last ? fmtAge(now - r.last) : "", Math.round(r.rate / 1000), filter.session === r.s.id, r.c, r.g]), idleOpen]), () => {
+  renderIf($("sessions"), JSON.stringify([rows.map((r) => [r.s, r.prompt, r.result, r.worst, r.u, r.perm, r.last ? fmtAge(now - r.last) : "", Math.round(r.rate / 1000), filter.session === r.s.id, r.c, r.g]), idleOpen]), () => {
     if (!rows.length) return [el("div", "k pad", offline() ? "Offline: waiting for the daemon (see the banner at the top of the panel)." : "No sessions yet. Start Claude Code with the plugin.")];
-    const one = ({ s, last, prompt, perm, rate, c, g }: (typeof rows)[number]) => {
+    const one = ({ s, last, prompt, result, perm, rate, c, g, worst }: (typeof rows)[number]) => {
       const d = el("div", c.total ? "sess hasr" : "sess");
       accent(d, s.project);
       if (c.total) d.append(ringsEl(c));
       const h = btn(s.project, "Scope the panel to this session (click again to clear) and select its lead", () => { setFilter("session", filter.session === s.id ? "" : s.id); if (filter.session) pick(s.lead); }, "sname");
       h.setAttribute("aria-pressed", String(filter.session === s.id));
       d.append(h);
-      const alert = g.worst !== "working" && g.worst !== "idle";
-      if (alert) d.append(" ", chip(g.worst)); // G1: the session's worst state, glyph + word
+      const alert = worst !== "working" && worst !== "idle";
+      if (alert) d.append(" ", chip(worst)); // G1: the session's worst state, glyph + word
       if (prompt) { const p = el("div", "pr", prompt); p.title = prompt; d.append(p); }
+      if (result) { const p = el("div", "pr res", `→ ${result}`); p.title = result; d.append(p); } // P3: what came back
       const quiet = last ? (now - last < 60_000 ? "active now" : `quiet ${fmtAge(now - last)}`) : "";
-      d.append(el("div", "k", [`${s.agents} agent${s.agents === 1 ? "" : "s"}`, aggLine(g), s.branch ? `branch ${s.branch}` : "", quiet].filter(Boolean).join(" · ")));
+      d.append(el("div", "k", [`${g.agents} helper${g.agents === 1 ? "" : "s"}`, aggLine(g), s.branch ? `branch ${s.branch}` : "", quiet].filter(Boolean).join(" · ")));
       if (perm) d.append(el("div", "k", perm));
       if (s.usage) {
         const u = el("div", "k", fmtTokens(s.usage));
@@ -612,7 +631,7 @@ function renderStats() {
   if (!e) return;
   const s = e.state, as = office.actors(), ns = Object.keys(s.sessions).length, q = as.filter((a) => a.status === "queued").length;
   // agents = every actor on the floor, leads included: the same number as the AGENTS list and the canvas label
-  const working = as.filter((a) => a.status === "working" || a.status === "thinking").length;
+  const working = as.filter((a) => a.status === "working").length; // L8: in a tool now, the crew badges' number; "thinking" between tools is not counted
   const full = `${ns} session${ns === 1 ? "" : "s"} · ${as.length} agent${as.length === 1 ? "" : "s"}${q ? ` · ${q} queued` : ""}${items.length ? ` · ${items.length} need you` : ""}${e.configError ? " · config error" : ""}`;
   const outs = (s as { outcomes?: { outcome?: string }[] }).outcomes;
   const done = outs ? outs.filter((o) => o.outcome === "done").length : office.feed.filter((f) => f.kind === "report" && f.outcome === "done").length;
@@ -648,6 +667,7 @@ function refresh() {
   notify.update(items, office.sessions().filter((s) => burnHot(rateOf(s.id, now)))); // title + alerts keep working in a background tab
   if (document.hidden) return; // nobody is looking: skip the DOM work
   renderStats();
+  fitHeader();
   renderCrumb();
   renderCard();
   renderDone(now);
@@ -675,7 +695,7 @@ function renderCrumb() {
     const out: Node[] = [btn("All", "Show every session and clear the selection", () => { office.select(null); setFilter("session", ""); }, "crumb")];
     const sid = a?.session ?? scoped;
     if (sid) out.push(el("span", "sep", "▸"), btn(projectOf(sid), "Scope the panel to this session", () => { office.select(null); setFilter("session", sid); }, "crumb"));
-    if (a) out.push(el("span", "sep", "▸"), el("b", "", a.label));
+    if (a && !a.lead) out.push(el("span", "sep", "▸"), el("b", "", a.label)); // X8: a lead's crumb ends at its session
     return out;
   });
 }
@@ -703,15 +723,16 @@ function bindFolds() {
     d.addEventListener("toggle", () => store.set(`fold.${d.id}`, d.open ? "1" : "0"));
   });
 }
-function bindRadarOpts() {
-  const s = el("select");
-  s.setAttribute("aria-label", "Flag a session as stuck after");
-  for (const m of STUCK_MIN) s.append(Object.assign(el("option", "", `${m} min`), { value: String(m) }));
-  s.value = String(stuckMin);
-  s.addEventListener("change", () => { stuckMin = Number(s.value); store.set("stuck", s.value); refresh(); });
-  const o = $("radar-opts");
-  o.title = "NEEDS YOU lists blocked agents, sessions waiting on a permission or input, and sessions silent mid-turn for this long (3x while a tool runs).";
-  o.append(document.createTextNode("Stuck after silence of "), s);
+/** X7: `n` / `N` walk the NEEDS YOU list itself, in its order (snoozed and seen rows are not in it). */
+let needAt = -1, needSel: string | null = null;
+export function cycleNeed(dir: 1 | -1) {
+  if (!items.length) { announce("Nothing needs you right now"); return; }
+  // our own last stop wins while the selection is still what it chose (a departed helper's row selects its lead)
+  const cur = office.selected === needSel && needAt < items.length ? needAt : items.findIndex((i) => i.id === office.selected);
+  needAt = ((cur >= 0 ? cur : dir < 0 ? 0 : -1) + dir + items.length) % items.length;
+  const i = items[needAt];
+  openAt(i.id, i.since, i.session);
+  needSel = office.selected;
 }
 
 /** Wire all chrome; main.ts calls this once after the engine is up. */
@@ -720,7 +741,7 @@ export function bindUi() {
   // A rebuilt row never fires mouseleave: clear a stuck canvas hover when the pointer leaves the panel.
   $("side").addEventListener("pointerleave", () => document.dispatchEvent(new CustomEvent("ao:hover", { detail: null })));
   // Wall and timeline views sit under #top, which grows with text scale or wrapped toolbar groups.
-  new ResizeObserver(() => document.documentElement.style.setProperty("--top-h", $("top").offsetHeight + "px")).observe($("top"));
+  new ResizeObserver(() => { document.documentElement.style.setProperty("--top-h", $("top").offsetHeight + "px"); fitHeader(); }).observe($("top"));
   bindPanelChrome(tools);
   bindModes(tools, $("modebar"));
   $("empty-sample").addEventListener("click", toggleSample);
@@ -729,14 +750,13 @@ export function bindUi() {
   for (const k of STATUS_ORDER) document.documentElement.style.setProperty(`--st-${k}`, STATUS[k].color);
   $("privchip").addEventListener("click", () => office.source.setPrivate(!office.source.private));
   bindFolds();
-  bindRadarOpts();
   bindFeed();
   bindFun();
   bindColonists();
   bindRosterKeys();
   $("need").addEventListener("click", () => {
     if (office.source.mode !== "live") { backToLive(); return; }
-    if (items[0]) pick(items[0].id);
+    if (items[0]) openAt(items[0].id, items[0].since, items[0].session);
     if (document.body.classList.contains("collapsed")) $("tg").click();
     $("radar").scrollIntoView({ block: "nearest" });
   });

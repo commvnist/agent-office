@@ -15,11 +15,10 @@ export type Action =
   | { k: "notice"; id: string; emote: "exclaim" | "check"; ms: number; hop?: boolean }
   | { k: "visit"; from: string; to: string; text: string; badge: Badge }
   | { k: "huddle"; id: string; text: string; badge: Badge; members: string[] }
-  | { k: "report"; from: string; to?: string; text: string; partial?: boolean }
+  | { k: "report"; from: string; to?: string; text: string; partial?: boolean; done?: boolean } // done: an explicit DONE report; anything else is neutral (no ✓, no burst)
   | { k: "block"; id: string; text: string; by?: string }
-  | { k: "celebrate"; id: string }
   | { k: "spark"; a: string; b: string; file: string }
-  | { k: "stroll"; id: string; where: "coffee" | "couch"; with?: string };
+  | { k: "stroll"; id: string; where: "coffee" | "couch" };
 
 export type PlanCtx = {
   has: (id: string) => boolean;
@@ -164,9 +163,9 @@ export function planInteraction(it: Interaction, c: PlanCtx): Action[] {
       if (!c.has(it.from)) return [];
       const to = c.has(it.to) ? it.to : undefined;
       if (it.outcome === "blocked") return [{ k: "block", id: it.from, text: strip(it.text) || "Blocked.", by: to }];
-      // "partial" comes from core's Outcome once implementer C lands it; cast keeps this compiling either way
-      if ((it.outcome as string) === "partial") return [{ k: "report", from: it.from, to, text: strip(it.text) || "Partly done.", partial: true }];
-      return [{ k: "report", from: it.from, to, text: strip(it.text) || "Done." }];
+      if (it.outcome === "partial") return [{ k: "report", from: it.from, to, text: strip(it.text) || "Partly done.", partial: true }];
+      // only an explicit DONE is a success; no report or an unprefixed one is reported, not done (S3: never invent "Done.")
+      return [{ k: "report", from: it.from, to, text: strip(it.text) || "(no report)", done: it.outcome === "done" }];
     }
     case "message": {
       const target = c.resolve(it.to);
@@ -175,8 +174,8 @@ export function planInteraction(it: Interaction, c: PlanCtx): Action[] {
       if (!c.has(it.from) || !target || target === it.from || !it.text) return [];
       return [{ k: "visit", from: it.from, to: target, text: it.text, badge: "message" }, { k: "notice", id: target, emote: "exclaim", ms: 2000 }];
     }
-    case "done":
-      return c.has(it.from) ? [{ k: "celebrate", id: it.from }] : [];
+    case "done": // a lead's turn ending is not a success claim (it may have errored): no ✓ or confetti; its result is an outcome (S8)
+      return [];
   }
 }
 
@@ -229,7 +228,8 @@ export const crowdLod = (prev: boolean, agents: number, displaced: number) => (p
 /** Alerts per actor id: waiting sessions' leads, and agents held as blocked (#64/#80). */
 export function alertsFor(s: OfficeState, blocked: Iterable<string>, leadOf: (session: string) => string): Map<string, Alert> {
   const m = new Map<string, Alert>();
-  for (const x of Object.values(s.sessions)) if (x.waiting) m.set(leadOf(x.id), "waiting");
+  // the wait belongs to the agent that raised it (a helper's permission prompt), else the lead (C1/S1)
+  for (const x of Object.values(s.sessions)) if (x.waiting) { const by = (x as { waitBy?: string }).waitBy; m.set(by && s.agents[by] ? by : leadOf(x.id), "waiting"); }
   for (const id of blocked) m.set(id, "blocked");
   return m;
 }
@@ -288,12 +288,6 @@ export function pickStroller(c: readonly StrollCand[], now: number, idleMs = 20_
     if (now - x.lastActive >= idleMs && now - x.strolledAt >= cooldownMs) return { id: x.id, where: idleTier(now - x.lastActive) >= 3 ? "couch" : "coffee" };
   }
   return null;
-}
-/** Chat partner at the coffee machine: another candidate of the SAME session who is equally idle and off cooldown; never across sessions. */
-export function pickPartner(c: readonly StrollCand[], first: string, now: number, idleMs = 20_000, cooldownMs = 60_000): string | null {
-  const a = c.find((x) => x.id === first);
-  if (!a?.session) return null;
-  return c.find((x) => x.id !== first && x.session === a.session && now - x.lastActive >= idleMs && now - x.strolledAt >= cooldownMs)?.id ?? null;
 }
 
 /** Micro-posture while seated and quiet (tier 1): one 5s slot per person phase; the first 1.5s of a slot may carry a look-left/right or a lean. */
@@ -383,24 +377,6 @@ export function sipState(silenceMs: number, calm: boolean, still: boolean, now: 
   if (!calm || idleTier(silenceMs) !== 1) return "none";
   if (still || (now + (h % MICRO_SLOT_MS)) % MICRO_SLOT_MS >= 3500) return "desk";
   return ((h ^ Math.imul(microSlot(now, h), 2654435761)) >>> 0) % 5 === 3 ? "sip" : "desk";
-}
-
-/** Ambient courier cadence: at most one per COURIER_GAP_MS, at a hash(period)-seeded moment of each period; never with an alert, a live one, or ambient off. */
-export const COURIER_GAP_MS = 8 * 60_000;
-export function courierDue(now: number, last: number, o: { live: boolean; alert: boolean; ambient: boolean }): boolean {
-  if (o.live || o.alert || !o.ambient || now - last < COURIER_GAP_MS) return false;
-  return now % COURIER_GAP_MS >= hash(`courier${Math.floor(now / COURIER_GAP_MS)}`) % (COURIER_GAP_MS / 2);
-}
-
-/** Courier vs walkers: wait for anyone within 2.2 tiles, ghost within 1 tile, so the two never read as overlapping. `walkers` are non-seated positions in art px. */
-export function courierGuard(cx: number, cy: number, walkers: Iterable<{ x: number; y: number }>, tile: number): { wait: boolean; fade: boolean } {
-  let wait = false, fade = false;
-  for (const w of walkers) {
-    const d = Math.hypot(w.x - cx, w.y - cy);
-    if (d < tile * 2.2) wait = true;
-    if (d < tile) fade = true;
-  }
-  return { wait, fade };
 }
 
 /** When a running tool earns the long-call arc: 3x that tool's own p95 in this session once 5 calls are known (never under 10 s), else 30 s. */

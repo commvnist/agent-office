@@ -1,13 +1,13 @@
-// DOM fun layer, quiet by default: toasts, commentary ticker (a slim strip that fades in only for something new), highlight
+// DOM fun layer, quiet by default: commentary ticker (a slim strip that fades in only for something new), highlight
 // cards, sparklines. Listens for `ao:fun` on document. All event text is set with textContent only.
 import type { FunEvent } from "@agent-office/core";
 import { office } from "./api.ts";
 import { $, announce, el } from "./dom.ts";
 import { settings } from "./settings.ts";
 import { fmtAge, usageTotal } from "./logic.ts";
-import { deltaBuckets, OUTCOME_GLYPH, parseHighlight, ringMath, sparkBuckets, sparkPoints, toastGate, toastKind, toastModel } from "./funlogic.ts";
+import { deltaBuckets, OUTCOME_GLYPH, parseHighlight, ringMath, sparkBuckets, sparkPoints } from "./funlogic.ts";
 
-const TOAST_MS = 5000, HL_MS = 6000, TICK_MS = 6000;
+const HL_MS = 6000, TICK_MS = 6000;
 const pick = (id?: string) => {
   if (!id || !office.actors().some((a) => a.id === id)) { announce("That agent has left the floor"); return; }
   office.select(id); office.focus(id); office.pulse(id);
@@ -31,23 +31,6 @@ function transient(host: HTMLElement, list: HTMLElement[], node: HTMLElement, ms
   node.addEventListener("focusout", arm);
   arm();
   return gone;
-}
-
-// ---- toasts (bottom-left, max 3, rate limited): rare delights ----
-const toasts: HTMLElement[] = [], gate = toastGate();
-function toast(e: FunEvent) {
-  if (!toastKind(e.kind) || !gate(Date.now(), e.rare)) return;
-  const m = toastModel(e), box = el("div", `toast ${e.kind}`), main = el("button", "tmain");
-  main.type = "button";
-  main.title = "Dismiss";
-  const ic = el("span", "ti", m.icon);
-  ic.setAttribute("aria-hidden", "true");
-  const tx = el("span", "tt");
-  tx.append(el("b", "", m.title), el("span", "", m.line));
-  main.append(ic, tx);
-  box.append(main);
-  const gone = transient($("toasts"), toasts, box, TOAST_MS, 3);
-  main.addEventListener("click", gone);
 }
 
 // ---- commentary ticker: shown for TICK_MS when there is something new, then hidden ----
@@ -151,8 +134,7 @@ export function bindFun() {
     const e = (ev as CustomEvent<FunEvent>).detail;
     if (!e || typeof e.text !== "string") return;
     if (e.kind === "highlight") { highlight(e); say(e.text); }
-    else if (e.kind === "commentary") say(e.text);
-    else toast(e);
+    else if (e.kind === "commentary") say(e.text); // P6: delights stay in the scene; nothing toasts over the stage
   });
   office.onFeed(() => { if (office.source.mode !== "replay") evTimes.push(Date.now()); if (evTimes.length > 4000) evTimes.shift(); });
   setInterval(sampleSignals, 5000);

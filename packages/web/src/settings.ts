@@ -44,20 +44,20 @@ export const setTextScale = (n: number) => { settings.textScale = Math.max(0.8, 
 /**
  * Scene-relative text: in-scene text (name tags, bubbles, plaques) keeps its size relative to the world, so zooming in makes it
  * bigger. `k` is 1 at the default fit scale REF_SC and proportional above/below it, quantized to quarters so text is re-rasterised in
- * steps, not every wheel tick. fontPx still floors at 10px, so zoomed-out text stays legible.
+ * steps, not every wheel tick. No legibility floor (owner): text shrinks with the world like everything else; zoom in to read it.
  */
 export const REF_SC = 2.4;
 export const textZoom = { k: 1 };
 /** Feed the current world scale; true when the quantized factor changed (callers re-style their text). */
 export const setSceneScale = (sc: number): boolean => {
-  const k = Number.isFinite(sc) && sc > 0 ? Math.max(0.5, Math.min(6, Math.round((sc / REF_SC) * 4) / 4)) : 1;
+  const k = Number.isFinite(sc) && sc > 0 ? Math.max(0.125, Math.min(6, Math.round((sc / REF_SC) * 8) / 8)) : 1; // eighths: steps fine enough to track the world when zoomed out
   const changed = k !== textZoom.k;
   textZoom.k = k;
   return changed;
 };
 
-/** On-screen font px: base * textScale * scene zoom factor, never below 10px. */
-export const fontPx = (base: number) => Math.max(10, Math.round(base * settings.textScale * textZoom.k));
+/** On-screen font px: base * textScale * scene zoom factor, so in-scene text keeps one size relative to the world (O3). */
+export const fontPx = (base: number) => Math.max(1, Math.round(base * settings.textScale * textZoom.k));
 
 /** Walk speed with acceleration/deceleration; `remaining` is distance left to the final tile. Never drops below 25% so it always arrives. */
 export function easeSpeed(v: number, remaining: number, dt: number, max: number, accel = max * 5): number {

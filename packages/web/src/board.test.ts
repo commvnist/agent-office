@@ -26,8 +26,9 @@ test("shadeTo blends toward the tint", () => {
 
 test("ledger: newest first, mark by outcome, clipped, privacy-blank falls back to the task then the outcome", async () => {
   const { ledgerLines } = await import("./board.ts");
-  const o = (outcome: "done" | "blocked" | "partial", text: string, task = "", project = "web") => ({ session: "s1", project, agentId: "a", outcome, text, task, t: 1 });
-  assert.deepEqual(ledgerLines([o("done", "shipped cart"), o("blocked", "")], 5, 40), ["✓ web: shipped cart", "x web: blocked"]);
+  const o = (outcome: "done" | "blocked" | "partial" | undefined, text: string, task = "", project = "web") => ({ session: "s1", project, agentId: "a", outcome, text, task, t: 1 });
+  assert.deepEqual(ledgerLines([o("done", "shipped cart"), o("blocked", "")], 5, 40), ["✓ web: shipped cart", "x web: gave up"]);
+  assert.deepEqual(ledgerLines([o(undefined, ""), o(undefined, "notes")], 5, 40), ["· web: reported", "· web: notes"]); // C3: unknown is never ✓
   assert.deepEqual(ledgerLines([o("partial", "", "write tests")], 5, 40), ["~ web: write tests"]);
   assert.equal(ledgerLines([o("done", "a very long result that will not fit")], 5, 14)[0], "✓ web: a very…");
   assert.equal(ledgerLines([o("done", "x"), o("done", "y")], 1, 40).length, 1);

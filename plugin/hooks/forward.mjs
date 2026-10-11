@@ -101,7 +101,7 @@ async function autostart() {
   const entry = process.env.AGENT_OFFICE_DAEMON || read("daemon") || join(dirname(dirname(dirname(fileURLToPath(import.meta.url)))), "packages", "server", "src", "main.ts");
   if (!existsSync(entry)) { note = `daemon entry missing: ${entry} (rerun npm run setup)`; return false; }
   const args = major === 22 && minor < 18 ? ["--experimental-strip-types", entry] : [entry];
-  spawn(process.execPath, args, { detached: true, stdio: "ignore", env: process.env }).unref();
+  spawn(process.execPath, args, { detached: true, stdio: "ignore", env: process.env, windowsHide: true }).unref(); // no console window on Windows
   for (let i = 0; i < 13; i++) {
     await sleep(150);
     if (await healthy()) return true;

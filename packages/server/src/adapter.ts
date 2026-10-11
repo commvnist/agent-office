@@ -110,15 +110,16 @@ function events(p: Record<string, unknown>, session: string, agentId: string | u
           ? [{ type: "prompt", session, text: "", t }, { type: "message", session, to: "user", text: sum, t }]
           : [{ type: "prompt", session, text, t }];
       }
-    case "Stop":
-      return [{ type: "turn_end", session, t }];
+    case "Stop": // the first line of the lead's answer becomes its turn's result (the daemon drops it in privacy)
+      return [{ type: "turn_end", session, message: clip(String(p.last_assistant_message ?? "").split("\n")[0], 220) || undefined, t }];
     case "Notification":
     {
       // Known notification types decide the kind; otherwise the reducer reads it from the text.
-      // A question tool arrives as a permission_prompt ("needs your permission to use AskUserQuestion"), but it asks for an answer: your turn.
+      // A question tool arrives as a permission_prompt ("needs your permission to use AskUserQuestion"), but it asks for an answer:
+      // your turn, mid-turn (not idle). Only idle_prompt means the turn is over. agent_id: the helper that raised it.
       const ask = typeof p.message === "string" && /\bAskUserQuestion\b/.test(p.message);
       const kind = ask || p.notification_type === "idle_prompt" ? "turn" : p.notification_type === "permission_prompt" ? "permission" : undefined;
-      return [{ type: "waiting", session, text: clip(p.message, 80) || undefined, ...(kind === "turn" ? { idle: true } : {}), kind, t }];
+      return [{ type: "waiting", session, agentId, text: clip(p.message, 80) || undefined, ...(p.notification_type === "idle_prompt" ? { idle: true } : {}), kind, t }];
     }
     case "PostToolUse": {
       const r = isObj(p.tool_response) ? p.tool_response : {};

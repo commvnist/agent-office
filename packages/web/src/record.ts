@@ -1,9 +1,6 @@
 // Canvas recording (#96) and share poster (#97). DOM/canvas only; the poster content comes from logic.posterModel.
-import { hotFiles } from "@agent-office/core";
 import { office } from "./api.ts";
 import { download } from "./dom.ts";
-import { fmtMs, recapModel } from "./funlogic.ts";
-import { fetchHistory } from "./history.ts";
 import { coverFit, posterModel, usageTotal, whoLine } from "./logic.ts";
 import { roleColor } from "./theme.ts";
 
@@ -85,39 +82,4 @@ export async function sharePoster() {
     });
   }
   c.toBlob((b) => b && download(b, `agent-office-${Date.now()}.png`), "image/png");
-}
-
-/** "Today in the office" card as a PNG: counts from today's stored events, files from the live state. Names only when private. */
-export async function shareRecap(): Promise<string> {
-  const priv = office.privacy || office.source.private, now = Date.now();
-  const midnight = new Date(now).setHours(0, 0, 0, 0);
-  let events: Awaited<ReturnType<typeof fetchHistory>>["events"] = [];
-  try { events = (await fetchHistory(midnight, 0, priv)).events; } catch { /* no history: live counts only */ }
-  const env = office.getEnvelope(), live = posterModel(env?.state ?? { sessions: {}, agents: {}, queue: [], log: [], nextId: 1, pending: {} }, now);
-  const r = recapModel(events);
-  const files = !priv && env ? hotFiles(env.state, undefined, 3).map((f) => f.path.split(/[\\/]/).pop() ?? f.path) : [];
-  const W = 1200, H = 630, c = document.createElement("canvas");
-  c.width = W; c.height = H;
-  const g = c.getContext("2d")!;
-  g.fillStyle = "#14121f"; g.fillRect(0, 0, W, H);
-  g.fillStyle = "#4de8ff"; g.fillRect(60, 56, 6, 44);
-  const mono = (px: number, bold = false) => `${bold ? "bold " : ""}${px}px ui-monospace, Menlo, monospace`;
-  g.textBaseline = "top";
-  g.fillStyle = "#e8e6f5"; g.font = mono(44, true); g.fillText("Today in the office", 84, 54);
-  g.fillStyle = "#8d89ab"; g.font = mono(22); g.fillText(new Date(now).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }), 84, 108);
-  const hour = r.busiestHour === null ? "n/a" : `${String(r.busiestHour).padStart(2, "0")}:00`;
-  const stats: [string, string | number][] = [
-    ["sessions", r.sessions || live.sessions], ["agents", r.agents || live.agents.length], ["tool calls", r.tools], ["done", live.done],
-    ["blocked", live.blocked], ["errors", r.errors], ["busiest hour", hour], ["longest tool", r.longest ? `${r.longest.tool} ${fmtMs(r.longest.ms)}` : "n/a"],
-  ];
-  stats.forEach(([k, v], i) => {
-    const x = 60 + (i % 4) * 285, y = 170 + Math.floor(i / 4) * 130;
-    g.fillStyle = k === "blocked" && live.blocked ? "#ff8a80" : "#8fb7ff"; g.font = mono(String(v).length > 9 ? 26 : 44, true); g.fillText(String(v).slice(0, 18), x, y);
-    g.fillStyle = "#8d89ab"; g.font = mono(20); g.fillText(k, x, y + 60);
-  });
-  g.fillStyle = "#8d89ab"; g.font = mono(20);
-  g.fillText(files.length ? `Top files: ${files.join(", ")}`.slice(0, 80) : priv ? "Names and counts only (private)" : "No file activity", 60, 460);
-  g.fillStyle = "#5a5678"; g.font = mono(18); g.fillText("AGENT OFFICE", 60, H - 50);
-  await new Promise<void>((res) => c.toBlob((b) => { if (b) download(b, `agent-office-recap-${Date.now()}.png`); res(); }, "image/png"));
-  return "recap saved";
 }

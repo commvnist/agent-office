@@ -2,13 +2,24 @@
 // fetchHistory is the one shared /history client for the replay and the timeline.
 import type { OfficeEvent } from "@agent-office/core";
 
+const OUTCOME = /^\s*(done|blocked|partial)\b/i;
+/** X2: the daemon stamps `outcome` on a stored stop (the message is often absent); older lines only have the DONE/BLOCKED/PARTIAL prefix. */
+export const stopOutcome = (e: { outcome?: string; message?: string }) => e.outcome ?? OUTCOME.exec(e.message ?? "")?.[1].toLowerCase();
+
+/** P4 "Since you left": finished helpers by outcome in stored events (counts only, no text). */
+export function awayCounts(events: readonly OfficeEvent[]) {
+  let done = 0, gaveUp = 0;
+  for (const e of events) if (e.type === "agent_stop") { const o = stopOutcome(e); if (o === "done") done++; else if (o === "blocked") gaveUp++; }
+  return { done, gaveUp };
+}
+
 export type Marker = { i: number; kind: "blocked" | "waiting" | "error" | "session_start" };
 /** Landmarks of an event list; `i` is the replay position (events applied) just after the event. */
 export function markers(events: OfficeEvent[]): Marker[] {
   const out: Marker[] = [];
   events.forEach((e, i) => {
     const kind = e.type === "waiting" ? "waiting" : e.type === "session_start" ? "session_start" : e.type === "tool_end" && !e.ok ? "error"
-      : e.type === "agent_stop" && /^\s*blocked\b/i.test(e.message ?? "") ? "blocked" : null;
+      : e.type === "agent_stop" && stopOutcome(e) === "blocked" ? "blocked" : null;
     if (kind) out.push({ i: i + 1, kind });
   });
   return out;
@@ -34,7 +45,6 @@ export function gantt(events: OfficeEvent[]): { t0: number; t1: number; rows: Ro
 
 // ---- waterfall timeline (#194): one row per session and per agent, plus the pure view/range maths the canvas uses ----
 export type WRow = { session: string; id?: string; label: string; kind: "session" | "agent"; role: string; s: number; e: number; open: boolean; outcome?: "done" | "blocked" | "partial" };
-const OUTCOME = /^\s*(done|blocked|partial)\b/i;
 /** Session row first, then its agents by start time. Agents stopped with a DONE/BLOCKED/PARTIAL prefix carry the outcome; unstopped bars are `open`. */
 export function waterfall(events: OfficeEvent[]): { t0: number; t1: number; rows: WRow[]; times: number[] } {
   const t0 = events.length ? events[0].t : 0, t1 = events.length ? events[events.length - 1].t : 0;
@@ -52,7 +62,7 @@ export function waterfall(events: OfficeEvent[]): { t0: number; t1: number; rows
       g.kids.set(e.agentId, { session: e.session, id: e.agentId, label: `${e.agentType.replace(/^.*:/, "")} ${e.agentId.slice(0, 6)}`, kind: "agent", role: e.agentType, s: e.t, e: t1, open: true });
     } else if (e.type === "agent_stop") {
       const k = get(e.session, e.t).kids.get(e.agentId);
-      if (k) { k.e = e.t; k.open = false; const o = OUTCOME.exec(e.message ?? "")?.[1].toLowerCase(); if (o) k.outcome = o as WRow["outcome"]; }
+      if (k) { k.e = e.t; k.open = false; const o = stopOutcome(e); if (o === "done" || o === "blocked" || o === "partial") k.outcome = o; }
     }
   }
   const rows: WRow[] = [];

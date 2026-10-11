@@ -1,4 +1,4 @@
-import type { OfficeState } from "@agent-office/core";
+import { pseudonym, type OfficeState } from "@agent-office/core";
 
 /** Blank `src` once: the same source object always maps to the same blanked object, so patches can diff by identity. */
 const blanked = new WeakMap<object, unknown>();
@@ -8,18 +8,19 @@ const memo = <T extends object, R>(src: T, f: (x: T) => R): R => {
 };
 const each = <T extends object, R>(rec: Record<string, T>, f: (x: T) => R) => Object.fromEntries(Object.entries(rec).map(([k, x]) => [k, memo(x, f)]));
 
-/** Client view of the state: internal `track` removed; with `priv`, free text blanked (structure and tool names stay). */
+/** Client view of the state: internal `track` removed; with `priv`, free text blanked and projects pseudonymised (structure and tool names stay). */
 export type Public = Omit<OfficeState, "track"> & { crew?: Record<string, Crew> };
 export function publicState(state: OfficeState, priv: boolean): Public {
   const { track: _, ...rest } = state;
   if (!priv) return rest;
   return {
     ...rest,
-    sessions: each(rest.sessions, (x) => ({ ...x, prompt: undefined, why: undefined, detail: undefined, waitingText: undefined, lastError: undefined, cwd: undefined, branch: undefined, files: undefined })),
+    sessions: each(rest.sessions, (x) => ({ ...x, project: pseudonym(x.id), prompt: undefined, lastPrompt: undefined, result: undefined, why: undefined, detail: undefined, waitingText: undefined, lastError: undefined, cwd: undefined, branch: undefined, files: undefined })),
     agents: each(rest.agents, (a) => ({ ...a, task: undefined, report: undefined, why: undefined, detail: undefined, lastError: undefined })),
     log: memo(rest.log, (l) => l.map((i) => memo(i, (x) => ({ ...x, text: "" })))),
     tasks: rest.tasks && memo(rest.tasks, (l) => l.map((t) => ({ ...t, text: "" }))),
-    outcomes: rest.outcomes && memo(rest.outcomes, (l) => l.map((o) => ({ ...o, text: "", task: undefined }))),
+    outcomes: rest.outcomes && memo(rest.outcomes, (l) => l.map((o) => ({ ...o, project: pseudonym(o.session), text: "", task: undefined }))),
+    summaries: rest.summaries && memo(rest.summaries, (l) => l.map((x) => ({ ...x, project: pseudonym(x.session), prompt: undefined, result: undefined }))),
     conflicts: rest.conflicts && memo(rest.conflicts, (l) => l.map((c) => ({ ...c, file: "" }))),
     pending: each(rest.pending, (l) => l.map((j) => ({ ...j, text: "" }))),
   };

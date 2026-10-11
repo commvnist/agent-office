@@ -26,12 +26,32 @@ test("radar: blocked, waiting, stuck; first-seen is remembered by the caller", (
   st.sessions.b = { id: "b", project: "pb", waiting: false, startedAt: 0, prompt: "x", lastAt: 1000 };
   st.sessions.c = { id: "c", project: "pc", waiting: false, startedAt: 0, lastAt: 1000 }; // idle, not stuck
   const ac = [{ id: "x1", label: "Dev", lead: false, status: "blocked", project: "pa" } as ActorInfo];
-  const r = radar(ac, st, 200_000, (_k, f) => f);
+  const r = radar(ac, { ...st, outcomes: undefined }, 200_000, (_k, f) => f); // an older daemon: blocked actors
   assert.deepEqual(r.map((i) => i.kind), ["blocked", "waiting", "stuck"]);
   assert.equal(r[1].since, 500);
   assert.equal(titleFor([r[1]]), "(1) waiting: pa - Agent Office");
   assert.equal(titleFor(r), "(3) needs you: pa - Agent Office");
   assert.equal(titleFor([]), "Agent Office");
+});
+
+test("C6/C7/X3: gave-up rows come from outcomes until the next prompt or Seen; silent helpers; the turn reason is the lead's result", () => {
+  const st: OfficeState = emptyState();
+  st.sessions.a = { id: "a", project: "pa", waiting: true, waitKind: "turn", waitingText: "Claude is waiting for your input", result: "Rebuilt; want me to fix links?", startedAt: 0, lastAt: 500, promptAt: 100 };
+  st.outcomes = [
+    { session: "a", agentId: "h1", name: "Dev", outcome: "blocked", text: "BLOCKED: no key", t: 200 },
+    { session: "a", agentId: "h0", name: "Old", outcome: "blocked", text: "earlier turn", t: 50 }, // before the latest prompt
+    { session: "a", agentId: "lead:a", lead: true, outcome: "blocked", text: "x", t: 300 }, // a lead's turn is the your-turn row
+    { session: "gone", agentId: "h2", outcome: "blocked", text: "ended session", t: 300 },
+    { session: "a", agentId: "h3", outcome: "done", text: "ok", t: 300 },
+  ];
+  st.agents.h4 = { id: "h4", session: "a", agentType: "qa", role: "qa", seat: { id: "d0", role: "qa", kind: "permanent", index: 0, name: "Ann" }, parent: "lead:a", lastAt: 1000 };
+  const r = radar([], st, 1000 + 3 * 60_000 + 1, (_k, f) => f, 60_000);
+  assert.deepEqual(r.map((i) => [i.kind, i.label]), [["blocked", "Dev"], ["waiting", "pa"], ["stuck", "Ann"]]);
+  assert.equal(r[0].key, "blocked:h1:200");
+  assert.equal(r[1].reason, "Rebuilt; want me to fix links?");
+  assert.equal(radar([], st, 2000, (_k, f) => f, 60_000, (k) => k === "blocked:h1:200").filter((i) => i.kind === "blocked").length, 0, "seen");
+  st.sessions.a.promptAt = 250;
+  assert.equal(radar([], st, 2000, (_k, f) => f, 60_000).filter((i) => i.kind === "blocked").length, 0, "the next prompt clears it");
 });
 
 test("filterFeed by session, kind, agent and mute", () => {
