@@ -2,7 +2,7 @@ import { Container, Graphics, Sprite, Text } from "pixi.js";
 import { TILE_PX, type Tile } from "@agent-office/core";
 import { dev } from "./snap.ts";
 import { personTex, emoteTex, ringTex, toolIconTex, badgeIconTex, pipTex, PIP, type Dir, type Emote, type Expr, type Look } from "./sprites.ts";
-import { easeSpeed, fontPx, settings, stackBubbles, textZoom, type BubbleBox } from "./settings.ts";
+import { easeSpeed, fontPx, REF_SC, settings, stackBubbles, textZoom, type BubbleBox } from "./settings.ts";
 import { KEY, STATUS, theme } from "./theme.ts";
 import { HOP_MS, JITTER_MS, SQUASH_MS, cleanText, clampBox, hopPose, idleTier, jitterX, microPose, microSlot, sipState, popScale, quirkAt, squashY, stackLabels, statusOf, stepDrop, type Status, toolIcon, type Box, type Rect } from "./choreo.ts";
 import { hash } from "./color.ts";
@@ -49,10 +49,13 @@ export const setBubbleBlank = (b: boolean) => { const c = blank !== b; blank = b
 function makeBubble(text: string, kind: BubbleKind, badge?: Badge): Container {
   const st = BUBBLE_STYLE[kind];
   const small = kind === "tool";
-  const u = textZoom.k; // bubble geometry follows the scene-relative text size
+  // Sized in art px (a tile is 16), converted with the scene zoom like every in-scene text, so a bubble keeps one size
+  // relative to the figures: 72 art px wide (4.5 tiles) for speech, 64 for a tool; text ~5 art px. Long narration is clipped
+  // here (the feed and the card keep it whole), so a bubble stays a few lines tall.
+  const u = textZoom.k, A = REF_SC * u; // screen px per art px at this zoom
   const t = new Text({
-    text: blank ? "…" : cleanText(text),
-    style: { fontFamily: MONO, fontSize: fontPx(small ? 10 : 12), fill: st.fg, wordWrap: true, wordWrapWidth: Math.round((small ? 190 : 210) * u), lineHeight: Math.round((small ? 14 : 16) * u) },
+    text: blank ? "…" : cleanText(text, small ? 60 : 110),
+    style: { fontFamily: MONO, fontSize: fontPx(small ? 10 : 12), fill: st.fg, wordWrap: true, wordWrapWidth: Math.round((small ? 64 : 72) * A), lineHeight: Math.round((small ? 14 : 16) * u) },
   });
   // radius, stroke, tail and chip follow the text zoom in whole pixels (an even stroke stays on the pixel grid when centred)
   const pad = Math.round(7 * u), w = Math.ceil(t.width) + pad * 2, h = Math.ceil(t.height) + pad * 2;
@@ -570,7 +573,7 @@ export class Actor {
       this.clampTag();
     }
     const couched = !!this.perch && this.perch.k >= 1; // lounging: head sits ~4px lower than standing
-    const headY = dev(sy - (this.sitting ? 20 : couched ? 24 : 28) * sc - 6);
+    const headY = dev(sy - (this.sitting ? 20 : couched ? 24 : 28) * sc - 2 * sc); // the tail tip sits 2 art px above the head, at every zoom
     // upper-row tag sits above the emote's space (emotes are <= 9 art px tall, bottom 19 px above the feet), so it never covers its own thought cloud (O1); bubbles stack above it
     if (this.tagAbove && this.sitting) { this.tag.y = dev(sy - 29 * sc - this.tag.height - 1); if (floor) this.clampTag(); }
     const toolY = headY - stagger;
@@ -701,7 +704,7 @@ function addBubble(a: Actor, b: { node: Container; born: number } | null, tool: 
   const fl = a.floorPx();
   bubbleNodes.push({ node: b.node, fade: b.node.alpha, fl });
   // an alert's own words outrank a neighbour's chatter; neither may be clamped back down onto the other
-  bubbleBoxes.push({ x: b.node.x, y: b.node.y, w: b.node.width, h: b.node.height, prio: tool ? 1 : a.alert ? 2.5 : 2, age: a.now - b.born, zone, tool, top: Math.max(top, fl?.y ?? top) });
+  bubbleBoxes.push({ x: b.node.x, y: b.node.y, w: b.node.width, h: b.node.height, prio: tool ? 1 : a.alert ? 2.5 : 2, age: a.now - b.born, zone, tool, top }); // may rise over the wall: a bubble kept inside the floor got pushed down onto a top-row agent's body
 }
 
 /**
@@ -749,9 +752,8 @@ export function layoutBubbles(it: Iterable<Actor>, view?: { w: number; h: number
     n.alpha = r.alpha * bubbleNodes[i].fade;
     n.visible = r.visible;
     const fl = bubbleNodes[i].fl;
-    if (fl) { const p = clampBox({ x: n.x, y: n.y - bx.h, w: bx.w, h: bx.h }, fl); n.x = p.x; n.y = p.y + bx.h; } // kept inside the floor after stacking
-    if (view) { // keep inside the canvas and below the top HUD (#108/#F3)
-      n.y = Math.max(n.y, view.top + 4 + bx.h);
+    if (fl) n.x = clampBox({ x: n.x, y: n.y - bx.h, w: bx.w, h: bx.h }, fl).x; // sideways inside the room; vertically the stacker hides it instead
+    if (view) { // sideways inside the canvas (#108/#F3); never clamped down, that put it on its own agent's body
       n.x = Math.max(bx.w / 2 + 2, Math.min(view.w - bx.w / 2 - 2, n.x));
     }
     n.x = dev(n.x); n.y = dev(n.y); // bubbles land on whole device pixels

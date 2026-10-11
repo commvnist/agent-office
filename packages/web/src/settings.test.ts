@@ -74,6 +74,7 @@ test("stackBubbles hides a bubble that cannot rise clear instead of letting a cl
   assert.equal(r[0].visible, true);
   assert.equal(r[1].visible, false, "no room above the alert bubble");
   assert.equal(stackBubbles([box({ top: 40 }), box({ age: 5, top: 40 })])[1].y, 78, "room: it stacks");
+  assert.equal(stackBubbles([box({ top: 90 })])[0].visible, false, "no room above its own agent: hidden, never pushed down onto the body");
 });
 
 test("stackBubbles: a shifted alert bubble keeps full opacity", () => {

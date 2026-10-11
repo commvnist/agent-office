@@ -71,7 +71,7 @@ export type BubbleOut = { y: number; alpha: number; visible: boolean };
 /**
  * Stack overlapping bubbles (x = centre, y = bottom edge, screen px). Higher prio first, then newer (smaller age).
  * Overlaps shift up; each shift fades 25% (max 50%); at most `maxTools` tool bubbles stay visible per zone.
- * A bubble that would rise past its `top` (the floor or HUD edge) is hidden: clamping it back down would overprint (A6).
+ * A bubble that would rise past its `top` (the HUD edge) is hidden: clamping it back down would overprint its own agent (A6).
  */
 export function stackBubbles(items: BubbleBox[], maxTools = 3): BubbleOut[] {
   const out: BubbleOut[] = items.map((b) => ({ y: b.y, alpha: 1, visible: true }));
@@ -86,7 +86,7 @@ export function stackBubbles(items: BubbleBox[], maxTools = 3): BubbleOut[] {
       perZone.set(it.zone, n + 1);
     }
     const l = it.x - it.w / 2, r = it.x + it.w / 2;
-    let y = it.top === undefined ? it.y : Math.max(it.y, it.top + it.h), shifts = 0; // start where the edge clamp would put it
+    let y = it.y, shifts = 0;
     // fixed obstacles (prio >= 3: tags, alert rings and flags, figures, badges) never move: overlapping each other is fine,
     // shifting them would move the obstacle away from the thing it protects
     if (it.prio >= 3) { placed.push({ l, r, t: it.y - it.h, b: it.y }); continue; }
@@ -97,8 +97,8 @@ export function stackBubbles(items: BubbleBox[], maxTools = 3): BubbleOut[] {
       y = hit.t - 2;
       shifts++;
     }
-    // no clear spot found, or it would rise past the floor/HUD edge: hidden, never left overprinting (A6)
-    if (!clear || (shifts && it.top !== undefined && y - it.h < it.top)) { out[i].visible = false; continue; }
+    // no clear spot found, or no room above its agent before the HUD edge: hidden, never pushed down onto the body (A6)
+    if (!clear || (it.top !== undefined && y - it.h < it.top)) { out[i].visible = false; continue; }
     out[i].y = y;
     out[i].alpha = it.prio >= 2.5 ? 1 : 1 - 0.25 * Math.min(2, shifts); // an alert's own words never fade
     placed.push({ l, r, t: y - it.h, b: y });
