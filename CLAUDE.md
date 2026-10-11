@@ -17,4 +17,5 @@
 - Never read `~/.claude` credentials/OAuth tokens or call the Anthropic API/Agent SDK from this project.
 - Observer-only. The only sanctioned use of the binary is `claude plugin ...` (plugin management, in `scripts/setup.mjs` and `scripts/office.mjs doctor`). Never `claude -p`/`--print`, headless or programmatic prompting, wrapping the binary, or sending keystrokes into a Claude session; `npm run check:compliance` enforces it.
 - Interactive control of Claude from the UI (tmux web terminal) was built and removed at the owner's request; a backup tarball sits next to the repo. Do not reintroduce it without being asked.
+- Transcript reads are limited to narration and token totals (`packages/server/src/usage.ts`): only a `.jsonl` whose real path is under `~/.claude/projects` or the session's own cwd (never `/` or the home directory), only `assistant` `text` blocks for narration (never tool inputs, tool results or user messages), last 256 KB, redacted, clipped, blank in privacy mode. Do not widen it.
 - Bind to loopback only. Displayed text is untrusted input.
