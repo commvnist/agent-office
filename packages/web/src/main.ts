@@ -1043,11 +1043,12 @@ function tetherSeg(a: Actor | undefined, b: Actor | undefined, t = 0) {
   if (a && b) dash(b.pos.x, b.pos.y - 8, a.pos.x, a.pos.y - 8, t);
 }
 // Performance probe for the CI gate (scripts/perf.mjs): main-thread ms per frame (update + render submit) and live display objects.
-const perf = { ms: new Float32Array(600), n: 0, start: 0 };
+const perf = { ms: new Float32Array(600), up: new Float32Array(600), n: 0, start: 0, upEnd: 0 };
 app.ticker.add(() => { perf.start = performance.now(); }, undefined, UPDATE_PRIORITY.INTERACTION);
-app.ticker.add(() => { perf.ms[perf.n++ % 600] = performance.now() - perf.start; }, undefined, UPDATE_PRIORITY.UTILITY);
+app.ticker.add(() => { perf.upEnd = performance.now(); }, undefined, UPDATE_PRIORITY.LOW + 1); // after every update, before the render
+app.ticker.add(() => { const i = perf.n++ % 600; perf.ms[i] = performance.now() - perf.start; perf.up[i] = perf.upEnd - perf.start; }, undefined, UPDATE_PRIORITY.UTILITY);
 const countObjects = (c: ContainerChild): number => 1 + (c.children?.reduce((n, k) => n + countObjects(k), 0) ?? 0);
-(globalThis as { __aoPerf?: unknown }).__aoPerf = { frames: () => Array.from(perf.ms.subarray(0, Math.min(perf.n, 600))), reset: () => { perf.n = 0; }, objects: () => countObjects(app.stage), actors: () => actors.size };
+(globalThis as { __aoPerf?: unknown }).__aoPerf = { frames: () => Array.from(perf.ms.subarray(0, Math.min(perf.n, 600))), updates: () => Array.from(perf.up.subarray(0, Math.min(perf.n, 600))), reset: () => { perf.n = 0; }, objects: () => countObjects(app.stage), actors: () => actors.size };
 app.ticker.add((tk) => {
   if (!layout) return;
   const dt = Math.min(0.1, tk.deltaMS / 1000), now = Date.now();

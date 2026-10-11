@@ -16,7 +16,7 @@ jobs:
       - run: npm test
       - run: npm run check:compliance
       - run: npm run build:web
-  perf: # P6 gate: frame p95 and display objects at 100 agents, 4x CPU throttling (scripts/perf.mjs; Chrome ships on the runner)
+  perf: # P6 gate: update p95 (and frame p95 where rendering keeps up) and display objects at 100 agents, 4x CPU throttling (scripts/perf.mjs; Chrome ships on the runner)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -25,6 +25,7 @@ jobs:
       - run: npm ci
       - run: npm run build:web
       - run: npm run perf
+        env: { PERF_SECONDS: "30" } # a GPU-less runner renders ~3 fps: sample long enough for a stable p95
   typecheck:
     runs-on: ubuntu-latest
     continue-on-error: true # non-blocking until the baseline is clean

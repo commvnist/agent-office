@@ -126,7 +126,7 @@ See `CONTRIBUTING.md` and `docs/ARCHITECTURE.md`. License: MIT.
 
 `npm run build:web && npm run perf` starts a throwaway daemon, seeds 100 agents over 8 sessions with live tool traffic
 (~25 events/s), opens the built client in headless Chrome over the DevTools protocol (no extra dependency) with 4x CPU
-throttling, and samples the main-thread time per frame (update + render submit, `window.__aoPerf`) for 10 s.
+throttling, and samples the main-thread time per frame (update + render submit, `window.__aoPerf`) for 20 s.
 It fails when frame p95 or the live display-object count is over budget. The browser comes from `CHROME`, else the usual
 install paths, else Playwright's cache; without one it skips locally and fails in CI. Override with `PERF_P95_MS`,
 `PERF_OBJECTS`, `PERF_SECONDS`, `PERF_AGENTS`. CI runs it as the `perf` job on ubuntu-latest.
@@ -136,7 +136,10 @@ Calibration (October 2026, 3 runs, 108 actors on screen, crews collapsed): p95 1
 is not gated). `PERF_PROFILE=<file>` also writes a `.cpuprofile` of the measured window (open it in DevTools). DevTools throttling is relative to the host, so the
 gate first times a fixed JavaScript workload in the page (unthrottled, median of 5) and divides frame times by the host's
 speed relative to the calibration host (`REF_BENCH_MS`, 71 ms there): a slow CI runner is held to the same work, not to
-its own hardware. The raw numbers are printed too. The same run times the daemon: about 0.7 ms per sequential `POST /event` at 100 agents, 1.1 ms with
+its own hardware. The raw numbers are printed too. The gate always holds the update phase (everything the app does per frame before the
+render) to the budget; it holds the full frame (update + render submit) too when at least 100 frames were sampled. On a
+GPU-less 2-core CI runner software GL starves the page to about 3 frames a second, so there the full frame is printed
+and render cost is held by the object budget instead. The same run times the daemon: about 0.7 ms per sequential `POST /event` at 100 agents, 1.1 ms with
 a browser subscribed to `/stream`, so roughly 900 events/s, far above what hooks produce.
 
 ## What it shows, and what it ignores

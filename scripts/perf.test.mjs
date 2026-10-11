@@ -11,10 +11,12 @@ test("pct is nearest-rank and safe on empty input", () => {
 });
 
 test("verdict fails on p95, objects and too few frames", () => {
-  assert.deepEqual(verdict({ frames: 400, p95: 10, objects: 100 }, BUDGET), []);
-  assert.equal(verdict({ frames: 400, p95: BUDGET.p95 + 1, objects: 100 }, BUDGET).length, 1);
-  assert.equal(verdict({ frames: 400, p95: 1, objects: BUDGET.objects + 1 }, BUDGET).length, 1);
-  assert.equal(verdict({ frames: 3, p95: 1, objects: 1 }, BUDGET).length, 1);
+  assert.deepEqual(verdict({ frames: 400, p95: 10, up95: 5, objects: 100 }, BUDGET), []);
+  assert.equal(verdict({ frames: 400, p95: BUDGET.p95 + 1, up95: 5, objects: 100 }, BUDGET).length, 1);
+  assert.equal(verdict({ frames: 60, p95: BUDGET.p95 + 1, up95: 5, objects: 100 }, BUDGET).length, 0, "too few frames to gate the full frame");
+  assert.equal(verdict({ frames: 60, p95: 1, up95: BUDGET.p95 + 1, objects: 100 }, BUDGET).length, 1, "the update phase is always gated");
+  assert.equal(verdict({ frames: 400, p95: 1, up95: 1, objects: BUDGET.objects + 1 }, BUDGET).length, 1);
+  assert.equal(verdict({ frames: 3, p95: 1, up95: 1, objects: 1 }, BUDGET).length, 1);
 });
 
 test("findChrome honours CHROME, else the first existing known path", () => {
