@@ -12,9 +12,10 @@ const FORWARD = fileURLToPath(new URL("../../../plugin/hooks/forward.mjs", impor
 const procs: ChildProcess[] = [];
 after(() => procs.forEach((p) => p.kill()));
 
-async function boot(config?: object, port = 0) {
+async function boot(config?: object, port = 0, files: Record<string, string> = {}) {
   const home = mkdtempSync(join(tmpdir(), "ao-d-"));
   if (config) writeFileSync(join(home, "office.json"), JSON.stringify(config));
+  for (const [f, v] of Object.entries(files)) writeFileSync(join(home, f), v);
   const p = spawn(process.execPath, [MAIN], { env: { ...process.env, AGENT_OFFICE_HOME: home, AGENT_OFFICE_PORT: String(port) }, stdio: ["ignore", "pipe", "pipe"] });
   procs.push(p);
   const out: string = await new Promise((res) => p.stdout!.on("data", (d) => /listening on/.test(String(d)) && res(String(d))));
@@ -326,7 +327,8 @@ test("share controls: UI cookie or master header, no foreign Origin; a non-priva
   assert.equal((await call(d.port, "/share")).status, 401);
   assert.equal((await call(d.port, "/share", { headers: { ...ui, origin: "http://evil.example" } })).status, 403);
   assert.equal((await call(d.port, "/share", { headers: { ...ui, origin: `http://127.0.0.1:${d.port}` } })).status, 200);
-  assert.deepEqual(JSON.parse((await call(d.port, "/share", { headers: ui })).body), { enabled: false, devices: [] });
+  const { candidates, ...off } = JSON.parse((await call(d.port, "/share", { headers: ui })).body);
+  assert.deepEqual([off, Array.isArray(candidates)], [{ enabled: false, devices: [] }, true], "L5: share status lists the candidate addresses");
   assert.equal((await call(d.port, "/share/code", { method: "POST", headers: ui })).status, 409, "no code while sharing is off");
   assert.equal((await call(d.port, "/share", { method: "POST", headers: ui, body: "{}" })).status, 400);
   const on = await call(d.port, "/share", { method: "POST", headers: { "x-agent-office-token": d.token }, body: JSON.stringify({ on: true }) });
@@ -392,7 +394,7 @@ test("clear sessions by hand: UI cookie only, same-host only, stored so a restar
   assert.equal((await clear({}, ["a"])).status, 401, "no cookie");
   assert.equal((await clear({ ...ui, origin: "http://evil.example" }, ["a"])).status, 403, "foreign origin");
   assert.equal((await clear(ui, "a")).status, 400, "ids must be a list");
-  assert.deepEqual(JSON.parse((await clear(ui, ["a", "nope"])).body), { cleared: ["a"] });
+  assert.deepEqual(JSON.parse((await clear(ui, ["a", "nope"])).body), { cleared: ["a"], skipped: [] });
   assert.deepEqual(Object.keys((await st(d)).state.sessions), ["b"]);
   d.p.kill();
   const p = spawn(process.execPath, [MAIN], { env: { ...process.env, AGENT_OFFICE_HOME: d.home, AGENT_OFFICE_PORT: "0" }, stdio: ["ignore", "pipe", "pipe"] });
@@ -402,4 +404,44 @@ test("clear sessions by hand: UI cookie only, same-host only, stored so a restar
   assert.deepEqual(Object.keys((await st(d2)).state.sessions), ["b"], "still gone after a restart");
   await call(d2.port, "/event", { method: "POST", headers: { "x-agent-office-token": d.token }, body: JSON.stringify({ hook_event_name: "UserPromptSubmit", session_id: "a", prompt: "hi" }) });
   assert.ok("a" in (await st(d2)).state.sessions, "a new event brings it back");
+});
+
+test("L3: an empty or short token file is replaced at boot; an empty token never authenticates", async () => {
+  const d = await boot(undefined, 0, { token: "", "ui-token": "abc\n" });
+  assert.match(d.token, /^[0-9a-f]{64}$/);
+  assert.match(readFileSync(join(d.home, "ui-token"), "utf8").trim(), /^[0-9a-f]{64}$/);
+  assert.equal((await call(d.port, "/state", { headers: { "x-agent-office-token": "" } })).status, 401);
+  assert.equal((await call(d.port, "/state", { headers: { cookie: "ao_ui=" } })).status, 401);
+  assert.equal((await call(d.port, "/event", { method: "POST", headers: { "x-agent-office-token": "" }, body: "{}" })).status, 401);
+});
+
+test("Clear guard: working sessions and open permission/question waits are skipped and reported; a calm finished turn clears", async () => {
+  const d = await boot();
+  const ev = (o: object) => post(d, o);
+  for (const s of ["work", "perm", "calm"]) await ev({ hook_event_name: "SessionStart", session_id: s, cwd: `/w/${s}` });
+  await ev({ hook_event_name: "PreToolUse", session_id: "work", tool_name: "Bash", tool_use_id: "b1", tool_input: { command: "sleep 9" } });
+  await ev({ hook_event_name: "Notification", session_id: "perm", notification_type: "permission_prompt", message: "Claude needs your permission to use Bash" });
+  await ev({ hook_event_name: "Stop", session_id: "calm", last_assistant_message: "done" });
+  const ui = { cookie: String((await call(d.port, "/")).headers["set-cookie"]).split(";")[0] };
+  const r = JSON.parse((await call(d.port, "/sessions/clear", { method: "POST", headers: ui, body: JSON.stringify({ ids: ["work", "perm", "calm"] }) })).body);
+  assert.deepEqual(r, { cleared: ["calm"], skipped: ["work", "perm"] });
+  assert.deepEqual(Object.keys((await st(d)).state.sessions).sort(), ["perm", "work"]);
+  const s = JSON.parse((await call(d.port, "/status?format=json", { headers: { "x-agent-office-token": d.token } })).body);
+  assert.equal(s.dropped, 0);
+});
+
+test("S7 + L7: a cleared session that returns keeps its folder name; hashed assets are immutable, the page and API are no-store", async () => {
+  const d = await boot();
+  await post(d, { hook_event_name: "SessionStart", session_id: "c1", cwd: "/w/billing" });
+  const ui = { cookie: String((await call(d.port, "/")).headers["set-cookie"]).split(";")[0] };
+  await call(d.port, "/sessions/clear", { method: "POST", headers: ui, body: JSON.stringify({ ids: ["c1"] }) });
+  await post(d, { hook_event_name: "PreToolUse", session_id: "c1", cwd: "/w/billing", tool_name: "Read", tool_input: {} });
+  const x = (await st(d)).state;
+  assert.deepEqual([x.sessions.c1.project, x.summaries.length], ["billing", 0]);
+  const dist = fileURLToPath(new URL("../../web/dist/assets/", import.meta.url));
+  const asset = (() => { try { return readdirSync(dist).find((f) => f.endsWith(".js")); } catch { return undefined; } })();
+  if (asset) {
+    assert.equal((await call(d.port, `/assets/${asset}`)).headers["cache-control"], "public, max-age=31536000, immutable");
+    assert.equal((await call(d.port, "/")).headers["cache-control"], "no-store");
+  }
 });

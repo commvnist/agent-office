@@ -76,7 +76,8 @@ export const adapt: SourceAdapter = (payload, now = Date.now()) => {
     const seq = Number.isSafeInteger(p.ao_seq) ? (p.ao_seq as number) : undefined;
     const id = typeof p.tool_use_id === "string" && NAME.test(p.tool_use_id) ? p.tool_use_id : undefined;
     const out = events(p, session, agentId, id, t);
-    return out.map((e) => defined({ ...e, seq }));
+    const cwd = clip(p.cwd, 200) || undefined; // on every event: a session first seen mid-stream (restart, Clear) still gets its name
+    return out.map((e) => defined({ cwd, ...e, seq }));
   } catch {
     return [];
   }
@@ -116,11 +117,13 @@ function events(p: Record<string, unknown>, session: string, agentId: string | u
     {
       // Known notification types decide the kind; otherwise the reducer reads it from the text.
       // A question tool arrives as a permission_prompt ("needs your permission to use AskUserQuestion"), but it asks for an answer:
-      // your turn, mid-turn (not idle). Only idle_prompt means the turn is over. agent_id: the helper that raised it.
+      // a question, mid-turn (not idle). Only idle_prompt means the turn is over. agent_id: the helper that raised it.
       const ask = typeof p.message === "string" && /\bAskUserQuestion\b/.test(p.message);
-      const kind = ask || p.notification_type === "idle_prompt" ? "turn" : p.notification_type === "permission_prompt" ? "permission" : undefined;
+      const kind = ask ? "question" : p.notification_type === "idle_prompt" ? "turn" : p.notification_type === "permission_prompt" ? "permission" : undefined;
       return [{ type: "waiting", session, agentId, text: clip(p.message, 80) || undefined, ...(p.notification_type === "idle_prompt" ? { idle: true } : {}), kind, t }];
     }
+    case "PreCompact":
+      return [{ type: "compact", session, t }];
     case "PostToolUse": {
       const r = isObj(p.tool_response) ? p.tool_response : {};
       if (r.success === false || r.is_error === true)

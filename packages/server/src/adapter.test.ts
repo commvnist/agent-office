@@ -6,7 +6,9 @@ test("maps subagent and tool hooks, ignores unknown events", () => {
   assert.deepEqual(adapt({ hook_event_name: "SubagentStart", session_id: "s", agent_id: "a1", agent_type: "qa-engineer" }, 1),
     [{ type: "agent_start", session: "s", agentId: "a1", agentType: "qa-engineer", t: 1 }]);
   assert.equal(adapt({ hook_event_name: "PreToolUse", session_id: "s", tool_name: "Bash", agent_id: "a1" }, 1)[0].type, "tool");
-  assert.deepEqual(adapt({ hook_event_name: "PreCompact", session_id: "s" }), []);
+  assert.deepEqual(adapt({ hook_event_name: "PreCompact", session_id: "s" }, 1), [{ type: "compact", session: "s", t: 1 }]);
+  assert.deepEqual(adapt({ hook_event_name: "Stop", session_id: "s", cwd: "/w/api" }, 1), [{ type: "turn_end", session: "s", cwd: "/w/api", t: 1 }], "S7: cwd on every event");
+  assert.deepEqual(adapt({ hook_event_name: "TeammateIdle", session_id: "s" }), []);
   assert.deepEqual(adapt({ hook_event_name: "SessionStart" }), []);
 });
 
@@ -17,9 +19,9 @@ test("a subagent's SubagentHandback carries its report; the lead's or another to
   assert.equal((adapt({ ...base, agent_id: "a", tool_name: "Bash" })[0] as { message?: string }).message, undefined);
 });
 
-test("a question prompt is your turn, a tool permission prompt is permission", () => {
+test("a question prompt is a question (not a permission), a tool permission prompt is permission", () => {
   const n = (message: string) => adapt({ hook_event_name: "Notification", session_id: "s", notification_type: "permission_prompt", message })[0] as { kind?: string };
-  assert.equal(n("Claude needs your permission to use AskUserQuestion").kind, "turn");
+  assert.equal(n("Claude needs your permission to use AskUserQuestion").kind, "question");
   assert.equal(n("Claude needs your permission to use Bash").kind, "permission");
   assert.equal((n("Claude needs your permission to use AskUserQuestion") as { idle?: boolean }).idle, undefined, "a question does not end the turn");
   const idle = adapt({ hook_event_name: "Notification", session_id: "s", notification_type: "idle_prompt", message: "Claude is waiting for your input" })[0] as { idle?: boolean };

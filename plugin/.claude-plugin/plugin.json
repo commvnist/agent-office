@@ -1,6 +1,6 @@
 {
   "name": "agent-office",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "Watch your Claude Code agents work in a virtual office. Observes hooks only; never touches credentials.",
   "author": {
     "name": "commvnist",

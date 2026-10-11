@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { X509Certificate, createPrivateKey } from "node:crypto";
-import { isPrivate, makeCert, loadCert, createShare, deviceName, LAN_ROUTES } from "./share.ts";
+import { isPrivate, makeCert, loadCert, createShare, deviceName, givenName, lanAddresses, LAN_ROUTES } from "./share.ts";
 import { validateConfig } from "./config.ts";
 
 const posix = process.platform !== "win32";
@@ -188,7 +188,7 @@ test("LAN with a device: reads only, nothing else exists; stream caps; revoke cl
     for (const method of ["POST", "PUT", "DELETE"]) assert.equal((await l.call("/state", { method, headers: all })).status, 404, `${method} /state`);
     assert.deepEqual(l.reads, ["/state", "/history"]);
 
-    // Streams: 2 per device; a revoke destroys them.
+    // Streams: 2 per device, a third replaces the oldest (L1: a reload is never refused); a revoke destroys them.
     const port = Number(new URL(l.s.status().url!).port);
     const open = () => new Promise<{ closed: Promise<void> }>((resolve, reject) => {
       const r = request({ host: "127.0.0.1", port, path: "/stream", rejectUnauthorized: false, headers: { host: `${ADDR}:${port}`, cookie } }, (res) => {
@@ -197,11 +197,11 @@ test("LAN with a device: reads only, nothing else exists; stream caps; revoke cl
       });
       r.on("error", reject); r.end();
     });
-    const a = await open(), b = await open();
-    assert.equal((await l.call("/stream", { headers: h })).status, 503, "third stream for one device");
+    const a = await open(), b = await open(), c = await open();
+    await a.closed;
     const id = l.s.status().devices[0].id;
     assert.equal(l.s.revoke(id), 1);
-    await Promise.all([a.closed, b.closed]);
+    await Promise.all([b.closed, c.closed]);
     assert.equal((await l.call("/state", { headers: h })).status, 401, "revoked");
     assert.equal(l.s.revoke(id), 0);
 
@@ -213,6 +213,28 @@ test("LAN with a device: reads only, nothing else exists; stream caps; revoke cl
     assert.equal(l.s.status().devices.length, 0);
     assert.match(readFileSync(join(l.dir, "share.log"), "utf8"), /revoked [0-9a-f]{8}/);
   } finally { l.s.stop(); }
+});
+
+test("X8: an optional device name on the pair form, sanitised, stored with the pairing date and shown in status", async () => {
+  assert.equal(givenName("Ana's <b>phone</b>\u001b[31m  \u202e!"), "Ana's bphoneb31m");
+  assert.equal(givenName("x".repeat(80)).length, 32);
+  assert.equal(givenName(null), "");
+  const l = lanServer();
+  await l.s.start();
+  try {
+    assert.match((await l.call("/pair")).body, /name="name" maxlength="32"/);
+    const code = (l.s.newCode() as { code: string }).code;
+    const r = await l.call("/pair", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: `code=${code}&name=${encodeURIComponent("Kitchen tablet")}` });
+    assert.equal(r.status, 303);
+    const d = l.s.status().devices[0];
+    assert.deepEqual([d.name, typeof d.createdAt], ["Kitchen tablet", "number"]);
+  } finally { l.s.stop(); }
+});
+
+test("L5: LAN candidates rank 192.168 > 10 > 172.16 and skip container and VM bridges", () => {
+  const a = (address: string) => ({ address, family: "IPv4", internal: false, netmask: "", mac: "", cidr: null }) as const;
+  assert.deepEqual(lanAddresses({ docker0: [a("172.17.0.1")], "br-1a2b": [a("172.18.0.1")], veth9: [a("10.9.9.9")], "vEthernet (WSL)": [a("172.20.0.1")],
+    eth0: [a("172.16.5.5")], wlan0: [a("10.0.0.5"), a("8.8.8.8")], en1: [a("192.168.1.20")], lo: [{ ...a("127.0.0.1"), internal: true }] }), ["192.168.1.20", "10.0.0.5", "172.16.5.5"]);
 });
 
 test("LAN: auto-stop after stopAfterHours closes the listener", async () => {

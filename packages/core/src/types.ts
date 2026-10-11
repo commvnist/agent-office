@@ -45,7 +45,8 @@ export type OfficeConfig = {
 export type Usage = { input: number; output: number; cacheRead: number; cacheCreate: number };
 
 /** Fields every event may carry; `seq` is the forwarder-stamped per-session sequence number (payload `ao_seq`). */
-type Base = { seq?: number };
+/** `cwd`: the session's folder, on every hook event (the daemon keeps it only while the session has none, so a recovered session gets its name). */
+type Base = { seq?: number; cwd?: string };
 
 /** Normalized events. The server adapter is the only place that knows Claude Code's hook shape. */
 export type OfficeEvent = Base &
@@ -69,7 +70,9 @@ export type OfficeEvent = Base &
     /** Running token total of the session (lead + subagent transcripts), refreshed during the turn. */
     | { type: "usage"; session: string; usage: Usage; t: number }
     /** kind: "permission" = a permission prompt (needs you now), "turn" = Claude is at the prompt (your turn). `idle`: the turn is over. `agentId`: the helper that raised it (absent for the lead). */
-    | { type: "waiting"; session: string; agentId?: string; text?: string; idle?: boolean; kind?: "permission" | "turn"; t: number }
+    | { type: "waiting"; session: string; agentId?: string; text?: string; idle?: boolean; kind?: "permission" | "question" | "turn"; t: number }
+    /** PreCompact: the conversation is being compacted (no other event until it is done). */
+    | { type: "compact"; session: string; t: number }
   );
 
 /** A source of events (Claude Code hooks today); must never throw, returns [] for input it cannot use. */
@@ -130,15 +133,23 @@ export type Agent = {
   recovered?: boolean;
 };
 
+/** One open wait of one agent (`agent` = a helper id or `lead:<session>`); that agent's own next event closes it. */
+export type Wait = { agent: string; kind: "permission" | "question" | "turn"; since: number; text?: string; soft?: boolean };
+
 export type Session = {
   id: string;
   project: string;
+  /** Every open wait, at most one per agent. `soft`: a turn that simply finished (Stop): your turn, calm (no chime). */
+  waits?: Wait[];
+  /** waiting, waitKind, waitingText, waitBy and waitSoft are derived from the most urgent open wait (permission > question > turn > soft turn, then oldest). */
   waiting: boolean;
-  /** Why it waits (set with waiting, cleared with it): "permission" = a permission prompt, "turn" = your turn. */
+  /** "permission" = a permission prompt, "turn" = your turn (a question also reads "turn" here; waits[].kind tells them apart). */
   waitKind?: "permission" | "turn";
   waitingText?: string;
-  /** The helper (agent id) that raised the wait; absent when the lead did. That agent's next event ends the wait. */
+  /** The helper (agent id) that raised the most urgent wait; absent when the lead did. */
   waitBy?: string;
+  /** The most urgent open wait is a soft turn (a finished turn). */
+  waitSoft?: boolean;
   startedAt: number;
   doing?: string;
   detail?: string;
@@ -226,7 +237,7 @@ export type OfficeState = {
   log: Interaction[]; // last LOG_MAX interactions, ids ascending
   nextId: number;
   /** delegations announced via the Agent tool, waiting for their SubagentStart (key: session|bare type). */
-  pending: Record<string, { from?: string; text: string; t?: number; id?: string; task?: string }[]>;
+  pending: Record<string, { from?: string; text: string; t?: number; id?: string; task?: string; /** another same-type delegation was pending with it: its match is a guess */ shared?: boolean }[]>;
   // Added later; optional so older literals (the web client's initial state) still type-check. reduce() fills them in.
   tasks?: Task[]; // last LIMITS.tasks
   conflicts?: Conflict[];
@@ -236,5 +247,5 @@ export type OfficeState = {
   /** Last LIMITS.summaries ended sessions, newest first. */
   summaries?: Summary[];
   /** Reducer bookkeeping (dedupe ring, tool start times, last write per file, per-session runs); not for display. */
-  track?: { seen: string[]; starts: Record<string, number>; touched: Record<string, { by: string; t: number }>; runs?: Record<string, Run> };
+  track?: { seen: string[]; starts: Record<string, number>; touched: Record<string, { by: string; t: number }>; runs?: Record<string, Run>; /** sessions evicted or refused at LIMITS.sessions */ dropped?: number };
 };

@@ -94,7 +94,8 @@ if (hasClaude()) {
 // 4. start the daemon now (hooks would also start it at the next session)
 const up = async () => { try { return (await fetch(`http://127.0.0.1:${port()}/health`, { signal: AbortSignal.timeout(800) })).ok; } catch { return false; } };
 if (!dry && !(await up())) {
-  spawn(process.execPath, [entry], { detached: true, stdio: "ignore", env: process.env }).unref();
+  const old = major === 22 && minor < 18 ? ["--experimental-strip-types"] : []; // same flags as the other spawns (office.mjs, forward.mjs)
+  spawn(process.execPath, [...old, entry], { detached: true, stdio: "ignore", env: process.env, windowsHide: true }).unref();
   for (let i = 0; i < 20 && !(await up()); i++) await new Promise((r) => setTimeout(r, 150));
 }
 say(dry || (await up()), dry ? "would start the daemon" : "daemon running");

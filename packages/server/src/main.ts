@@ -5,7 +5,7 @@ import { join, normalize, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import {
-  reduce, sweep, capacityFor, roleFor, leadRoster, introFor, outcomeOf, pseudonym, safeId, SCHEMA_VERSION,
+  reduce, sweep, emptyState, capacityFor, roleFor, leadRoster, introFor, outcomeOf, pseudonym, safeId, SCHEMA_VERSION,
   type OfficeConfig, type OfficeEvent, type OfficeState,
 } from "@agent-office/core";
 import { adapt, clip } from "./adapter.ts";
@@ -32,13 +32,17 @@ const EPOCH = randomBytes(6).toString("hex");
 const log = (...a: unknown[]) => console.error("[agent-office]", ...a);
 
 mkdirSync(DIR, { recursive: true, mode: 0o700 });
-const TOKEN_FILE = join(DIR, "token");
-if (!existsSync(TOKEN_FILE)) writeFileSync(TOKEN_FILE, randomBytes(32).toString("hex") + "\n", { mode: 0o600 });
-const TOKEN = readFileSync(TOKEN_FILE, "utf8").trim();
+/** A token file holding anything but 64 hex characters (missing, empty, truncated) gets a fresh token: an empty one would turn auth off. */
+const tokenFrom = (f: string) => {
+  const t = existsSync(f) ? readFileSync(f, "utf8").trim() : "";
+  if (/^[0-9a-f]{64}$/.test(t)) return t;
+  const fresh = randomBytes(32).toString("hex");
+  writeFileSync(f, fresh + "\n", { mode: 0o600 });
+  return fresh;
+};
+const TOKEN = tokenFrom(join(DIR, "token"));
 // The browser's cookie is a separate UI token: reads and the local share controls, never /event or /shutdown (S0).
-const UI_TOKEN_FILE = join(DIR, "ui-token");
-if (!existsSync(UI_TOKEN_FILE)) writeFileSync(UI_TOKEN_FILE, randomBytes(32).toString("hex") + "\n", { mode: 0o600 });
-const UI_TOKEN = readFileSync(UI_TOKEN_FILE, "utf8").trim();
+const UI_TOKEN = tokenFrom(join(DIR, "ui-token"));
 
 const DEFAULT: OfficeConfig = {
   roles: {
@@ -90,8 +94,9 @@ const prune = () => {
   } catch (e) { log("history prune:", (e as Error).message); }
 };
 prune();
-// The last 50k events of the retention window, preceded by every older start/stop/prompt in it (bootEvents).
-let state: OfficeState = replay(cfg, await bootEvents(DIR, Date.now() - historyMs(), !cfg.privacy), Date.now(), ttlMs());
+// Filled from the stored events once the server listens (end of file), so hooks sent meanwhile wait instead of being refused.
+let state: OfficeState = emptyState(), booting = true;
+const waiters: (() => void)[] = [];
 let rev = 0, events = 0, lastEventAt = 0;
 /** Re-read office.json; a change must reach clients (and the envelope cache) whichever request noticed it first. */
 const refreshConfig = () => { if (!reloadConfig()) return false; rev++; push(); return true; };
@@ -157,11 +162,13 @@ function serve(url: string, res: ServerResponse): boolean {
   try { rel = normalize(decodeURIComponent(url.split("?")[0])).replace(/^(\.\.[/\\])+/, ""); } catch { return false; }
   const file = join(WEB, rel === "/" ? "index.html" : rel);
   if (!file.startsWith(WEB) || !existsSync(file) || !statSync(file).isFile()) return false;
-  res.writeHead(200, { "content-type": MIME[extname(file)] ?? "application/octet-stream" }).end(readFileSync(file));
+  // hashed build output never changes under its name; the page and everything else is always fetched fresh
+  const cache = /^[/\\]assets[/\\]/.test(rel) ? "public, max-age=31536000, immutable" : "no-store";
+  res.writeHead(200, { "content-type": MIME[extname(file)] ?? "application/octet-stream", "cache-control": cache }).end(readFileSync(file));
   return true;
 }
 
-const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
+const same = (a: string, b: string) => a.length > 0 && a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
 const cookieOf = (req: IncomingMessage) => /(?:^|;\s*)ao_ui=([\w-]+)/.exec(req.headers.cookie ?? "")?.[1] ?? "";
 const hasHeaderToken = (req: IncomingMessage) => { const t = req.headers["x-agent-office-token"]; return typeof t === "string" && same(t, TOKEN); };
 const canRead = (req: IncomingMessage) => hasHeaderToken(req) || same(cookieOf(req), UI_TOKEN);
@@ -273,6 +280,7 @@ function onEvent(payload: any, res: ServerResponse) {
   let next = state, ctx: string | null = null;
   for (const e of evs) {
     const before = next;
+    if (e.type !== "session_start" && next.sessions[e.session]?.cwd) delete e.cwd; // only a session without one needs it (state and disk)
     next = reduce(c, next, e);
     // Hook stdout is parsed by Claude Code: this is how roster/identity reach the model.
     if (e.type === "session_start") ctx = leadRoster(c);
@@ -347,7 +355,10 @@ function clearRoute(req: IncomingMessage, res: ServerResponse) {
     let ids: unknown;
     try { ids = JSON.parse(body).ids; } catch { return void res.writeHead(400).end(); }
     if (!Array.isArray(ids) || ids.length > 64) return void res.writeHead(400).end();
-    const known = ids.filter((x): x is string => typeof x === "string" && x in state.sessions);
+    // Never clear what is working or waiting on you: a cleared permission prompt would never come back (Claude is blocked on it).
+    const busy = (id: string) => { const x = state.sessions[id]; return !!x.doing || x.waits?.some((w) => !w.soft) || Object.values(state.agents).some((a) => a.session === id && a.doing); };
+    const asked = ids.filter((x): x is string => typeof x === "string" && x in state.sessions);
+    const known = asked.filter((x) => !busy(x)), skipped = asked.filter(busy);
     const c = (refreshConfig(), cfg), t = Date.now();
     let next = state;
     for (const session of known) {
@@ -356,7 +367,7 @@ function clearRoute(req: IncomingMessage, res: ServerResponse) {
       try { appendEvent(DIR, e, !!c.privacy); } catch (err) { log("event log:", (err as Error).message); }
     }
     if (known.length) commit(next);
-    json(res, 200, { cleared: known });
+    json(res, 200, { cleared: known, skipped });
   });
 }
 
@@ -436,14 +447,15 @@ function handle(req: IncomingMessage, res: ServerResponse, allowedHosts: Set<str
     if (path === "/status") {
       const agents = Object.values(state.agents).filter((a) => a.seat);
       const working = agents.filter((a) => a.doing).length + Object.values(state.sessions).filter((s) => s.doing).length;
-      const s = { working, waiting: Object.values(state.sessions).filter((x) => x.waiting).length, queued: state.queue.length,
+      const s = { working, waiting: Object.values(state.sessions).filter((x) => x.waiting && !x.waitSoft).length, queued: state.queue.length,
         sessions: Object.keys(state.sessions).length, agents: agents.length,
-        desks: (({ free, total }) => ({ used: total - free, total, cap: total }))(capacityFor(cfg, state)), events, lastEventAt: lastEventAt || undefined };
+        desks: (({ free, total }) => ({ used: total - free, total, cap: total }))(capacityFor(cfg, state)), events, lastEventAt: lastEventAt || undefined,
+        dropped: state.track?.dropped ?? 0 }; // sessions evicted or refused at the 50-session cap
       // ?session=<id prefix or project> narrows to matching sessions: one line each, or `sessions` in JSON.
       const q = u.searchParams.get("session");
       const per = Object.values(state.sessions).filter((x) => !q || x.id.startsWith(q) || (priv ? pseudonym(x.id) : x.project) === q).map((x) => {
         const own = agents.filter((a) => a.session === x.id);
-        return { session: x.id, project: priv ? pseudonym(x.id) : x.project, state: x.waiting ? "waiting" : x.doing || own.some((a) => a.doing) ? "working" : "idle",
+        return { session: x.id, project: priv ? pseudonym(x.id) : x.project, state: x.waiting && !x.waitSoft ? "waiting" : x.doing || own.some((a) => a.doing) ? "working" : "idle",
           agents: own.length, errors: x.errors ?? 0, lastAt: x.lastAt, tokens: x.usage ? x.usage.input + x.usage.output : undefined };
       });
       if (q && !per.length) return json(res, 404, { error: "no such session" });
@@ -485,7 +497,8 @@ server.listen(PORT, HOST, () => {
   const port = (server.address() as { port: number }).port;
   const hosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`, `${HOST}:${port}`]);
   server.on("request", (req, res) => {
-    try { handle(req, res, hosts); } catch (e) { log("request error:", e); if (!res.headersSent) res.writeHead(500).end(); else res.end(); }
+    const go = () => { try { handle(req, res, hosts); } catch (e) { log("request error:", e); if (!res.headersSent) res.writeHead(500).end(); else res.end(); } };
+    if (booting && req.url !== "/health") waiters.push(go); else go(); // during the boot replay, requests wait for it
   });
   for (const f of ["port", "pid"]) writeFileSync(join(DIR, f), String(f === "port" ? port : process.pid));
   process.on("exit", () => { for (const f of ["port", "pid"]) try { unlinkSync(join(DIR, f)); } catch { /* gone */ } });
@@ -497,7 +510,11 @@ server.listen(PORT, HOST, () => {
   setInterval(prune, 3600_000).unref();
   setInterval(() => {
     const r = sweep(state, Date.now(), ttlMs(), cfg);
-    if (r.removed.sessions.length) { log("swept idle sessions:", r.removed.sessions.join(","), "agents:", r.removed.agents.length); commit(r.state); }
+    if (r.state !== state) { log("swept idle sessions:", r.removed.sessions.join(",") || "none", "agents:", r.removed.agents.join(",")); commit(r.state); } // ghost helpers alone count too (S1)
   }, 30_000).unref();
   setInterval(() => { for (const res of clients.keys()) write(res, ": ping\n\n"); }, 15_000).unref();
 });
+// The last 50k events of the retention window, preceded by every older start/stop/prompt in it (bootEvents).
+state = replay(cfg, await bootEvents(DIR, Date.now() - historyMs(), !cfg.privacy), Date.now(), ttlMs());
+booting = false; rev++; push();
+for (const go of waiters.splice(0)) go();

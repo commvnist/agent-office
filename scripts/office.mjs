@@ -2,7 +2,7 @@
 // agent-office CLI: status | start | restart | stop | doctor | init | config --validate | history [--purge|--purge-text] | share on|off|status|code|devices|revoke <id>|revoke-all | uninstall [--purge]. Usage: node scripts/office.mjs <cmd>
 import { readFileSync, existsSync, statSync, rmSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { spawnSync, spawn } from "node:child_process";
-import { homedir } from "node:os";
+import { homedir, release } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { endpoint } from "../plugin/hooks/forward.mjs";
@@ -125,6 +125,11 @@ const cmds = {
       try { JSON.parse(readFileSync(cfg, "utf8")); row(true, "office.json parses"); } catch (e) { row(false, `office.json: ${e.message}`); }
       if (h) { const s = JSON.parse((await get("/state", true)).body); row(!s.configError, s.configError ? `office.json invalid: ${s.configError.message}` : "office.json valid"); }
     } else row(true, "office.json absent (built-in roster)");
+    // WSL in NAT mode puts the office behind a virtual switch: phones on the LAN cannot reach a shared URL.
+    if (process.platform === "linux" && /microsoft/i.test(release())) {
+      const m = spawnSync("wslinfo", ["--networking-mode"], { encoding: "utf8" });
+      if (!m.error && m.stdout.trim() === "nat") console.log("warn WSL networking is NAT: other devices cannot reach Share on network; set networkingMode=mirrored under [wsl2] in %UserProfile%\\.wslconfig, then wsl --shutdown");
+    }
     return bad ? 1 : 0;
   },
   async history() {
@@ -174,6 +179,7 @@ const cmds = {
     if (sub !== "devices") console.log(j.enabled ? `sharing read-only on ${j.url} until ${new Date(j.until).toLocaleString()}\ncertificate SHA-256 ${j.fingerprint}` : "not sharing");
     if (sub !== "status" || j.devices?.length) for (const x of j.devices ?? []) console.log(`  ${x.id}  ${plain(x.name)}  paired ${new Date(x.createdAt).toLocaleDateString()}, last seen ${age(Date.now() - x.lastSeen)} ago`);
     if (sub === "devices" && !j.devices?.length) console.log("no paired devices");
+    if (sub === "status" && j.candidates) console.log(j.candidates.length ? `private addresses, best first: ${j.candidates.join(", ")} (pick one with share.address in office.json)` : "no private network address found");
     return res.ok ? 0 : 1;
   },
   async uninstall() {

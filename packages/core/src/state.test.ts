@@ -172,7 +172,7 @@ test("session_start merges: keeps startedAt, prompt and agents; records source",
 test("confidence: exact for a lone delegation, guess for parallel or unmatched", () => {
   const d = (text: string): OfficeEvent => ({ type: "delegate", session: "s1", agentType: "qa-engineer", text, t: 1 });
   const s = run(d("one"), start("a"), d("x"), d("y"), start("b"), start("c"), start("z"));
-  assert.deepEqual(["a", "b", "c", "z"].map((i) => s.agents[i].confidence), ["exact", "guess", "exact", "guess"]);
+  assert.deepEqual(["a", "b", "c", "z"].map((i) => s.agents[i].confidence), ["exact", "guess", "guess", "guess"], "S6: the last of parallel delegations is still a guess");
   assert.equal(s.log[0].confidence, "exact");
 });
 
@@ -409,11 +409,14 @@ const wait = (text: string, kind?: "permission" | "turn"): OfficeEvent => ({ typ
 const lead = (o: object) => ({ session: "s1", t: 2, ...o }) as OfficeEvent;
 
 test("Z4: the lead's tool_end, turn_end or prompt clears waiting and waitKind", () => {
-  for (const e of [lead({ type: "tool_end", tool: "Bash", ok: true }), lead({ type: "turn_end" }), lead({ type: "prompt", text: "go" }), lead({ type: "tool", tool: "Read" })]) {
+  for (const e of [lead({ type: "tool_end", tool: "Bash", ok: true }), lead({ type: "prompt", text: "go" }), lead({ type: "tool", tool: "Read" })]) {
     const s = run(lead({ type: "session_start", project: "p" }), wait("Claude needs your permission to use Bash", "permission"), e);
     assert.equal(s.sessions.s1.waiting, false, e.type);
     assert.equal(s.sessions.s1.waitKind, undefined, e.type);
+    assert.deepEqual(s.sessions.s1.waits, [], e.type);
   }
+  const s = run(lead({ type: "session_start", project: "p" }), wait("Claude needs your permission to use Bash", "permission"), lead({ type: "turn_end" }));
+  assert.deepEqual([s.sessions.s1.waitKind, s.sessions.s1.waitSoft], ["turn", true], "S9: turn_end ends the permission and opens a calm your-turn");
 });
 
 test("Z5: a subagent's tool or tool_end never clears the lead's waiting", () => {
@@ -588,4 +591,109 @@ test("S6 + C7: the sweep ends a summary at the last event, and reaps a ghost hel
   assert.deepEqual(r.removed, { sessions: [], agents: ["ghost"] });
   assert.ok(r.state.agents.busy, "a helper active after the lead's last turn_end stays");
   assert.ok(r.state.sessions.s1);
+});
+
+// ---- Pass 5 ----
+const h = (o: object) => ({ session: "s1", t: 0, ...o }) as OfficeEvent;
+const perm = (agentId: string | undefined, t: number) => h({ type: "waiting", agentId, kind: "permission", text: "Claude needs your permission to use Bash", t });
+const waitsOf = (s: ReturnType<typeof run>) => (s.sessions.s1.waits ?? []).map((w) => `${w.agent}:${w.kind}${w.soft ? "~" : ""}`);
+
+test("S3: waits per agent; each agent's own event closes only its own (probes 1, 1b, 11)", () => {
+  // 1: two helpers ask; approving h2 leaves h1's prompt open
+  let s = run(h({ type: "session_start", project: "p" }), start("h1"), start("h2"), perm("h1", 1), perm("h2", 2), h({ type: "tool", agentId: "h2", tool: "Bash", t: 3 }));
+  assert.deepEqual(waitsOf(s), ["h1:permission"]);
+  assert.deepEqual([s.sessions.s1.waiting, s.sessions.s1.waitKind, s.sessions.s1.waitBy], [true, "permission", "h1"]);
+  // 1b: a helper's prompt, then the lead's; the lead is approved, the helper still waits
+  s = run(h({ type: "session_start", project: "p" }), start("h1"), perm("h1", 1), perm(undefined, 2));
+  assert.deepEqual(waitsOf(s), ["h1:permission", "lead:s1:permission"]);
+  assert.equal(s.sessions.s1.waitBy, "h1", "most urgent: the oldest permission");
+  s = reduce(cfg, s, h({ type: "tool", tool: "Bash", t: 3 }));
+  assert.deepEqual(waitsOf(s), ["h1:permission"]);
+  // 11: the lead's Stop leaves a helper's open permission
+  s = reduce(cfg, s, h({ type: "turn_end", t: 4 }));
+  assert.deepEqual(waitsOf(s), ["h1:permission", "lead:s1:turn~"]);
+  assert.deepEqual([s.sessions.s1.waitKind, s.sessions.s1.waitBy, s.sessions.s1.waitSoft], ["permission", "h1", undefined], "the permission outranks a calm turn");
+  assert.equal(s.sessions.s1.permWait?.since, 1, "permWait runs while any permission is open");
+  s = reduce(cfg, s, { type: "agent_stop", session: "s1", agentId: "h1", t: 9 });
+  assert.deepEqual([waitsOf(s), s.sessions.s1.waitSoft, s.sessions.s1.permWait], [["lead:s1:turn~"], true, { n: 1, totalMs: 8, lastMs: 8 }]);
+});
+
+test("S9: a finished turn is a soft your-turn; idle_prompt keeps it; a prompt closes it; a question stays a question", () => {
+  let s = run(h({ type: "session_start", project: "p" }), h({ type: "prompt", text: "go", t: 1 }), h({ type: "turn_end", message: "done", t: 2 }));
+  assert.deepEqual([s.sessions.s1.waiting, s.sessions.s1.waitKind, s.sessions.s1.waitSoft], [true, "turn", true]);
+  s = reduce(cfg, s, h({ type: "waiting", idle: true, kind: "turn", text: "Claude is waiting for your input", t: 60 }));
+  assert.deepEqual(s.sessions.s1.waits, [{ agent: "lead:s1", kind: "turn", since: 2, soft: true }], "idle_prompt after a Stop stays calm");
+  s = reduce(cfg, s, h({ type: "prompt", text: "next", t: 70 }));
+  assert.deepEqual([s.sessions.s1.waiting, s.sessions.s1.waits, s.sessions.s1.waitSoft], [false, [], undefined]);
+  const idleOnly = run(h({ type: "session_start", project: "p" }), h({ type: "waiting", idle: true, kind: "turn", t: 5 }));
+  assert.equal(idleOnly.sessions.s1.waitSoft, undefined, "an idle_prompt with no Stop (interrupt) is a plain your-turn");
+  const q = run(h({ type: "session_start", project: "p" }), h({ type: "waiting", kind: "question", text: "Claude needs your permission to use AskUserQuestion", t: 5 }));
+  assert.deepEqual([q.sessions.s1.waits![0].kind, q.sessions.s1.waitKind, q.sessions.s1.waitSoft], ["question", "turn", undefined]);
+});
+
+test("S2: the idle TTL never removes a permission or question wait; a soft turn still expires", () => {
+  const ttl = 45 * 60_000, later = 46 * 60_000;
+  const p = run(h({ type: "session_start", project: "p" }), perm(undefined, 1));
+  assert.ok(sweep(p, later, ttl).state.sessions.s1);
+  assert.equal(sweep(p, later, ttl).state, p, "nothing removed: the same state (the daemon commits only a change)");
+  const soft = run(h({ type: "session_start", project: "p" }), h({ type: "turn_end", t: 1 }));
+  assert.deepEqual(sweep(soft, later, ttl).removed.sessions, ["s1"]);
+});
+
+test("S1: a sweep that removes only ghost helpers returns a new state and drops their waits", () => {
+  const s = run(h({ type: "session_start", project: "p" }), start("g"), perm("g", 1), h({ type: "turn_end", t: 60_000 }), h({ type: "tool", tool: "Read", t: 19 * 60_000 }));
+  const r = sweep(s, 20 * 60_000, 45 * 60_000);
+  assert.notEqual(r.state, s);
+  assert.deepEqual([r.removed.agents, (r.state.sessions.s1.waits ?? []).map((w) => w.agent)], [["g"], []]);
+});
+
+test("S4: an unseen gave-up of a live session survives other sessions' outcomes", () => {
+  let s = [h({ type: "session_start", project: "b", session: "B" }), start("hb", "B"), h({ type: "agent_stop", session: "B", agentId: "hb", message: "BLOCKED: no db", t: 1 }),
+    h({ type: "session_start", project: "a", session: "A" }),
+    ...Array.from({ length: 40 }, (_, i) => [h({ type: "prompt", session: "A", text: `q${i}`, t: 2 + i }), h({ type: "turn_end", session: "A", message: `a${i}`, t: 2 + i })]).flat()]
+    .reduce((x, e) => reduce(cfg, x, e), emptyState());
+  assert.ok(s.outcomes!.some((o) => o.agentId === "hb"), "kept past the cap");
+  assert.equal(s.outcomes!.length, LIMITS.outcomes + 1);
+  s = reduce(cfg, s, { type: "session_end", session: "B", t: 99 });
+  s = reduce(cfg, s, h({ type: "turn_end", session: "A", message: "z", t: 100 }));
+  assert.equal(s.outcomes!.length, LIMITS.outcomes, "an ended session's gave-up ages out as before");
+});
+
+test("L2: at the session cap the quietest non-waiting session makes way; with every session waiting the new one is dropped; both counted", () => {
+  const evs = Array.from({ length: LIMITS.sessions }, (_, i) => h({ type: "session_start", session: `x${i}`, project: "p", t: 10 + i }));
+  let s = run(perm(undefined, 0), ...evs.slice(1)); // s1 waits on a permission and is the quietest
+  assert.equal(Object.keys(s.sessions).length, LIMITS.sessions);
+  s = reduce(cfg, s, h({ type: "tool", session: "new", tool: "Read", t: 100 }));
+  assert.ok(s.sessions.new && s.sessions.s1 && !s.sessions.x1, "x1 (oldest non-waiting) evicted");
+  assert.equal(s.track!.dropped, 1);
+  const all = run(...Array.from({ length: LIMITS.sessions }, (_, i) => perm(undefined, i)).map((e, i) => ({ ...e, session: `w${i}` }) as OfficeEvent));
+  const n = reduce(cfg, all, h({ type: "tool", session: "new", tool: "Read", t: 100 }));
+  assert.deepEqual([n.sessions.new, n.track!.dropped], [undefined, 1]);
+});
+
+test("S5: parallel tools of one actor: doing stays until the last open start ends", () => {
+  let s = run(h({ type: "session_start", project: "p" }), h({ type: "tool", tool: "Read", id: "r1", t: 1 }), h({ type: "tool", tool: "Bash", id: "b1", t: 2 }), h({ type: "tool_end", tool: "Read", id: "r1", ok: true, t: 3 }));
+  assert.equal(s.sessions.s1.doing, "Bash");
+  s = reduce(cfg, s, h({ type: "tool_end", tool: "Bash", id: "b1", ok: true, t: 4 }));
+  assert.equal(s.sessions.s1.doing, undefined);
+  // a start whose end never came (interrupt) is dropped at turn_end and does not hold later tools
+  s = run(h({ type: "session_start", project: "p" }), h({ type: "tool", tool: "Bash", id: "lost", t: 1 }), h({ type: "turn_end", t: 2 }),
+    h({ type: "tool", tool: "Read", id: "r2", t: 3 }), h({ type: "tool_end", tool: "Read", id: "r2", ok: true, t: 4 }));
+  assert.equal(s.sessions.s1.doing, undefined);
+});
+
+test("S7: a cleared session that returns keeps its name and start, with no premature summary; any event's cwd names a recovered one", () => {
+  let s = run(h({ type: "session_start", project: "billing", cwd: "/w/billing", t: 1 }), h({ type: "prompt", text: "go", t: 2 }), { type: "session_end", session: "s1", t: 3 });
+  assert.equal(s.summaries!.length, 1);
+  s = reduce(cfg, s, h({ type: "tool", tool: "Bash", t: 4 }));
+  assert.deepEqual([s.sessions.s1.project, s.sessions.s1.startedAt, s.sessions.s1.recovered, s.summaries!.length], ["billing", 1, undefined, 0]);
+  const r = run(h({ type: "tool", tool: "Bash", cwd: "/w/api", t: 4 }));
+  assert.deepEqual([r.sessions.s1.project, r.sessions.s1.cwd, r.sessions.s1.recovered], ["api", "/w/api", true]);
+});
+
+test("S11: compaction is a running note, ended by SessionStart source compact", () => {
+  let s = run(h({ type: "session_start", project: "p" }), h({ type: "prompt", text: "go", t: 1 }), h({ type: "compact", t: 2 }));
+  assert.deepEqual([s.sessions.s1.doing, s.sessions.s1.busyAt, s.log.at(-1)!.text], ["Compact", 2, "Compacting the conversation"]);
+  s = reduce(cfg, s, h({ type: "session_start", project: "p", source: "compact", t: 90 }));
+  assert.deepEqual([s.sessions.s1.doing, s.sessions.s1.prompt], [undefined, "go"]);
 });

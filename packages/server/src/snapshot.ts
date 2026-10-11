@@ -15,7 +15,7 @@ export function publicState(state: OfficeState, priv: boolean): Public {
   if (!priv) return rest;
   return {
     ...rest,
-    sessions: each(rest.sessions, (x) => ({ ...x, project: pseudonym(x.id), prompt: undefined, lastPrompt: undefined, result: undefined, why: undefined, detail: undefined, waitingText: undefined, lastError: undefined, cwd: undefined, branch: undefined, files: undefined })),
+    sessions: each(rest.sessions, (x) => ({ ...x, project: pseudonym(x.id), prompt: undefined, lastPrompt: undefined, result: undefined, why: undefined, detail: undefined, waitingText: undefined, waits: x.waits?.map(({ text: _, ...w }) => w), lastError: undefined, cwd: undefined, branch: undefined, files: undefined })),
     agents: each(rest.agents, (a) => ({ ...a, task: undefined, report: undefined, why: undefined, detail: undefined, lastError: undefined })),
     log: memo(rest.log, (l) => l.map((i) => memo(i, (x) => ({ ...x, text: "" })))),
     tasks: rest.tasks && memo(rest.tasks, (l) => l.map((t) => ({ ...t, text: "" }))),

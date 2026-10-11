@@ -17,8 +17,13 @@ for (const [a, p] of [["10.0.0.0", 8], ["172.16.0.0", 12], ["192.168.0.0", 16], 
 for (const [a, p] of [["fd00::", 8], ["fe80::", 10]] as const) PRIVATE.addSubnet(a, p, "ipv6");
 /** 10/8, 172.16/12, 192.168/16, 169.254/16, fd00::/8, fe80::/10. Anything else (public, loopback, 0.0.0.0, names) is refused. */
 export const isPrivate = (ip: string) => { const v = isIP(ip); return v !== 0 && PRIVATE.check(ip, v === 4 ? "ipv4" : "ipv6"); };
-/** The first non-internal private IPv4 of this machine. */
-export const lanAddress = () => Object.values(networkInterfaces()).flat().find((a) => a && a.family === "IPv4" && !a.internal && isPrivate(a.address))?.address;
+const VIRTUAL = /^(docker|br-|veth|virbr|vEthernet)/i;
+const rank = (ip: string) => (ip.startsWith("192.168.") ? 0 : ip.startsWith("10.") ? 1 : ip.startsWith("169.254.") ? 3 : 2);
+/** Private IPv4 addresses of this machine, best first: 192.168 > 10 > 172.16 > link-local; container and VM bridges skipped. */
+export const lanAddresses = (ifs = networkInterfaces()) => Object.entries(ifs)
+  .flatMap(([name, l]) => (VIRTUAL.test(name) ? [] : (l ?? []).filter((a) => a.family === "IPv4" && !a.internal && isPrivate(a.address)).map((a) => a.address)))
+  .sort((a, b) => rank(a) - rank(b));
+export const lanAddress = () => lanAddresses()[0];
 
 // ---- a minimal DER encoder: just enough X.509 v3 for a self-signed EC P-256 certificate ----
 const len = (n: number) => { if (n < 128) return Buffer.from([n]); const b: number[] = []; for (; n; n = Math.floor(n / 256)) b.unshift(n & 255); return Buffer.from([0x80 | b.length, ...b]); };
@@ -92,7 +97,9 @@ export const deviceName = (ua = "") => ((/\(([^)]*)\)/.exec(ua)?.[1] ?? ua).repl
 const page = (msg = "") => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Pair with Agent Office</title>
 <style>body{font:16px system-ui,sans-serif;background:#111;color:#eee;max-width:22rem;margin:3rem auto;padding:0 16px}input,button{font:inherit;font-size:1.5rem;padding:.4rem;width:100%;box-sizing:border-box;margin-top:.6rem}input{letter-spacing:.3em;text-align:center}p.m{color:#f99}</style></head>
 <body><h1>Agent Office</h1><p>Enter the 6-digit code shown on the host (Settings, Share on network, Pair a phone).</p>${msg ? `<p class="m">${esc(msg)}</p>` : ""}
-<form method="post" action="/pair"><input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required autofocus aria-label="Pairing code"><button>Pair</button></form></body></html>`;
+<form method="post" action="/pair"><input name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required autofocus aria-label="Pairing code"><input name="name" maxlength="32" autocomplete="off" placeholder="Name this device (optional)" aria-label="Device name (optional)" style="letter-spacing:0;font-size:1rem"><button>Pair</button></form></body></html>`;
+/** The name typed on the pair form: untrusted, printable ASCII only, clipped; empty = use the User-Agent's. */
+export const givenName = (v: string | null) => (v ?? "").replace(/[^\w .,:'-]/g, "").replace(/\s+/g, " ").trim().slice(0, 32);
 
 export type ShareDeps = {
   dir: string;
@@ -117,7 +124,7 @@ export function createShare(o: ShareDeps) {
   const expire = () => { const n = devices.length; devices = devices.filter((d) => now() - d.lastSeen < DEVICE_MS); if (devices.length !== n) save(); };
 
   let code: { value: string; expiresAt: number } | undefined, wrong = 0, lockedUntil = 0;
-  let server: Server | undefined, host = "", url = "", fingerprint = "", until = 0, timer: NodeJS.Timeout | undefined;
+  let server: Server | undefined, host = "", url = "", fingerprint = "", until = 0, timer: NodeJS.Timeout | undefined, watch: NodeJS.Timeout | undefined;
   const streams = new Map<string, Set<ServerResponse>>();
   const total = () => [...streams.values()].reduce((n, s) => n + s.size, 0);
   const drop = (id: string) => { for (const r of streams.get(id) ?? []) r.destroy(); streams.delete(id); };
@@ -151,14 +158,14 @@ export function createShare(o: ShareDeps) {
     req.on("end", () => {
       if (res.headersSent) return;
       const from = req.socket.remoteAddress ?? "?";
-      const r = check(new URLSearchParams(body).get("code"));
+      const form = new URLSearchParams(body), r = check(form.get("code"));
       if (r !== "ok") {
         audit(`pair failed from ${from}${r === "locked" ? " (locked)" : ""}`);
         return void res.writeHead(r === "locked" ? 429 : 401, { "content-type": "text/html; charset=utf-8" })
           .end(page(r === "locked" ? "Too many wrong codes. Ask the host for a new code in a minute." : "Wrong or expired code."));
       }
       const token = randomBytes(32).toString("base64url"), t = now();
-      const d: Device = { id: randomBytes(4).toString("hex"), name: deviceName(req.headers["user-agent"]), tokenHash: sha(token), createdAt: t, lastSeen: t };
+      const d: Device = { id: randomBytes(4).toString("hex"), name: givenName(form.get("name")) || deviceName(req.headers["user-agent"]), tokenHash: sha(token), createdAt: t, lastSeen: t };
       devices.push(d); save();
       audit(`paired ${d.id} "${d.name}" from ${from}`);
       res.writeHead(303, { location: "/", "set-cookie": cookie(token) }).end();
@@ -180,7 +187,9 @@ export function createShare(o: ShareDeps) {
     if (READS.has(u.pathname)) {
       if (u.pathname === "/stream") {
         const mine = streams.get(d.id) ?? new Set();
-        if (mine.size >= PER_DEVICE || total() >= MAX_LAN) return void res.writeHead(503).end();
+        // A device's new stream (a reload, a dropped connection not yet noticed) replaces its oldest instead of being refused.
+        if (mine.size >= PER_DEVICE) { const old = mine.values().next().value!; mine.delete(old); old.destroy(); }
+        else if (total() >= MAX_LAN) return void res.writeHead(503).end();
         streams.set(d.id, mine.add(res));
         res.on("close", () => { mine.delete(res); if (!mine.size && streams.get(d.id) === mine) streams.delete(d.id); });
       }
@@ -196,6 +205,7 @@ export function createShare(o: ShareDeps) {
       enabled: !!server, url: server ? url : undefined, fingerprint: server ? fingerprint : undefined, until: server ? until : undefined,
       devices: devices.map(({ id, name, createdAt, lastSeen }) => ({ id, name, createdAt, lastSeen })),
       code: code && now() < code.expiresAt ? { expiresAt: code.expiresAt } : undefined,
+      candidates: lanAddresses(),
     };
   }
 
@@ -217,6 +227,11 @@ export function createShare(o: ShareDeps) {
     server = srv; host = `${h}:${port}`.toLowerCase(); url = `https://${h}:${port}`; fingerprint = c.fingerprint;
     until = now() + (s.stopAfterHours ?? 8) * 3600_000;
     timer = setTimeout(() => stop("auto-stop"), until - now()).unref();
+    // A DHCP change or a dropped Wi-Fi takes the address away: stop (and say so) instead of serving a dead URL.
+    watch = setInterval(() => {
+      if (Object.values(networkInterfaces()).flat().some((a) => a?.address === address)) return;
+      o.log(`share: ${address} is no longer an address of this machine; sharing stopped`); stop("address gone");
+    }, 3600_000).unref();
     audit(`share on ${url}`);
     o.log(`sharing read-only on ${url} (certificate ${fingerprint.slice(0, 47)}), until ${new Date(until).toISOString()}`);
     return undefined;
@@ -224,7 +239,7 @@ export function createShare(o: ShareDeps) {
 
   function stop(why = "off") {
     if (!server) return;
-    clearTimeout(timer);
+    clearTimeout(timer); clearInterval(watch);
     server.close(); server.closeAllConnections();
     for (const id of [...streams.keys()]) drop(id);
     server = undefined; code = undefined;

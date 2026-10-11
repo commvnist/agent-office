@@ -128,7 +128,8 @@ async function main() {
   const wantReply = ev === "SessionStart" || ev === "SubagentStart" || (ev === "PreToolUse" && (p.tool_name === "Agent" || p.tool_name === "Task"));
   const json = JSON.stringify(body);
   let r = await post("/event", json, wantReply);
-  if (!r.ok && r.refused && ev === "SessionStart" && (await autostart())) r = await post("/event", json, wantReply);
+  // a crashed daemon comes back at the next session or the next prompt (L6)
+  if (!r.ok && r.refused && (ev === "SessionStart" || ev === "UserPromptSubmit") && (await autostart())) r = await post("/event", json, wantReply);
   if (ev === "SessionEnd" && typeof body.session_id === "string") try { unlinkSync(join(home(), "seq", body.session_id.replace(/:/g, "_"))); } catch { /* none */ }
   // Marker for `doctor`: proves hooks fire inside real sessions. Names and outcome only, no content.
   // Temp file (exclusive create, no symlink follow) then rename, so a planted link at the fixed path is replaced, not written through.
