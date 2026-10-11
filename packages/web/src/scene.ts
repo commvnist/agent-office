@@ -393,12 +393,16 @@ export class Scene {
       const warm = L.tone === "warm", pool = new Sprite(this.glowTex);
       pool.anchor.set(0.5); pool.position.set(L.x, L.y + (warm ? -4 : L.reach * 0.4));
       pool.width = L.reach * (warm ? 1.6 : 1.5); pool.height = L.reach * (warm ? 0.9 : 1);
-      pool.tint = warm ? WARM : 0xcfe6ff; pool.alpha = warm ? 0.16 : 0.14; pool.eventMode = "none";
+      const sconce = L.source.startsWith("sconce:");
+      pool.tint = warm ? WARM : 0xcfe6ff; pool.alpha = warm ? 0.16 : sconce ? 0.5 : 0.14; pool.eventMode = "none"; // a sconce's floor pool reads by day too (the fixture layer runs at 0.4 in daylight)
+      if (sconce) pool.blendMode = "add"; // corner sconces sit under the vignette's darkest edge: a normal-blend tint vanished there
       this.fixtures.addChild(pool);
-      if (L.source.startsWith("sconce:")) { // small halo round the lit shade (E9): its source is the sprite right above it
-        const halo = new Sprite(this.glowTex);
-        halo.anchor.set(0.5); halo.position.set(L.x, 13); halo.width = 18; halo.height = 10; halo.tint = 0xcfe6ff; halo.alpha = 0.28; halo.eventMode = "none";
-        this.fixtures.addChild(halo);
+      if (sconce) { // halo round the lit shade (E9) and a wash down the wall below it to the floor: the light visibly comes from the fixture
+        const halo = new Sprite(this.glowTex), wash = new Sprite(this.glowTex);
+        halo.anchor.set(0.5); halo.position.set(L.x, 13); halo.width = 22; halo.height = 12; halo.tint = 0xcfe6ff; halo.alpha = 1; halo.eventMode = "none";
+        wash.anchor.set(0.5, 0); wash.position.set(L.x, 12); wash.width = 20; wash.height = Math.max(8, L.y - 12) * 1.3; wash.tint = 0xcfe6ff; wash.alpha = 0.7; wash.eventMode = "none";
+        halo.blendMode = wash.blendMode = "add";
+        this.fixtures.addChild(wash, halo);
       }
     }
     this.fixtures.eventMode = "none";
