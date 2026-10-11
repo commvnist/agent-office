@@ -132,8 +132,7 @@ body.overlay #fit,body.presenter #fit,body.kiosk #fit{display:none}
 }
 @media (min-width:801px){#more{display:none}}
 
-/* Phones: the wordmark collapses so the status counts get the room (they were truncated to "20 WO…"). */
+/* Phones: tighter status counts (they were truncated to "20 WO…"); the wordmark is hidden below 1500px (index.html). */
 @media (max-width:800px){
-  #top .wm{font-size:0;gap:0}
   #stats{letter-spacing:0;font-size:calc(11px * var(--ts,1))}
 }

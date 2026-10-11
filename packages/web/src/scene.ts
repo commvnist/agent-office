@@ -4,8 +4,8 @@ import { T, tagHits } from "./actor.ts";
 import { sceneGeometry, selfCheck, type SceneGeometry } from "./geometry.ts";
 import { art, dev, place } from "./snap.ts";
 import { bake, Grid, hash, hsl, mix } from "./pixel.ts";
-import { shade, shadeTo } from "./color.ts";
-import { KEY, roleColor, theme } from "./theme.ts";
+import { shade } from "./color.ts";
+import { KEY, theme } from "./theme.ts";
 import { office } from "./api.ts";
 import { boardModel, COLS, ledgerLines, SUMMARY_MS, type Board, type Col, type Memo } from "./board.ts";
 import { podOwners, projectHue } from "./logic.ts";
@@ -14,7 +14,7 @@ import type { Weather } from "./flair.ts";
 import { cleanText, couchSeats, skyAt, toolKind } from "./choreo.ts";
 import { promptCaption } from "./pod.ts";
 import { hideText } from "./stream.ts";
-import { activity, armchairTex, stoolTex, benchTex, boothTex, CHAIR_STYLES, catTex, chairTex, chipStack, coffeeTex, coolerTex, couchTex, deskTex, drawPx, floorLampTex, fridgeTex, huddleTex, junctionTex, laptopTex, ledNoise, plantTex, pxTextW, rackTex, sconceTex, shadowTex, shelfTex, staleK, tableTex, wallTex, whiteTex } from "./sprites.ts";
+import { activity, armchairTex, stoolTex, benchTex, boothTex, CHAIR_STYLES, catTex, chairTex, chipStack, coffeeTex, coolerTex, couchTex, deskTex, drawPx, floorLampTex, fridgeTex, holoTex, huddleTex, junctionTex, laptopTex, ledNoise, plantTex, pxTextW, rackTex, sconceTex, shadowTex, shelfTex, staleK, tableTex, wallTex, whiteTex } from "./sprites.ts";
 
 const MAX_LIGHTS = 30;
 const FILED_MS = 30 * 60_000; // how long a finished helper's filed card stays on its empty desk
@@ -109,7 +109,8 @@ export class Scene {
   private glowTex = smooth(bake(44, 44, (c) => radial(c, 22, 22, 22, 22, "255,255,255", 1))); // one baked radial gradient
   private lightPool = new Map<string, Sprite>(); // desk light (pool + spill + lamp) per working desk, <= MAX_LIGHTS
   private lightTexs = new Map<string, Texture>();
-  private shafts = new Graphics();
+  private shafts = new Container(); // one soft window-light sprite per window light (lights() tone "window"), clipped to the window's x-range (E1)
+  private shaftTex = smooth(bake(1, 56, (c) => { const g = c.createLinearGradient(0, 0, 0, 56); g.addColorStop(0, "rgba(255,255,255,0)"); g.addColorStop(0.12, "rgba(255,255,255,1)"); g.addColorStop(1, "rgba(255,255,255,0)"); c.fillStyle = g; c.fillRect(0, 0, 1, 56); }));
   private gauge = new Graphics(); // activity gauge panel (mirror of the clock): bars lit by real office activity
   private gaugeLvl = -1;
   private gaugeSpill: Sprite | null = null;
@@ -126,6 +127,7 @@ export class Scene {
   private dust: Sprite[] = [];
   private coffeeS: Sprite | null = null;
   private coffeeOn = false;
+  private coffeeWisp = -1;
   private racks: Sprite[] = [];
   private leds: Sprite[] = []; // 4 rows x 3 LEDs per cabinet, drawn over the rack texture
   private ledStep = -1;
@@ -137,7 +139,6 @@ export class Scene {
   private cards: Sprite[] = [];
   private colText: Text[] = [];
   private colKey = "";
-  private notes = new Graphics();
   private clockSec = -1;
   private zoneDim = new Map<string, Graphics>(); // dark overlay per zone, shown while the zone is empty (#113)
   desks = new Map<string, Desk>();
@@ -175,8 +176,15 @@ export class Scene {
       g.addColorStop(0, "rgba(10,8,20,0)"); g.addColorStop(1, "rgba(10,8,20,1)");
       c.fillStyle = g; c.fillRect(0, 0, 64, 40);
     })));
-    vig.width = l.cols * T; vig.height = l.rows * T; vig.alpha = 0.3; vig.eventMode = "none";
-    this.shafts.blendMode = "add"; this.shafts.eventMode = "none";
+    vig.width = l.cols * T; vig.height = l.rows * T; vig.alpha = 0.34; vig.eventMode = "none"; // the one vignette (E11): the floor print carries no second grade
+    const clip = new Graphics().rect(0, 0, l.cols * T, l.rows * T).fill(0xffffff); // additive light stays inside the room (E11)
+    this.glow.mask = clip;
+    this.shafts.eventMode = "none";
+    for (const L of this.geo.lights) if (L.tone === "window") { // the pane's x-range (2 px reveal each side), from the wall foot down onto the floor
+      const r = this.geo.rect(L.source), sp = place(new Sprite(this.shaftTex), r.x + 2, L.y);
+      sp.width = r.w - 4; sp.height = 56; sp.blendMode = "add"; sp.eventMode = "none";
+      this.shafts.addChild(sp);
+    }
     this.glow.addChild(this.shafts);
     for (let i = 0; i < 12; i++) { // dust motes: drift only inside the shafts
       const m = new Sprite(whiteTex());
@@ -184,7 +192,7 @@ export class Scene {
       this.dust.push(m); this.glow.addChild(m);
     }
     this.ys = ysort;
-    world.addChild(this.floor, this.walls, this.sky, this.wx, this.clock, ysort, this.night, this.day, this.glow, vig);
+    world.addChild(this.floor, this.walls, this.sky, this.wx, this.clock, ysort, this.night, this.day, this.glow, clip, vig);
     this.glow.eventMode = "none";
     this.floor.eventMode = this.walls.eventMode = "none";
     this.buildFloor();
@@ -262,15 +270,15 @@ export class Scene {
   private bakeTech(c: CanvasRenderingContext2D) {
     const l = this.l, D = theme().deck, g = this.geo, w = l.cols * T, h = (l.rows - l.wallRows) * T, oy = l.wallRows * T;
     const rgba = (hex: string, a: number) => { const n = hexNum(hex); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
-    for (const r of g.rugs) { // bordered rug: fill, 1px lit border inset 1px
-      c.fillStyle = r.id === "rug:lobby" ? mix(D.mid, D.lit, 0.45) : mix(D.mid, E[3], 0.6); c.fillRect(r.x + 2, r.y - oy + 2, r.w - 4, r.h - 4);
-      c.strokeStyle = rgba(D.lit, 0.7); c.lineWidth = 1; c.strokeRect(r.x + 2.5, r.y - oy + 2.5, r.w - 5, r.h - 5);
+    for (const r of g.rugs) { // bordered rug: fill, 1px lit border; the lounge rug is sized to its couch set (geo.lounge, E3)
+      const k = r.id === "rug:lobby" ? { x: r.x + 2, y: r.y + 2, w: r.w - 4, h: r.h - 4 } : g.lounge;
+      c.fillStyle = r.id === "rug:lobby" ? mix(D.mid, D.lit, 0.45) : mix(D.mid, E[3], 0.6); c.fillRect(k.x, k.y - oy, k.w, k.h);
+      c.fillStyle = rgba(D.lit, 0.7); c.fillRect(k.x, k.y - oy, k.w, 1); c.fillRect(k.x, k.y - oy + k.h - 1, k.w, 1); c.fillRect(k.x, k.y - oy, 1, k.h); c.fillRect(k.x + k.w - 1, k.y - oy, 1, k.h);
     }
-    c.globalCompositeOperation = "multiply"; // grade: a touch darker toward the edges so the lights carry the room
-    const gr = c.createRadialGradient(w / 2, h * 0.45, h * 0.2, w / 2, h * 0.45, Math.max(w, h) * 0.7);
-    gr.addColorStop(0, "#ffffff"); gr.addColorStop(1, "#8a93b8");
-    c.fillStyle = gr; c.fillRect(0, 0, w, h);
-    c.globalCompositeOperation = "source-over";
+    // contact shadows: the inset server bank (E12) and the lounge pieces sit on the floor, not over it
+    const b0 = g.bank[0], b1 = g.bank[g.bank.length - 1];
+    if (b0) { c.fillStyle = rgba(E[0], 0.6); c.fillRect(b0.x, b0.y + b0.h - oy, b1.x + b1.w - b0.x, 1); c.fillStyle = rgba(E[0], 0.3); c.fillRect(b0.x + 1, b0.y + b0.h + 1 - oy, b1.x + b1.w - b0.x - 2, 1); }
+    for (const f of g.feet) if (f.kind === "couch" || f.kind === "armchair") { const r = g.rect(f.id); c.fillStyle = rgba(E[0], 0.45); c.fillRect(r.x + 2, r.y + r.h - oy, r.w - 4, 2); }
     // deck plates, not an editor grid: a dark seam every 2 tiles with a faint lit lip beside it (critique R4)
     for (let x = 0; x <= l.cols; x += 2) { c.fillStyle = "rgba(8,10,20,0.32)"; c.fillRect(x * T, 0, 1, h); c.fillStyle = "rgba(200,215,255,0.035)"; c.fillRect(x * T + 1, 0, 1, h); }
     for (let y = 0; y <= l.rows - l.wallRows; y += 2) { c.fillStyle = "rgba(8,10,20,0.32)"; c.fillRect(0, y * T, w, 1); c.fillStyle = "rgba(200,215,255,0.035)"; c.fillRect(0, y * T + 1, w, 1); }
@@ -346,24 +354,39 @@ export class Scene {
       const g = c.createLinearGradient(0, 2, 0, 8);
       g.addColorStop(0, "rgba(154,246,255,0.08)"); g.addColorStop(1, "rgba(154,246,255,0)"); // KEY.cyan
       c.fillStyle = g; c.fillRect(0, 2, cw, 6);
-      const plate = (cx: number, lines: string[]) => { // signage plate, backlit ~10%, centred on cx
-        const pw = Math.max(...lines.map(pxTextW)) + 4, ph = lines.length * 6 + 3, px = Math.round(cx - pw / 2), py = 17 - Math.round(ph / 2);
-        c.fillStyle = "rgba(154,246,255,0.1)"; c.fillRect(px - 2, py - 2, pw + 4, ph + 4);
+      // one sign plate style (E8): a dark plate with a lit top edge and a 1px bevel, top on the wall's y=3 baseline, centred on its slot;
+      // the letters are decorative neon (magenta, signage only) with a faint halo from the tubes themselves (L5)
+      const plate = (cx: number, lines: string[]) => {
+        const tw = Math.max(...lines.map(pxTextW)), pw = tw + 5 + ((tw + 5) & 1), ph = lines.length * 6 + 4, px = cx - pw / 2, py = 3;
+        c.fillStyle = E[3]; c.fillRect(px - 1, py - 1, pw + 2, ph + 2);
         c.fillStyle = E[0]; c.fillRect(px, py, pw, ph);
-        c.fillStyle = theme().wall.trim; c.fillRect(px, py, pw, 1);
-        lines.forEach((t, i) => drawPx(c, t, Math.round(cx - pxTextW(t) / 2), py + 2 + i * 6, KEY.cyan));
+        c.fillStyle = theme().wall.trim; c.fillRect(px - 1, py - 1, pw + 2, 1);
+        lines.forEach((t, i) => {
+          const tx = Math.round(cx - pxTextW(t) / 2), ty = py + 3 + i * 6;
+          for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) drawPx(c, t, tx + dx, ty + dy, "rgba(255,62,165,0.18)"); // KEY.neon halo
+          drawPx(c, t, tx, ty, KEY.neon);
+        });
       };
       plate(sg.ops.x + sg.ops.w / 2, ["OPS"]); plate(sg.agent.x + sg.agent.w / 2, ["AGENT", "OFFICE"]);
     }));
     s.eventMode = "none";
     this.walls.addChild(s);
-    for (const k of this.geo.sconces) { const sp = place(new Sprite(sconceTex()), k.x, 10); sp.eventMode = "none"; this.walls.addChild(sp); } // wall washer: one per sconce footprint
-    // whiteboard frame (text is drawn in the screen-space overlay)
+    for (const k of this.geo.sconces) { const sp = place(new Sprite(sconceTex()), k.x, 3); sp.eventMode = "none"; this.walls.addChild(sp); } // wall washer: one per sconce footprint
+    // whiteboard (E7): a slate frame with a lit top edge, dark glass and one 1px cyan accent along the glass foot; text is the screen-space overlay
     const b = this.geo.rect("board");
     const g = new Graphics();
-    g.roundRect(b.x, 3, b.w, 24, 2).fill(E[0]).stroke({ width: 2, color: 0x3fb8d6 }); // dark glass panel, cyan rim
-    g.rect(b.x + 4, 27, b.w - 8, 2).fill(0x1d5f73);
-    this.walls.addChild(g, this.notes, this.gauge);
+    g.rect(b.x, 3, b.w, 24).fill(E[3]).rect(b.x, 3, b.w, 1).fill(E[4]).rect(b.x + 2, 5, b.w - 4, 20).fill(E[0]);
+    g.rect(b.x + 2, 24, b.w - 4, 1).fill({ color: CY, alpha: 0.55 });
+    g.rect(b.x + 4, 27, b.w - 8, 2).fill(E[3]).rect(b.x + 4, 27, b.w - 8, 1).fill(E[4]); // marker tray
+    // clock face (E7): an 18 px pixel dial, outline + slate bezel lit top-left + face + 4 ticks; the hands are this.clock
+    const { x: cx, y: cy } = this.geo.dials.clock;
+    for (let y = -9; y < 9; y++) for (let x = -9; x < 9; x++) {
+      const d = Math.hypot(x + 0.5, y + 0.5);
+      if (d >= 9) continue;
+      g.rect(cx + x, cy + y, 1, 1).fill(d >= 8 ? E[0] : d >= 6.5 ? (x + y < -3 ? E[5] : E[4]) : shade(KEY.paper, -0.12));
+    }
+    for (const [x, y] of [[-1, -6], [0, -6], [-1, 5], [0, 5], [-6, -1], [-6, 0], [5, -1], [5, 0]]) g.rect(cx + x, cy + y, 1, 1).fill(E[3]);
+    this.walls.addChild(g, this.gauge);
     for (let i = 0; i < CARDS_PER_COL * 4; i++) { // pooled paper cards, laid out when the task list changes
       const c = new Sprite(whiteTex());
       c.visible = false; c.eventMode = "none";
@@ -372,12 +395,18 @@ export class Scene {
   }
 
   private buildTechGlow() {
-    for (const L of this.geo.lights) { // a soft additive pool under each light source (alpha follows day/night via the container)
+    for (const L of this.geo.lights) { // a soft additive pool under each light source (alpha follows day/night via the container); windows: drawShafts
+      if (L.tone === "window") continue;
       const warm = L.tone === "warm", pool = new Sprite(this.glowTex);
       pool.anchor.set(0.5); pool.position.set(L.x, L.y + (warm ? -4 : L.reach * 0.4));
       pool.width = L.reach * (warm ? 1.6 : 1.5); pool.height = L.reach * (warm ? 0.9 : 1);
       pool.tint = warm ? WARM : 0xcfe6ff; pool.alpha = warm ? 0.16 : 0.14; pool.eventMode = "none";
       this.fixtures.addChild(pool);
+      if (L.source.startsWith("sconce:")) { // small halo round the lit shade (E9): its source is the sprite right above it
+        const halo = new Sprite(this.glowTex);
+        halo.anchor.set(0.5); halo.position.set(L.x, 13); halo.width = 18; halo.height = 10; halo.tint = 0xcfe6ff; halo.alpha = 0.28; halo.eventMode = "none";
+        this.fixtures.addChild(halo);
+      }
     }
     this.fixtures.eventMode = "none";
     this.glow.addChild(this.fixtures);
@@ -451,13 +480,16 @@ export class Scene {
     if (fa !== this.fixA) { this.fixA = fa; this.fixtures.alpha = fa; }
     this.tickPads(on, now);
     this.tickRack(on, a, now);
+    const wisp = on && this.coffeeOn ? Math.floor(now / 700) % 2 : -1; // two-frame steam wisp off the machine's vent (E9), slow ambient cadence
+    if (this.coffeeS && wisp !== this.coffeeWisp) { this.coffeeWisp = wisp; this.coffeeS.texture = coffeeTex(this.coffeeOn, wisp); }
   }
 
   /** The wall gauge mirrors the clock: 3 bars lit by real office activity (0..3). */
   private drawGauge(lvl: number) {
     const { x: px, y: cy } = this.geo.dials.gauge, g = this.gauge;
-    g.clear().roundRect(px - 9, cy - 9, 18, 18, 2).fill(E[0]).stroke({ width: 2, color: 0x3fb8d6 });
-    [[-5, 11], [-1, 7], [3, 9]].forEach(([dy, len], i) => g.rect(px - 6, cy + dy, len, 2).fill(i >= 3 - lvl ? CY : CY_OFF));
+    // same bezel language as the clock (E7): outline, slate bezel lit on top, dark face; only the bars are emitters
+    g.clear().rect(px - 9, cy - 9, 18, 18).fill(E[0]).rect(px - 8, cy - 8, 16, 16).fill(E[4]).rect(px - 8, cy - 8, 16, 1).fill(E[5]).rect(px - 6, cy - 6, 12, 12).fill(E[0]);
+    [[-4, 10], [-1, 6], [2, 8]].forEach(([dy, len], i) => g.rect(px - 5, cy + dy, len, 2).fill(i >= 3 - lvl ? CY : CY_OFF));
     if (this.gaugeSpill) this.gaugeSpill.alpha = 0.04 * lvl;
   }
 
@@ -474,7 +506,7 @@ export class Scene {
     if (!this.racks.length) return;
     if (!this.rackSpill) {
       const f = this.racks[0], e = this.racks[this.racks.length - 1], r = (this.rackSpill = new Sprite(this.glowTex));
-      r.anchor.set(0.5); r.position.set((f.x + e.x + 16) / 2, f.y + 8); r.width = e.x + 16 - f.x + 24; r.height = 34; r.tint = CY; r.eventMode = "none";
+      r.anchor.set(0.5); r.position.set((f.x + e.x + e.width) / 2, f.y + 8); r.width = e.x + e.width - f.x + 24; r.height = 34; r.tint = CY; r.eventMode = "none";
       this.glow.addChild(r);
     }
     this.rackSpill.alpha = on ? 0.03 + 0.09 * a : 0.03; // the LEDs' small spill follows the same activity
@@ -482,7 +514,7 @@ export class Scene {
     if (!this.leds.length) {
       for (const rk of this.racks) for (let i = 0; i < 12; i++) {
         const s = new Sprite(whiteTex());
-        s.position.set(9 + (i % 3), 3 + Math.floor(i / 3) * 3); s.eventMode = "none";
+        s.position.set(8 + (i % 3), 3 + Math.floor(i / 3) * 3); s.eventMode = "none";
         rk.addChild(s); this.leds.push(s);
       }
     }
@@ -550,7 +582,8 @@ export class Scene {
       else if (d.kind === "cooler") add(coolerTex(), r.x, r.y, z);
       else if (d.kind === "bookshelf") add(shelfTex(), r.x, r.y, z);
       else if (d.kind === "couch") add(couchTex(), r.x, r.y, z);
-      else if (d.kind === "rack") this.racks.push(add(rackTex(0, Math.min(2, this.racks.length) as 0 | 1 | 2), r.x, r.y, z));
+      else if (d.kind === "rack") { const k = this.geo.bank[this.racks.length]; this.racks.push(add(rackTex(0, Math.min(2, this.racks.length) as 0 | 1 | 2), k.x, k.y, z)); }
+      else if (d.kind === "holo") add(holoTex(), r.x, r.y, z);
       else if (d.kind === "lamp") add(floorLampTex(), r.x, r.y, z);
       else if (d.kind === "fridge") add(fridgeTex(), r.x, r.y, z);
       else if (d.kind === "table") add(tableTex(), r.x, r.y, z);
@@ -638,7 +671,7 @@ export class Scene {
     }
     const nUsed = this.countWork();
     const anyUsed = nUsed > 0;
-    if (this.coffeeS && anyUsed !== this.coffeeOn) { this.coffeeOn = anyUsed; this.coffeeS.texture = coffeeTex(anyUsed); }
+    if (this.coffeeS && anyUsed !== this.coffeeOn) { this.coffeeOn = anyUsed; this.coffeeWisp = -2; } // tickTech re-picks the texture
     // empty zones sit darker than occupied ones (#113)
     const used = new Set<string>();
     for (const [k, st] of m) if (st.used) used.add(wingOf(k));
@@ -780,7 +813,7 @@ export class Scene {
     const mk = (tex: Texture) => { const s = new Sprite(tex); s.visible = false; s.eventMode = "none"; this.wx.addChild(s); return s; };
     for (const x of this.geo.windows) {
       const flash = mk(whiteTex());
-      flash.position.set(x * T, 4); flash.width = 2 * T; flash.height = 22; flash.alpha = 0.85;
+      flash.position.set(x * T + 2, 5); flash.width = 28; flash.height = 19; flash.alpha = 0.85; // the pane only
       const drops = [0, 1, 2].map(() => { const d = mk(whiteTex()); d.tint = 0x9ad0ff; d.scale.set(1, 3); return d; });
       this.wxWins.push({ x: x * T, cloud: mk(t.cloud), sun: mk(t.sun), drops, flash });
     }
@@ -800,13 +833,13 @@ export class Scene {
     this.wxWins.forEach((w, i) => {
       w.sun.visible = sunny;
       w.sun.tint = this.dark ? 0xdfe6ff : 0xffd84a;
-      w.sun.position.set(w.x + 22, 6);
+      w.sun.position.set(w.x + 21, 7); // inside the pane (x+2..x+29, y 5..23) with >= 2 px clear
       w.cloud.visible = !sunny;
       w.cloud.tint = rain ? 0x7d8398 : 0xe8ecf5;
-      w.cloud.position.set(Math.round(w.x + 2 + 16 * (anim ? 0.5 + 0.5 * Math.sin(now / 7000 + i) : 0.5)), 6);
+      w.cloud.position.set(Math.round(w.x + 4 + 12 * (anim ? 0.5 + 0.5 * Math.sin(now / 7000 + i) : 0.5)), 7); // clouds stay 2 px inside the pane (E10)
       w.drops.forEach((d, k) => {
         d.visible = rain;
-        d.position.set(w.x + 6 + k * 9 + (i % 2) * 2, Math.floor(anim ? 12 + ((now / 30 + k * 5 + i * 3) % 13) : 13 + k * 4));
+        d.position.set(w.x + 6 + k * 9 + (i % 2) * 2, Math.floor(anim ? 8 + ((now / 30 + k * 5 + i * 3) % 12) : 9 + k * 4));
       });
     });
   }
@@ -896,15 +929,14 @@ export class Scene {
         g.alpha = still ? 0.6 : 0.35 + 0.35 * Math.sin(now / 320); // waiting: lamp pulses gold
       }
     }
-    // dust drifts only inside the shafts; off at night and under reduced motion
+    // dust drifts only inside the window light; off at night and under reduced motion
     const wins = this.geo.windows, on = ambientOn() && this.shaftDay > 0.1 && wins.length > 0;
-    const shift = this.shaftShift;
     this.dust.forEach((m, i) => {
       if (m.visible !== on) m.visible = on;
       if (!on) return;
-      const u = (now / 11000 + i * 0.37) % 1, wx = wins[i % wins.length] * T, w = 2 * T;
-      const y = 28 + u * 44;
-      m.position.set(Math.round(wx + (shift + 8) * ((y - 26) / 50) + 2 + ((i * 0.618) % 1) * (w - 4) + Math.sin(now / 1700 + i) * 2), Math.round(y));
+      const u = (now / 11000 + i * 0.37) % 1, wx = wins[i % wins.length] * T;
+      const y = 34 + u * 44;
+      m.position.set(Math.round(wx + 4 + ((i * 0.618) % 1) * 22 + Math.sin(now / 1700 + i)), Math.round(y));
       m.alpha = Math.sin(Math.PI * u) * 0.6 * this.shaftDay;
     });
   }
@@ -925,11 +957,6 @@ export class Scene {
         s.width = Math.floor(colW) - 3; s.height = 3;
       }));
       for (; ci < this.cards.length; ci++) this.cards[ci].visible = false;
-      // sticky-note wall beside the board: one note per done report (cap 12), coloured by role
-      this.notes.clear();
-      bd.cols.done.slice(0, 12).forEach((t, i) => {
-        this.notes.rect((b.x - 1) * T + 3 + (i % 3) * 4, 6 + Math.floor(i / 3) * 4, 3, 3).fill(hexNum(shadeTo(roleColor(t.role), "#fff1d6", 0.3)));
-      });
       this.colKey = "";
     }
     // the board is the outcomes ledger once anything has finished (critique V1); the task columns show only before that
@@ -967,52 +994,58 @@ export class Scene {
     return (1 - (h - 5) / 3) * max;
   }
 
-  private shaftShift = 0;
-  /** One static parallelogram of daylight per window; x leans with the sun, alpha follows daylight, amber at dawn/dusk. Redrawn on the 15-minute key. */
+  /** Window light (E1): one soft vertical gradient per window, clipped to its pane's x-range; warm by day (amber at dawn/dusk), faint moonlight at night. Redrawn on the 15-minute key. */
   private drawShafts(hour: number) {
     const nm = theme().nightMax;
     const day = nm > 0 ? 1 - this.nightAlpha(hour) / nm : hour >= 6 && hour < 19 ? 1 : 0;
     this.shaftDay = Math.max(0, Math.min(1, day));
-    this.shafts.clear();
-    const moon = (1 - this.shaftDay) * (nm > 0 ? Math.min(1, this.nightAlpha(hour) / nm) : 0); // night: cool pools where the window light lands
-    this.shafts.visible = this.shaftDay > 0.02 || moon > 0.02;
-    if (!this.shafts.visible) return;
-    if (moon > 0.02) for (const x of this.geo.windows) this.shafts.poly([x * T, 28, x * T + 2 * T, 28, x * T + 2 * T + 6, 70, x * T + 6, 70]).fill({ color: 0x9fb8ff, alpha: 0.07 * moon });
-    if (this.shaftDay <= 0.02) return;
-    const shift = this.shaftShift = (Math.max(0, Math.min(1, (hour - 7) / 11)) - 0.5) * 44;
-    const color = hour < 8.5 || hour >= 16.5 ? 0xffb86a : 0xfff1c8;
-    for (const x of this.geo.windows) {
-      const wx = x * T, w = 2 * T;
-      this.shafts.poly([wx, 26, wx + w, 26, wx + w + shift + 8, 76, wx + shift + 8, 76]).fill({ color, alpha: 0.07 * this.shaftDay });
-    }
+    const moon = (1 - this.shaftDay) * (nm > 0 ? Math.min(1, this.nightAlpha(hour) / nm) : 0);
+    const sun = this.shaftDay > 0.02, tint = sun ? (hour < 8.5 || hour >= 16.5 ? 0xffb86a : 0xfff1c8) : 0x9fb8ff, alpha = sun ? 0.12 * this.shaftDay : 0.07 * moon;
+    this.shafts.visible = alpha > 0.002;
+    for (const sp of this.shafts.children as Sprite[]) { sp.tint = tint; sp.alpha = alpha; }
   }
 
+  /**
+   * Window panes, drawn inside their 2-tile footprint (a 2 px reveal each side, tops on the y=3 baseline, sill flush with the slot).
+   * Three sky variants (E10: band split, cloud, skyline) and a dim skyline (L4): lit windows at night, one neon district in one window only.
+   */
   private drawSky(hour: number) {
     const { top, bottom, night } = skyAt(hour), day = hour >= 8 && hour < 17;
+    const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
+    const city = night ? E[1] : mix(hex(bottom), E[3], 0.55), lit = night ? "rgba(255,217,140,0.55)" : null;
     this.dark = night;
     this.sky.clear();
-    const l = this.l;
-    for (const x of this.geo.windows) {
-      const wx = x * T, w = 2 * T;
-      this.sky.rect(wx - 3, 1, w + 6, 28).fill(E[0]); // deep reveal
-      this.sky.rect(wx - 2, 2, w + 4, 1).fill(E[3]);
-      this.sky.rect(wx, 4, w, 11).fill(top).rect(wx, 15, w, 11).fill(bottom);
-      if (night) for (let i = 0; i < 4; i++) this.sky.rect(wx + 4 + ((i * 9 + x * 3) % 24), 6 + ((i * 5) % 12), 1, 1).fill(0xffffff);
-      if (day) this.sky.roundRect(wx + 6, 7, 10, 3, 1).fill(0xffffff);
-      this.sky.rect(wx + T - 1, 4, 2, 22).fill(E[2]).rect(wx, 14, w, 2).fill(E[2]);
-      this.sky.rect(wx - 3, 26, w + 6, 3).fill(E[4]).rect(wx - 3, 26, w + 6, 1).fill(E[5]); // sill, lit edge
-      this.sky.rect(wx + w - 6, 22, 4, 4).fill(0x3fa14c).rect(wx + w - 5, 21, 2, 1).fill(0x7fd18a).rect(wx + w - 5, 25, 2, 1).fill(0xa8643c); // sill plant
-    }
+    this.geo.windows.forEach((x, i) => {
+      const wx = x * T, v = i % 3, g = this.sky;
+      g.rect(wx, 3, 2 * T, 22).fill(E[0]).rect(wx + 1, 3, 2 * T - 2, 1).fill(E[3]); // deep reveal, lit top
+      const band = [9, 11, 7][v];
+      g.rect(wx + 2, 5, 28, band).fill(top).rect(wx + 2, 5 + band, 28, 19 - band).fill(bottom);
+      if (night) for (let k = 0; k < 4; k++) g.rect(wx + 4 + ((k * 7 + x * 3) % 22), 7 + ((k * 5 + v) % 7), 1, 1).fill(0xffffff);
+      if (day) g.rect(wx + 5 + v * 5, 8 + (v & 1), 9, 2).fill(0xffffff).rect(wx + 7 + v * 5, 7 + (v & 1), 4, 1).fill(0xffffff); // a still cloud, inset >= 2 px
+      // skyline: [x, w, h] blocks standing on the pane foot (y 23)
+      const blocks = [[[0, 5, 6], [5, 4, 9], [9, 6, 5], [15, 3, 8], [18, 6, 6], [24, 4, 10]], [[0, 4, 8], [4, 7, 5], [11, 3, 11], [14, 5, 7], [19, 5, 4], [24, 4, 7]], [[0, 6, 5], [6, 3, 7], [9, 5, 9], [14, 6, 6], [20, 3, 12], [23, 5, 5]]][v];
+      for (const [bx, bw, bh] of blocks) {
+        g.rect(wx + 2 + bx, 24 - bh, bw, bh).fill(city);
+        if (lit) for (let k = 0; k < bh - 2; k += 3) if ((bx + k + x) % 4 === 0) g.rect(wx + 3 + bx, 25 - bh + k, 1, 1).fill(lit);
+      }
+      if (i === 1) { // the neon district: decorative magenta (signage/skyline only), dim by day
+        const n = night ? KEY.neon : "#5a2a4c";
+        g.rect(wx + 13, 15, 3, 1).fill(n).rect(wx + 22, 18, 2, 1).fill(n).rect(wx + 6, 18, 1, 2).fill(n);
+      }
+      g.rect(wx + 15, 5, 2, 19).fill(E[2]); // mullion, centred on the pane
+      g.rect(wx, 24, 2 * T, 3).fill(E[4]).rect(wx, 24, 2 * T, 1).fill(E[5]); // sill, lit edge
+      g.rect(wx + 24, 19, 4, 3).fill(0x3fa14c).rect(wx + 25, 18, 2, 1).fill(0x7fd18a).rect(wx + 25, 22, 2, 2).fill(0xa8643c); // sill plant
+    });
   }
 
   private drawClock(d: Date) {
     const { x: cx, y: cy } = this.geo.dials.clock;
-    const g = this.clock;
-    g.clear().circle(cx, cy, 9).fill(KEY.paper).stroke({ width: 2, color: E[0] });
+    const g = this.clock.clear(); // hands only, in whole art pixels (the face is baked in buildWalls)
     const m = d.getMinutes() + d.getSeconds() / 60, h = (d.getHours() % 12) + m / 60;
-    const hand = (a: number, len: number, w: number) =>
-      g.moveTo(cx, cy).lineTo(cx + Math.sin(a) * len, cy - Math.cos(a) * len).stroke({ width: w, color: E[0] });
-    hand((h / 12) * Math.PI * 2, 4, 2);
-    hand((m / 60) * Math.PI * 2, 6.5, 1);
+    const hand = (a: number, len: number) => { for (let t = 1; t <= len; t += 0.5) g.rect(Math.floor(cx + Math.sin(a) * t), Math.floor(cy - Math.cos(a) * t), 1, 1); };
+    g.rect(cx - 1, cy - 1, 2, 2); // hub on the dial's centre boundary
+    hand((h / 12) * Math.PI * 2, 3.5);
+    hand((m / 60) * Math.PI * 2, 5.5);
+    g.fill(E[0]);
   }
 }

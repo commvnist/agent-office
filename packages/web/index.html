@@ -26,7 +26,7 @@ if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
   /* not fully opaque: an opaque header over the canvas makes Chromium drop the canvas' bottom header-height rows from screenshots */
   :root:root #top{background:color-mix(in srgb,var(--panel) 99%,transparent);border-bottom:1px solid var(--line);font-size:calc(11px * var(--ts,1));text-transform:uppercase;letter-spacing:.08em}
   #top .chip{text-transform:none;letter-spacing:.02em}
-  #top .wm{display:inline-flex;align-items:center;gap:8px;font-size:calc(12px * var(--ts,1));font-weight:600;letter-spacing:.16em;white-space:nowrap}
+  #top .wm{flex:none;display:block;fill:#9af6ff} /* L2: the wall sign's 3x5 pixel font (KEY.cyan) at a whole 2x, so it stays crisp; chrome.test.ts checks the path */
   #top .live{width:6px;height:6px;border-radius:50%;background:var(--good);flex:none}
   #top .live:not(.off){display:none} /* B9: connected is the normal state, so only "offline" is drawn */
   #top .live.off{background:var(--off);width:auto;height:auto;padding:0 8px;color:#14121f;font-size:calc(11px * var(--ts,1))}
@@ -161,8 +161,6 @@ if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
     #top{flex-wrap:wrap;gap:4px 8px;padding-bottom:4px}
     #need{order:9;flex:1 1 100%;max-width:none;min-block-size:32px} /* H2: its own row, name + state, tap to open */
     #top b{flex:none;overflow:visible}
-    .wm2{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
-    #top .wm{font-size:calc(14px * var(--ts,1))}
   }
   @media (max-width:1500px){#top .wm{display:none}} /* a crowded header drops the wordmark first; the wall sign carries the name */
   @media (max-width:800px){#nudge,.pl,.grow{display:none}}
@@ -181,7 +179,7 @@ if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
 </style></head>
 <body>
 <div id="stage" role="main" aria-label="Agent Office"></div>
-<div id="top"><span class="live" id="live" role="img" aria-label="connected" title="connected"></span><b class="wm">AGENT<span class="wm2"> OFFICE</span></b><button id="need" type="button" hidden></button><span id="stats" role="img"></span><span id="badge" class="chip" hidden></span><button id="stop-sample" class="b sm" type="button" hidden>Stop sample</button><span class="grow"></span><button id="privchip" class="chip" type="button" aria-pressed="false"></button><span id="nudge" class="chip" hidden title="Office protocol: sessions get a short roster and report-format note when they start. Settings > Office protocol.">nudged</span><span id="top-tools"><div id="tools" role="toolbar" aria-label="Views and menus"></div></span><button id="tg" class="b" type="button" aria-controls="side" aria-expanded="true">Panel</button></div>
+<div id="top"><span class="live" id="live" role="img" aria-label="connected" title="connected"></span><svg class="wm" role="img" aria-label="Agent Office" width="94" height="10" viewBox="0 0 47 5" shape-rendering="crispEdges"><path d="M1 0h1v1h-1zM0 1h1v1h-1zM2 1h1v1h-1zM0 2h1v1h-1zM1 2h1v1h-1zM2 2h1v1h-1zM0 3h1v1h-1zM2 3h1v1h-1zM0 4h1v1h-1zM2 4h1v1h-1zM5 0h1v1h-1zM6 0h1v1h-1zM4 1h1v1h-1zM4 2h1v1h-1zM6 2h1v1h-1zM4 3h1v1h-1zM6 3h1v1h-1zM5 4h1v1h-1zM6 4h1v1h-1zM8 0h1v1h-1zM9 0h1v1h-1zM10 0h1v1h-1zM8 1h1v1h-1zM8 2h1v1h-1zM9 2h1v1h-1zM8 3h1v1h-1zM8 4h1v1h-1zM9 4h1v1h-1zM10 4h1v1h-1zM12 0h1v1h-1zM13 0h1v1h-1zM12 1h1v1h-1zM14 1h1v1h-1zM12 2h1v1h-1zM14 2h1v1h-1zM12 3h1v1h-1zM14 3h1v1h-1zM12 4h1v1h-1zM14 4h1v1h-1zM16 0h1v1h-1zM17 0h1v1h-1zM18 0h1v1h-1zM17 1h1v1h-1zM17 2h1v1h-1zM17 3h1v1h-1zM17 4h1v1h-1zM24 0h1v1h-1zM25 0h1v1h-1zM26 0h1v1h-1zM24 1h1v1h-1zM26 1h1v1h-1zM24 2h1v1h-1zM26 2h1v1h-1zM24 3h1v1h-1zM26 3h1v1h-1zM24 4h1v1h-1zM25 4h1v1h-1zM26 4h1v1h-1zM28 0h1v1h-1zM29 0h1v1h-1zM30 0h1v1h-1zM28 1h1v1h-1zM28 2h1v1h-1zM29 2h1v1h-1zM28 3h1v1h-1zM28 4h1v1h-1zM32 0h1v1h-1zM33 0h1v1h-1zM34 0h1v1h-1zM32 1h1v1h-1zM32 2h1v1h-1zM33 2h1v1h-1zM32 3h1v1h-1zM32 4h1v1h-1zM36 0h1v1h-1zM37 0h1v1h-1zM38 0h1v1h-1zM37 1h1v1h-1zM37 2h1v1h-1zM37 3h1v1h-1zM36 4h1v1h-1zM37 4h1v1h-1zM38 4h1v1h-1zM41 0h1v1h-1zM42 0h1v1h-1zM40 1h1v1h-1zM40 2h1v1h-1zM40 3h1v1h-1zM41 4h1v1h-1zM42 4h1v1h-1zM44 0h1v1h-1zM45 0h1v1h-1zM46 0h1v1h-1zM44 1h1v1h-1zM44 2h1v1h-1zM45 2h1v1h-1zM44 3h1v1h-1zM44 4h1v1h-1zM45 4h1v1h-1zM46 4h1v1h-1z"/></svg><button id="need" type="button" hidden></button><span id="stats" role="img"></span><span id="badge" class="chip" hidden></span><button id="stop-sample" class="b sm" type="button" hidden>Stop sample</button><span class="grow"></span><button id="privchip" class="chip" type="button" aria-pressed="false"></button><span id="nudge" class="chip" hidden title="Office protocol: sessions get a short roster and report-format note when they start. Settings > Office protocol.">nudged</span><span id="top-tools"><div id="tools" role="toolbar" aria-label="Views and menus"></div></span><button id="tg" class="b" type="button" aria-controls="side" aria-expanded="true">Panel</button></div>
 <button id="fit" class="b sm" type="button" hidden>Fit all</button>
 <button id="px" class="b" type="button" hidden>Exit presenter (Esc / P)</button>
 <div id="empty"><div class="card" role="region" aria-label="Getting started"><h2>The office is empty</h2>

@@ -17,8 +17,10 @@ export type Theme = {
   nightMax: number;
 };
 
-// Okabe-Ito: the standard colour-blind-safe categorical set.
-const OKABE = ["#e69f00", "#56b4e9", "#009e73", "#f0e442", "#0072b2", "#d55e00", "#cc79a7", "#999999"];
+// Role shirts: muted, at least 30 degrees from every status hue (style guide), so only the yellow-green (69-124) and
+// blue-violet (223-324) ranges remain; neighbours differ in hue AND lightness so roles still separate under colour-vision
+// deficiency (the role glyph on the chest is the shape cue). Clamping the Okabe-Ito set into these ranges merged three roles.
+const ROLE_SHIRTS = ["#aac167", "#7586c7", "#55983e", "#be6ec4", "#5343a3", "#cd84b4", "#5cbc62", "#999999"];
 
 // ---- status vocabulary (one map for every surface: ring, dot, row accent, pill, toast, legend) ----
 /**
@@ -61,7 +63,7 @@ export const DEFAULT_THEME: Theme = {
   name: "default",
   skins: ["#f6d3b0", "#e6b48a", "#c98d5f", "#8d5a3b", "#fadcbd"],
   hairs: ["#2a1c14", "#5b3a26", "#a86a2c", "#e0bd62", "#1b1b26", "#b9482f", "#cfcfd8"],
-  roleColors: OKABE,
+  roleColors: ROLE_SHIRTS,
   deck: { deep: E[0], mid: E[1], lit: E[2] },
   wall: { face: E[2], top: E[3], line: E[0], base: E[1], trim: E[4] },
   desk: { top: E[4], edge: E[5], front: E[3], inset: E[2] },

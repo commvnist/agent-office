@@ -40,7 +40,18 @@ test("every desk total x lobby size: consistent, and the scene geometry is exact
     assert.equal(g.signs.ops.x + g.signs.ops.w / 2 + g.signs.agent.x + g.signs.agent.w / 2, l.cols * T);
     // wall dials sit inside the clock/gauge footprints
     const d = wallDials(l);
-    for (const [id, c] of [["clock", d.clock], ["gauge", d.gauge]] as const) { const r = g.rect(id); assert.ok(c.x - 10 >= r.x && c.x + 10 <= r.x + r.w, id); }
+    for (const [id, c] of [["clock", d.clock], ["gauge", d.gauge]] as const) { const r = g.rect(id); assert.ok(c.x - 9 >= r.x && c.x + 9 <= r.x + r.w && c.y - 9 === 3, id); }
+    // E8 wall rhythm: every wall item has a mirror slot
+    const wall = g.feet.filter((f) => f.layer === "wall" && f.kind !== "door").sort((a, b) => a.x - b.x);
+    for (const f of wall) assert.ok(wall.some((o) => o.x === l.cols - f.x - f.w && o.w === f.w), `${f.id} mirrored`);
+    // E12 bank inset inside the rack footprints, trunk leaves its bottom edge; E3 lounge rug inside its footprint, around the couch set
+    const rk = g.racks, bk = g.bank;
+    assert.ok(bk[0].x === rk[0].x + 8 && bk[2].x + bk[2].w <= rk[2].x + rk[2].w && bk.every((c, i) => !i || c.x === bk[i - 1].x + c.w));
+    const trunk = g.line.get("conduit:trunk:0")!.pts[0];
+    assert.ok(trunk.x > bk[0].x && trunk.x < bk[2].x + bk[2].w, "trunk under the inset bank");
+    const rug = g.rect("rug:lounge"), lr = g.lounge;
+    assert.ok(lr.x >= rug.x && lr.y >= rug.y && lr.x + lr.w <= rug.x + rug.w && lr.y + lr.h <= rug.y + rug.h, "lounge rug inside its footprint");
+    assert.equal(lr.x + lr.w / 2, l.door.x * T + 8, "lounge rug centred on the door aisle");
     // no floor-painted text: the scene geometry carries no plates or letters
     assert.ok(!("plates" in g) && !("letters" in g));
   }

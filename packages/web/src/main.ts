@@ -1023,7 +1023,6 @@ function drawBadges(ui: View, W: number, H: number) {
 
 // ---- frame loop --------------------------------------------------------------------------------------------
 
-let steamT = 0;
 const walkers: Actor[] = []; // per-frame scratch
 let vw = -1, vh = -1, viewAt = 0, viewDirty = false, activeUntil = 0;
 let lastV = { sc: 0, ox: 0, oy: 0 };
@@ -1200,8 +1199,7 @@ app.ticker.add((tk) => {
     tether.stroke({ width: 1, color: 0x7fe3ff, alpha: 0.3 });
   }
 
-  steamT += dt;
-  if (steamT > 0.35 && ambientOn()) { steamT = 0; puff(scene.coffee.x, scene.coffee.y); }
+  // coffee steam is the machine's own two-frame wisp (scene.ts), not particles
   coolerT += dt;
   if (coolerT > 1.1 && cooler && ambientOn()) { coolerT = 0; puff(cooler.x, cooler.y, 0xbfe9ff); } // cooler bubble (#118)
   floaters.update(dt);

@@ -129,7 +129,12 @@ test("decor: Ops/Pantry corners mirror, booths sit on the margins at the seat ro
     assert.ok(xs.every((x) => d.y < l.rows - 3 || Math.abs(x - l.door.x) > 1), `${d.kind} near the door aisle`);
   }
   const lobbyY = l.lobby[0].y;
-  assert.ok(l.decor.every((d) => d.y !== lobbyY && d.y !== lobbyY + 1));
+  assert.ok(l.decor.every((d) => d.kind === "holo" || (d.y !== lobbyY && d.y !== lobbyY + 1)));
+  // the holo-map pair sits a clear tile away from every lead desk, and only while that fits
+  const holo = l.decor.filter((d) => d.kind === "holo");
+  assert.equal(holo.length, 2);
+  for (const h of holo) assert.ok(l.lobby.every((t) => t.x > h.x + 2 || t.x < h.x - 1), "holo clear of the lead desks");
+  for (const n of [10, 11, 12, 16]) assert.equal(buildLayout(cfg, { lobbySlots: n }).decor.filter((d) => d.kind === "holo").length, 0, `no holo with ${n} leads`);
   assert.equal(l.decor.filter((d) => d.kind === "table").length, 2);
   assert.equal(l.decor.filter((d) => d.kind === "armchair").length, 2);
 });

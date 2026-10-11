@@ -2,7 +2,7 @@ import type { OfficeConfig } from "./types.ts";
 
 export type Tile = { x: number; y: number };
 export type Prop = Tile & { role: string; kind: "permanent" | "overflow"; tier: number; seat?: string };
-export type Decor = Tile & { kind: "plant" | "coffee" | "cooler" | "couch" | "bookshelf" | "rack" | "booth" | "fridge" | "table" | "armchair" | "lamp"; w?: number; h?: number };
+export type Decor = Tile & { kind: "plant" | "coffee" | "cooler" | "couch" | "bookshelf" | "rack" | "booth" | "fridge" | "table" | "armchair" | "lamp" | "holo"; w?: number; h?: number };
 export type Zone = { role: string; label: string; x: number; w: number; y: number; queue: Tile[] };
 export type Layout = {
   cols: number;
@@ -124,6 +124,9 @@ export function buildLayout(cfg: OfficeConfig, opts: LayoutOpts = {}): Layout {
     { kind: "armchair", x: couchR + 2, y: rows - 2 },
     { kind: "lamp", x: mid - 8, y: rows - 2 }, { kind: "lamp", x: mid + 8, y: rows - 2 }, // floor lamps flank the lounge rug, clear of the door aisle and armchairs
   ];
+  // signature prop (critique L5): a holo-map table either side of the lead desks, on the lobby rug below the Ops / Pantry corners.
+  // shortcut: only while the lead row leaves tiles 2..4 free (up to 9 sessions); a wider lobby drops the pair rather than moving it.
+  if (Math.min(...lobby.map((t) => t.x)) >= 5) decor.push({ kind: "holo", x: 2, y: LOBBY_Y, w: 2 }, { kind: "holo", x: cols - 4, y: LOBBY_Y, w: 2 });
   for (let r = 0; r < podRows; r++) // phone booths (1 wide, 2 tall) on both margins at each pod row's seat row + desk row
     for (const x of [0, cols - 1]) decor.push({ kind: "booth", x, y: Y0 + r * 5, h: 2 });
   const decorBlocked = decor.flatMap((d) => Array.from({ length: (d.w ?? 1) * (d.h ?? 1) }, (_, i) => ({ x: d.x + (i % (d.w ?? 1)), y: d.y + Math.floor(i / (d.w ?? 1)) })));

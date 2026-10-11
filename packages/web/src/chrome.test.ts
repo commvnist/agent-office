@@ -135,3 +135,19 @@ test("coverFit fills the box and centres the overflow", () => {
   assert.deepEqual(coverFit(1000, 500, 720, 630), { s: 1.26, x: (720 - 1260) / 2, y: 0 });
   assert.deepEqual(coverFit(400, 800, 720, 630), { s: 1.8, x: 0, y: (630 - 1440) / 2 });
 });
+
+test("L2: the header wordmark is the wall sign's 3x5 pixel font, integer-scaled, no accent line", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { drawPx, pxTextW } = await import("./sprites.ts");
+  const cells: string[] = [];
+  drawPx({ fillRect: (x: number, y: number) => cells.push(`M${x} ${y}h1v1h-1z`) } as unknown as CanvasRenderingContext2D, "AGENT OFFICE", 0, 0, "");
+  const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
+  const svg = /<svg class="wm"[^>]*>[\s\S]*?<\/svg>/.exec(html)?.[0] ?? "";
+  assert.ok(svg.includes(`d="${cells.join("")}"`), `wordmark path drifted from the sign font:\n${cells.join("")}`);
+  const w = pxTextW("AGENT OFFICE"), [, vw, vh] = /viewBox="0 0 (\d+) (\d+)"/.exec(svg) ?? [];
+  assert.equal(Number(vw), w); assert.equal(Number(vh), 5);
+  const [, pw, ph] = /width="(\d+)" height="(\d+)"/.exec(svg) ?? [];
+  assert.equal(Number(pw) / w, Number(ph) / 5); assert.ok(Number.isInteger(Number(pw) / w), "integer scale");
+  assert.match(svg, /shape-rendering="crispEdges"/);
+  assert.doesNotMatch(html, /\.wm[^{]*\{[^}]*border-bottom/, "no accent line under the wordmark");
+});

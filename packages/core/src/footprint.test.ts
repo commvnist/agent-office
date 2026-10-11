@@ -35,10 +35,11 @@ test("conduits: trunk from the bank edge down column 1, row run on the aisle cen
   for (const j of js) assert.ok(!j.solid && !l.blocked.has(`${j.x},${j.y}`));
 });
 
-test("lights come only from sconces and lamps, on their footprints", () => {
+test("lights come only from sconces, lamps, windows and holo tables, on their footprints", () => {
   const l = base(), lt = lights(l), f = new Map(placements(l).map((x) => [x.id, x]));
   assert.ok(lt.length >= 4);
-  for (const a of lt) assert.ok(["sconce", "lamp"].includes(f.get(a.source)!.kind));
+  for (const a of lt) assert.ok(["sconce", "lamp", "window", "holo"].includes(f.get(a.source)!.kind));
+  assert.equal(lt.filter((a) => a.tone === "window").length, placements(l).filter((x) => x.kind === "window").length);
   assert.deepEqual(lt.filter((a) => a.source.startsWith("decor:lamp")).map((a) => a.x / TILE_PX - 0.5).sort((a, b) => a - b), [l.door.x - 8, l.door.x + 8]);
   const sc = placements(l).filter((x) => x.kind === "sconce").map((x) => x.x).sort((a, b) => a - b);
   assert.deepEqual(sc, sc.map((x) => l.cols - 1 - x).sort((a, b) => a - b));

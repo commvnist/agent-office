@@ -115,37 +115,44 @@ export const laptopTex = (tier: number) =>
     return g;
   });
 
-/** Wall-hugging server rack; `blink` flips which LEDs are lit. */
-/** One cabinet of the server bank. `pos` 0/1/2 = left/middle/right: all the same height, LED rows on the same y, a 1px lit seam where racks meet so the three read as one row. */
+/**
+ * One cabinet of the server bank, 13 px wide (geometry.ts CAB_W; the bank is inset 8 px from the room edge). `pos` 0/1/2 = left/middle/right:
+ * same height, LED rows on the same y, a 1px lit seam where cabinets meet so the three read as one row. `blink` flips which LEDs are lit.
+ */
 export const rackTex = (blink: 0 | 1, pos: 0 | 1 | 2 = 0) =>
   memo(`rack:${blink}:${pos}`, () => {
-    const g = new Grid(16, 16);
-    g.rect(0, 0, 16, 16, E[2]);
-    g.rect(0, 0, 16, 1, E[4]); // lit top edge
-    g.rect(0, 15, 16, 1, E[0]); // base
-    if (pos !== 2) g.rect(15, 0, 1, 15, E[4]); // lit seam against the next cabinet
+    const g = new Grid(13, 16);
+    g.rect(0, 0, 13, 16, E[2]);
+    g.rect(0, 0, 13, 1, E[4]); // lit top edge
+    g.rect(0, 15, 13, 1, E[0]); // base
+    if (pos !== 2) g.rect(12, 0, 1, 15, E[4]); // lit seam against the next cabinet
     if (pos !== 0) g.rect(0, 1, 1, 14, E[1]); // shadowed seam on this side
     for (let i = 0; i < 4; i++) {
-      g.rect(2, 2 + i * 3, 11, 2, E[0]); g.rect(3, 2 + i * 3, 5, 1, E[3]);
-      g.set(10, 3 + i * 3, (i + blink) % 2 ? CY : KEY.cyanOff); g.set(11, 3 + i * 3, (i + blink) % 3 ? KEY.cyanOff : KEY.warm);
+      g.rect(1, 2 + i * 3, 11, 2, E[0]); g.rect(2, 2 + i * 3, 5, 1, E[3]);
+      g.set(9, 3 + i * 3, (i + blink) % 2 ? CY : KEY.cyanOff); g.set(10, 3 + i * 3, (i + blink) % 3 ? KEY.cyanOff : KEY.warm);
     }
     return g;
   });
 
-/** Wall sconce: a bracket plate with a lit lens; the pool under it comes from lights(). 16x16, placed 10px below the cove. */
+/** Wall sconce: wall plate, short arm and a flared shade lit from below; the halo and pool come from lights(). 16x16, top on the y=3 baseline. Even-width, mirrored about the tile centre. */
 export const sconceTex = () =>
   memo("sconce", () => {
     const g = new Grid(16, 16);
-    g.rect(7, 0, 2, 5, E[4]); g.rect(5, 5, 6, 2, E[3]); g.rect(6, 7, 4, 1, "#dcecff"); g.set(7, 8, CY); g.set(8, 8, CY);
+    g.rect(6, 0, 4, 2, E[3]); g.rect(7, 2, 2, 3, E[4]); // wall plate, arm
+    g.rect(6, 5, 4, 1, E[4]); g.rect(5, 6, 6, 2, E[3]); g.rect(4, 8, 8, 2, E[3]); // shade, flaring down
+    g.set(5, 6, E[5]); g.set(4, 8, E[5]); // top-left key light on the shade
+    g.rect(4, 10, 8, 1, "#dcecff"); g.rect(6, 11, 4, 1, CY); // lit rim, bulb glow under it
     return g;
   });
 
-/** Floor lamp: weighted base, pole, warm shade. 16x16 (one tile). */
+/** Floor lamp: weighted base, thin pole, a dark cap over a flared warm shade with a darker rim (reads as a lamp, not a stool). 16x16. */
 export const floorLampTex = () =>
   memo("floorlamp", () => {
     const g = new Grid(16, 16);
-    g.rect(5, 14, 6, 2, E[2]); g.rect(7, 6, 2, 8, E[4]);
-    g.rect(4, 1, 8, 5, KEY.warm); g.rect(4, 1, 8, 1, "#ffe3a8"); g.rect(5, 6, 6, 1, toLuma("#a8743a", 0.4));
+    g.rect(5, 14, 6, 2, E[2]); g.rect(5, 14, 6, 1, E[4]); g.rect(7, 7, 2, 7, E[4]); g.set(7, 7, E[5]);
+    g.rect(6, 0, 4, 1, E[3]); // cap
+    g.rect(5, 1, 6, 2, KEY.warm); g.rect(4, 3, 8, 3, KEY.warm); g.rect(5, 1, 2, 1, "#ffe9c0"); // flared shade, top-left highlight
+    g.rect(4, 6, 8, 1, toLuma("#a8743a", 0.4)); // lower rim
     return g;
   });
 
@@ -174,12 +181,15 @@ export const plantTex = () =>
     return g;
   });
 
-/** `on`: status lamp green while any session is active, red otherwise. */
-export const coffeeTex = (on = false) =>
-  memo(`coffee:${on}`, () => {
+/** `on`: status lamp green while any session is active, red otherwise. `wisp` 0/1: a two-frame steam wisp off the top vent (-1: none). */
+export const coffeeTex = (on = false, wisp = -1) =>
+  memo(`coffee:${on}:${wisp}`, () => {
     const g = new Grid(16, 16);
-    g.rect(2, 2, 12, 13, E[3]); g.rect(3, 3, 10, 5, E[0]); g.rect(5, 4, 6, 3, toLuma("#7a4a2a", 0.22));
+    g.rect(2, 2, 12, 13, E[3]); g.rect(2, 2, 12, 1, E[4]); g.rect(3, 3, 10, 5, E[0]); g.rect(5, 4, 6, 3, toLuma("#7a4a2a", 0.22));
     g.rect(6, 10, 4, 4, PAPER); g.rect(11, 9, 2, 1, on ? "#5be37d" : "#e0524a");
+    const steam = "rgba(223,230,245,0.55)";
+    if (wisp === 0) { g.set(7, 1, steam); g.set(8, 0, steam); }
+    else if (wisp === 1) { g.set(8, 1, steam); g.set(7, 0, steam); }
     return g;
   });
 
@@ -203,9 +213,10 @@ export const shelfTex = () =>
 export const couchTex = () =>
   memo("couch", () => {
     const g = new Grid(32, 16);
-    slab(g, 1, 3, 30, 7, E[3]);
-    slab(g, 0, 7, 4, 8, shade(E[3], -0.04)); slab(g, 28, 7, 4, 8, shade(E[3], -0.04));
-    slab(g, 4, 9, 11, 5, E[4]); slab(g, 17, 9, 11, 5, E[4]);
+    slab(g, 1, 3, 30, 7, E[3]); g.rect(1, 3, 30, 1, E[4]); g.set(1, 3, E[5]); g.rect(2, 3, 6, 1, E[5]); // back, rim light from the top left
+    g.rect(4, 8, 24, 1, E[1]); // shadow where the back meets the seat
+    slab(g, 0, 7, 4, 8, shade(E[3], -0.04)); slab(g, 28, 7, 4, 8, shade(E[3], -0.04)); g.rect(0, 7, 4, 1, E[4]);
+    slab(g, 4, 9, 11, 5, E[4]); slab(g, 17, 9, 11, 5, E[4]); g.rect(4, 9, 4, 1, E[5]); g.rect(17, 9, 4, 1, E[5]);
     return g;
   });
 
@@ -221,7 +232,8 @@ export const boothTex = () =>
 export const fridgeTex = () =>
   memo("fridge", () => {
     const g = new Grid(16, 16);
-    slab(g, 3, 0, 10, 16, E[5]); g.rect(3, 6, 10, 1, E[3]); g.rect(11, 2, 1, 3, E[2]); g.rect(11, 8, 1, 4, E[2]);
+    slab(g, 3, 0, 10, 16, E[5]); g.rect(3, 5, 10, 1, E[1]); g.rect(3, 6, 10, 1, shade(E[5], 0.1)); // freezer seam, lit lip below it
+    g.rect(10, 1, 1, 3, E[0]); g.rect(10, 8, 1, 5, E[0]); g.set(11, 1, E[3]); g.set(11, 8, E[3]); // door handles
     return g;
   });
 
@@ -229,7 +241,8 @@ export const fridgeTex = () =>
 export const tableTex = () =>
   memo("table", () => {
     const g = new Grid(32, 16), d = theme().desk;
-    slab(g, 3, 5, 26, 6, d.top); g.rect(3, 5, 26, 1, d.edge); g.rect(5, 11, 2, 3, d.front); g.rect(25, 11, 2, 3, d.front);
+    slab(g, 3, 5, 26, 6, d.top); g.rect(3, 5, 26, 1, d.edge); g.rect(3, 10, 26, 1, d.front); g.rect(5, 11, 2, 3, d.front); g.rect(25, 11, 2, 3, d.front);
+    g.rect(7, 13, 18, 1, "rgba(13,11,26,0.45)"); // shadow under the top, between the legs
     g.rect(13, 6, 5, 3, PAPER); g.rect(21, 6, 3, 3, toLuma("#c0524d", 0.3));
     return g;
   });
@@ -238,7 +251,9 @@ export const tableTex = () =>
 export const armchairTex = () =>
   memo("armchair", () => {
     const g = new Grid(16, 16);
-    slab(g, 2, 3, 12, 11, E[3]); slab(g, 3, 5, 9, 7, E[4]); slab(g, 1, 7, 3, 7, shade(E[3], -0.04));
+    slab(g, 2, 3, 12, 11, E[3]); g.rect(2, 3, 12, 1, E[4]); g.rect(3, 3, 4, 1, E[5]); // back, rim light from the top left
+    slab(g, 3, 5, 9, 7, E[4]); g.rect(3, 5, 3, 1, E[5]); g.rect(3, 11, 9, 1, E[2]); // seat cushion, shaded front
+    slab(g, 1, 7, 3, 7, shade(E[3], -0.04)); g.rect(1, 7, 3, 1, E[4]);
     return g;
   });
 
@@ -250,6 +265,22 @@ export const huddleTex = (k: number) =>
     g.rect(4, 1, 8, 1, d.edge);
     if (k & 1) { g.rect(5, 6, 4, 3, PAPER); g.rect(10, 6, 2, 2, E[1]); g.set(10, 6, CY); }
     else { g.rect(6, 5, 5, 4, E[1]); g.rect(6, 5, 5, 1, E[3]); g.set(9, 7, CY); g.set(10, 7, CY); }
+    return g;
+  });
+
+/**
+ * Holo-map table (critique L5), 32x16: a low dark plinth whose top is the map: a dim cyan coastline lit into the glass, one
+ * city and a waypoint. Grounded (nothing hovers: a floating projection read as debris) and still. Raw, with its own outline.
+ */
+export const holoTex = () =>
+  memoRaw("holo", () => {
+    const g = new Grid(32, 16), o = theme().outline, D = toLuma(CY, 0.32); // land: a dim step of the emitter cyan
+    g.rect(5, 8, 22, 8, o); slab(g, 6, 9, 20, 6, E[3]); g.rect(6, 9, 20, 4, E[1]); // glass top over the plinth
+    g.rect(6, 13, 20, 1, E[4]); g.set(6, 13, E[5]); // front lip catches the light
+    // an asymmetric coastline (a symmetric pair of lights reads as a face), brighter on its upper edge
+    g.map(8, 9, [".###....##.....", "#####..####....", ".##....#####..."], { "#": D });
+    g.map(8, 9, [".###....##....."], { "#": CY });
+    g.set(10, 10, KEY.paper); g.set(19, 11, KEY.warm);
     return g;
   });
 

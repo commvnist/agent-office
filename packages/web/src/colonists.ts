@@ -4,17 +4,18 @@ import { office, type ActorInfo } from "./api.ts";
 import { $, el, sync } from "./dom.ts";
 import { RANK } from "./logic.ts";
 import { lookKey } from "./lru.ts";
-import { lookFor, type Look } from "./sprites.ts";
+import { grade, lookFor, type Look } from "./sprites.ts";
 import { look as stLook, statusKey, statusWord } from "./triage.ts";
 
 const MIN_AGENTS = 7, SLOT = 28;
 const heads = new Map<string, ImageData>();
 const DARK = "#1e1a28";
 
-function head(look: Look): ImageData {
-  const k = lookKey(look);
+function head(look0: Look): ImageData {
+  const k = lookKey(look0);
   let d = heads.get(k);
   if (d) return d;
+  const look = grade(look0); // the same graded colours as the figure on the canvas
   const c = document.createElement("canvas");
   c.width = c.height = 12;
   const g = c.getContext("2d")!;
@@ -25,6 +26,8 @@ function head(look: Look): ImageData {
   if (look.style === 1 || look.style === 4 || look.style === 5) px(2, 3, 1, 5, look.hair), px(9, 3, 1, 5, look.hair);
   if (look.style === 2) [3, 5, 7].forEach((x) => px(x, 1, 1, 1, look.hair));
   if (look.style === 3) px(5, 0, 2, 2, look.hair);
+  if (look.style === 6) px(9, 4, 1, 5, look.hair); // ponytail out past the head
+  if (look.style === 7) px(2, 1, 8, 2, look.hair), px(2, 3, 1, 3, look.hair), px(9, 3, 1, 3, look.hair); // puffy crown
   if (look.acc === "cap") px(2, 3, 8, 1, look.accColor);
   px(4, 5, 1, 1, DARK); px(7, 5, 1, 1, DARK);
   if (look.acc === "glasses") px(3, 5, 6, 1, look.accColor), px(4, 5, 1, 1, DARK), px(7, 5, 1, 1, DARK);

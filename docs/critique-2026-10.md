@@ -404,7 +404,6 @@ Built by the lead session and two Opus agents in parallel: A on core, server and
 |---|---|
 | C2 scrim | A scrim would hide the alerts the critique wants visible. Dialogs instead stay above the toast area. |
 | D2 persistent pod labels | The owner asked for plaques on hover only. Pod identity is in the hover plaque and the triage card. |
-| R2 value-key regrade, F1–F3 character silhouettes and poses, E1/E3/E7–E12 environment polish, L2/L4/L5 identity props | One coordinated art pass behind a palette token, not piecemeal; the art agent warns a partial regrade leaves two styles. |
 
 ## Finishing pass (October 2026)
 
@@ -464,3 +463,26 @@ Not observable from here: a real tool-permission prompt (this session runs witho
 | P6 performance gate | Done | `npm run perf` (CI job `perf`): 100 agents over 8 sessions with live tool traffic, headless Chrome over the DevTools protocol (no new dependency), 4x CPU throttling, gate at 16 ms frame p95 (main thread) and 3500 display objects; `PERF_PROFILE=<file>` writes a CPU profile. The first profile found two real costs, both fixed: a per-frame forced layout (from the Phase 1 bottom-inset fix) and an O(n^2) actor list for the panel. Now p95 13.3-14.5 ms, about 2640 objects. Daemon: about 0.7-1.1 ms per event at 100 agents (~940 events/s), so the full-envelope serialization per commit is not a real cost. |
 | CI | Fixed | CI had failed on Windows since before this pass (POSIX file modes, posix path literals, `URL.pathname`, a bare drive path to `import()`); the tests are portable now. On GitHub's GPU-less 2-core runner software GL renders about 3 frames a second, so the gate normalizes frame times to the calibration host's speed (a fixed JS workload timed in the page), always gates the update phase at 16 ms, and gates the full frame only where rendering sustains 30 fps; the object budget holds render cost. All CI jobs pass. |
 | Found in the screenshot pass | Fixed | An off-screen lead's tag peeked in at the canvas edge and collided with others; it is now hidden until the lead is on screen. |
+
+### Phase 4: one art pass behind a single palette token
+
+| Item | Verdict | What changed |
+|---|---|---|
+| R2 value key | Done | `KEY` in theme.ts: a 6-step blue-violet environment ramp (5-42% luma), cyan and warm emitters at 85%+, magenta for decorative neon only, and value bands for people; every environment sprite and scene tint is graded to it (night floor about 6%, furniture tops about 30%). Tested bands. Alert bubbles no longer fade when stacked. |
+| F1 silhouettes | Done | Two more hair styles (ponytail, puffy) and a per-id cut (long, short, two-tone sleeves, hoodie with the hood up). |
+| F2 poses | Done | Working: forearms on the desk, hands meeting on the keyboard, a knuckle lifting on alternate frames. Idle: leaned back, hands off the keys. Waiting: a hand raised. |
+| F3 dark hair | Done | Dark hair is lifted into its band keeping its hue, plus a one-edge rim light, always below the face. The face is the brightest part of every figure; the role glyph ink comes from the shirt. |
+| Lead cue | Done | Padded blazer shoulders, one pixel wider each side. |
+| Role shirts | Fixed in review | Clamping the Okabe-Ito set out of the status hues merged three roles into one olive; the role palette now sits inside the two allowed hue ranges with distinct lightness (a test keeps graded shirts pairwise distinct), and the legend and roster portraits use the same graded colours (portraits also draw the new hair styles). |
+| L2 wordmark | Done | The wall sign's 3x5 pixel font is the header logotype, at exactly 2x, no accent line. |
+| E1 window light | Done | One soft gradient per window, clipped to its pane, warm by day, faint moonlight at night; windows are registry light sources. |
+| E3 lounge | Done | Rug sized and centred on the couch set; highlight, underside shade and contact shadows. |
+| E7 board and clock | Done | Slate frame with one 1 px cyan accent; an 18 px pixel clock dial with bezel, outline and ticks. |
+| E8 wall balance | Done | Mirrored fixed slots, one top line, 7-10 px gaps, one sign plate style. The loose sticky notes beside the board are gone (they were outside the registry and overlapped the gauge; the board ledger shows finished work). |
+| E9 props | Done | Sconce shade and halo, lamp cap, fridge seam and handles, a two-frame coffee steam wisp (the old steam particles are removed). |
+| E10 skies | Done | Three sky variants; clouds, sun and rain stay 2 px inside the pane. |
+| E11 glow and vignette | Done | Glow masked to the room; one radial vignette. |
+| E12 server bank | Done | Inset 8 px with a 2 px base shadow; the cable trunk still leaves its bottom edge. |
+| L4 skyline | Done | A dim skyline with lit windows at night and one magenta neon district. |
+| L5 signature props | Done | Magenta neon wall signs, and a holo-map table pair beside the lead desks (registry-placed, a cool light pool). In review the map moved from a hovering projection onto the table glass: a floating projection read as debris. |
+| Checks | Pass | Perf gate frame p95 13.7 ms, update p95 7.4 ms, 2649 objects. |

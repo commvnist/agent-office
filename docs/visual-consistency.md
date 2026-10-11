@@ -14,13 +14,13 @@ one rule set in `packages/web/src/snap.ts`. The goal: nothing looks misaligned, 
 
 | API (core) | What | Consumers |
 |---|---|---|
-| `placements(layout)` | footprints in tiles: `desk:dN`, `chair:dN`, `link:p:r`, `lobby-desk:i`, `lobby-chair:i`, `queue:i`, `decor:<kind>:<i>` (racks, lamp, ...), `junction:p`, `rug:*`, `door`, `board`, `window:x`, `sconce:x`, `plate:ops|agent` (sign), `clock`, `gauge`. `solid` footprints == `layout.blocked` | `geometry.ts`, `checkLayout` |
+| `placements(layout)` | footprints in tiles: `desk:dN`, `chair:dN`, `link:p:r`, `lobby-desk:i`, `lobby-chair:i`, `queue:i`, `decor:<kind>:<i>` (racks, lamp, holo pair, ...), `junction:p`, `rug:*`, `door`, `board`, `window:x`, `sconce:x`, `plate:ops|agent` (sign), `clock`, `gauge`. Wall items sit on fixed slots outward from the board, mirrored: gauge/clock (2 tiles), window (2), sign plate (3), window (2); leftover corner tiles get a sconce. Each item draws inside its slot (tops on y=3), so the gaps are fixed. `solid` footprints == `layout.blocked` | `geometry.ts`, `checkLayout` |
 | `lines(layout)` | baked lines in art px, only three kinds: `conduit:trunk:r` (bank bottom down column x=24), `conduit:row:r:c` (aisle centre line to each pod's junction), `spine`, plus `apron:p` anchors (core also emits `plate:p` anchors; the renderer does not use them). No lane seams, no threshold, no cable art | `geometry.ts`, `checkLayout` |
-| `lights(layout)` | one pool anchor per sconce / floor lamp footprint (`light:<source>`), warm or cool; the only source of light pools | `geometry.ts`, `checkLayout` |
+| `lights(layout)` | one anchor per sconce / floor lamp / holo table / window footprint (`light:<source>`): `cool`, `warm` or `window` (day/moon light clipped to the pane's x-range); the only source of light | `geometry.ts`, `checkLayout` |
 | `checkLayout(layout)` | violations, `[]` when consistent | `geometry.test.ts`, `selfCheck` |
 
 `packages/web/src/geometry.ts` `sceneGeometry(layout)` is the only bridge: it returns the registry plus pieces derived from it
-(aprons, standing mats, bot rails, charging dock, server racks, junction centres, sconces, signs, window columns, clock/gauge centres).
+(aprons, standing mats, bot rails, charging dock, server racks and the inset `bank` cabinets, the `lounge` rug rect sized to the couch set, junction centres, sconces, signs, window columns, clock/gauge centres).
 `scene.ts` draws only from that object (`this.geo`): furniture via `geo.rect(id)`, floor print via `geo.conduits`/`geo.rugs`/
 `geo.mats`/`geo.junctions`, light pools only from `geo.lights`, the bot's path via `geo.rails` (the aisle's upper edge, never on the conduit centre line) and the dock via `geo.dock`. No tile math in `scene.ts`.
 
@@ -32,7 +32,7 @@ one rule set in `packages/web/src/snap.ts`. The goal: nothing looks misaligned, 
 - Wall signage text: drawn inside the `plate:ops|agent` sign footprints (text width is not modelled).
 - Clock / gauge centres: the footprint keeps only their bounding tiles; `wallDials()` holds the centre and
   `geometry.test.ts` asserts the 20 px extent sits inside the footprint.
-- Light-only art (window shafts, desk glows, vignette, night/day overlays, weather) is not an object; it is anchored on windows/desks. Light pools proper come only from `lights()`.
+- Light-only art (desk glows, the one vignette, night/day overlays, weather) is not an object; it is anchored on desks/windows. Pools and window light come only from `lights()`; the glow layer is masked to the room rect.
 - Junction LED and rack LEDs are child sprites of their box/cabinet, not separate footprints.
 
 ## Floors and session badges

@@ -1,8 +1,8 @@
 // Character art: the procedural people (workers, leads), their looks, poses and faces. Environment art lives in sprites.ts.
 import type { Texture } from "pixi.js";
 import { Grid, hash, hsl, shade } from "./pixel.ts";
-import { contrast, luma, shadeTo } from "./color.ts";
-import { roleColor, theme } from "./theme.ts";
+import { contrast, luma, toLuma } from "./color.ts";
+import { KEY, roleColor, theme } from "./theme.ts";
 import { settings } from "./settings.ts";
 import { Lru, lookKey } from "./lru.ts";
 
@@ -15,8 +15,9 @@ export type Pose = "walk" | "sit" | "sit-think" | "sit-glance" | "couch"; // sit
 export type Accessory = "none" | "glasses" | "headphones" | "cap" | "tie" | "bun" | "suit";
 /** Face/pose overlay chosen by the actor's state or idle quirk. Part of the texture key. */
 export type Expr = "neutral" | "focus" | "stuck" | "happy" | "worry" | "yawn" | "stretch" | "phone";
-/** style: 0 plain, 1 long sides, 2 spikes, 3 top-knot, 4 bob, 5 long-back. build: 1 = stocky. head: 1 = 1px shorter head. */
-export type Look = { skin: string; hair: string; shirt: string; pants: string; style: 0 | 1 | 2 | 3 | 4 | 5; build: 0 | 1; head: 0 | 1; acc: Accessory; accColor: string; badge: number; team?: number; lead?: LeadLook };
+/** style: 0 plain, 1 long sides, 2 spikes, 3 top-knot, 4 bob, 5 long-back, 6 ponytail, 7 puffy. build: 1 = stocky. head: 1 = 1px shorter head.
+ * cut: 0 long sleeves, 1 short sleeves, 2 two-tone raglan sleeves, 3 hoodie (hood up unless a cap/headphones/bun is in the way). */
+export type Look = { skin: string; hair: string; shirt: string; pants: string; style: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7; build: 0 | 1; head: 0 | 1; acc: Accessory; accColor: string; badge: number; cut?: 0 | 1 | 2 | 3; team?: number; lead?: LeadLook };
 /** The session lead's portrait variant: curly dark hair, beard, tinted aviators, light blazer over an open patterned shirt, gold chain. */
 export type LeadLook = { jacket: string; lens: string; beard: 0 | 1 | 2; chain: 0 | 1; dot: string };
 const LEAD_JACKETS = ["#e8dcc0", "#d6bf94", "#c9ccd6", "#b6cde0", "#e6c1b8", "#cfd8c4"];
@@ -27,7 +28,7 @@ const LEAD_BEARD: (0 | 1 | 2)[] = [0, 0, 0, 1, 2]; // mostly full beards, some s
 /** Team colour buckets (30 degrees of hue each): the session's repo hue shows on the hem and badge halo so a team reads as a team. */
 export const TEAMS = 12;
 export const teamColor = (b: number) => hsl(b * 30 + 15, 0.6, 0.5);
-export type PoseOpts = { expr?: Expr; lift?: boolean; dip?: boolean; drop?: number; think?: boolean; sip?: boolean };
+export type PoseOpts = { expr?: Expr; lift?: boolean; dip?: boolean; drop?: number; think?: boolean; sip?: boolean; raise?: boolean }; // raise: one hand up (waiting on you)
 
 const ROLE_ACC: Record<string, Accessory> = {
   architect: "glasses", frontend: "headphones", backend: "cap", qa: "glasses", reviewer: "tie", researcher: "bun",
@@ -39,8 +40,7 @@ const LEG_L = [5, 5, 4, 5, 4, 5], LEG_R = [5, 4, 5, 5, 5, 4];
 const BOB = [0, 0, 1, 0, 0, 1], SWING = [-1, -1, 0, 1, 1, 0];
 const SIDE = [[-2, 2], [-1, 1], [0, 0], [2, -2], [1, -1], [0, 0]];
 
-// 3x4 role pictograms (index = GLYPHS slot), drawn in GLYPH_INK on a dark halo so they read on any shirt
-export const GLYPH_INK = "#c4c8d6";
+// 3x4 role pictograms (index = GLYPHS slot), drawn in glyphInk(look) on a dark halo so they read on any shirt
 const GLYPHS = [
   ["#.#", "###", "#.#", "###"], // ruler: architect
   ["###", "#.#", "###", ".#."], // monitor: frontend
@@ -68,7 +68,8 @@ export function lookFor(role: string, id: string, lead = false, team?: number): 
     shirt: lead ? LEAD_JACKETS[(h >>> 4) % LEAD_JACKETS.length] : roleColor(role),
     badge: lead ? -1 : gi, // the lead wears a tie, lapels and a star instead
     pants: lead ? "#1d2444" : "#33384d",
-    style: lead ? 0 : (((h >>> 6) % 6) as Look["style"]),
+    style: lead ? 0 : (((h >>> 6) % 8) as Look["style"]),
+    cut: lead ? 0 : (((h >>> 24) & 3) as 0 | 1 | 2 | 3),
     build: lead ? 1 : (((h >>> 12) & 1) as 0 | 1),
     head: lead ? 0 : (((h >>> 13) & 1) as 0 | 1),
     acc: lead ? "suit" : ROLE_ACC[role] ?? (["none", "glasses", "cap"] as Accessory[])[(h >>> 9) % 3],
@@ -101,27 +102,66 @@ function stamp(g: Grid, x: number, y: number, rows: string[], fill: string, halo
   g.map(x, y, rows, { "#": fill });
 }
 
-/** 16x24 person. Sitting bodies are drawn 7px lower so the hands rest on the desk tile below. */
-/** Near-black hair fuses with the sprite outline and a dark floor (a head that "vanishes" from behind, an L-shaped side view): keep it readable. */
-const HAIR_MIN_LUMA = 0.22;
-const readableHair = (c: string) => (luma(c) < HAIR_MIN_LUMA ? shadeTo(c, "#8087ad", 0.5) : c);
+// ---- R2 grading: people sit on the KEY.char value bands; the face is the brightest part of every figure -----------------
+/** Status hues (STATUS permission, working, turn, blocked; idle is grey): shirts keep 30 degrees away so a shirt never reads as a status. */
+export const STATUS_HUES = [39, 154, 193, 354];
+const hueSat = (hex: string) => {
+  const n = parseInt(hex.slice(1), 16), [r, g, b] = [n >> 16, (n >> 8) & 255, n & 255].map((v) => v / 255);
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn, l = (mx + mn) / 2;
+  if (!d) return { h: 0, s: 0 };
+  const h = mx === r ? ((g - b) / d + 6) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return { h: h * 60, s: d / (1 - Math.abs(2 * l - 1)) };
+};
+const far = (h: number) => STATUS_HUES.every((s) => Math.abs(((h - s + 540) % 360) - 180) >= 30);
+/** The nearest hue at least 30 degrees from every status hue. */
+export const awayFromStatus = (h: number) => { for (let d = 0; d <= 180; d++) for (const x of [h - d, h + d]) if (far((x + 360) % 360)) return (x + 360) % 360; return h; };
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+const band = (c: string, lo: number, hi: number) => { const l = luma(c); return l < lo || l > hi ? toLuma(c, clamp(l, lo, hi)) : c; };
+/** Muted (saturation <= 0.45) and out of the status hues, then onto the shirt band under the face. */
+const cloth = (c: string, hi: number) => {
+  const { h, s } = hueSat(c);
+  const m = s > 0.08 ? hsl(awayFromStatus(h), Math.min(s, 0.45), 0.5) : c; // greys stay grey
+  return toLuma(m, clamp(luma(c), KEY.char.shirt[0], hi));
+};
+/** The look as drawn: skin in the face band, shirt/hair/accessories below the face, dark hair lifted off the navy floor and outline. */
+export function grade(l: Look): Look {
+  const C = KEY.char, skin = band(l.skin, C.face[0], C.face[1]), top = luma(skin);
+  const shirt = cloth(l.shirt, Math.min(C.shirt[1], top - 0.1));
+  return {
+    ...l, skin, shirt,
+    hair: band(l.hair, C.hair[0] + 0.02, Math.min(C.hair[1], top - 0.12)), // room for the rim light under the face
+    pants: band(l.pants, C.pants[0], C.pants[1]),
+    accColor: band(l.accColor, 0, top - 0.04),
+    ...(l.lead ? { lead: { ...l.lead, jacket: shirt } } : {}),
+  };
+}
+/** Role pictogram ink: a light step of the shirt (critique R3), still darker than the face. `look` is graded. */
+export const glyphInk = (look: Look) => toLuma(look.shirt, Math.max(luma(look.shirt) + 0.08, luma(look.skin) - 0.04));
 
+/** 16x24 person. Sitting bodies are drawn 7px lower so the hands rest on the desk tile below. */
 export function person(look0: Look, dir: Dir, pose: Pose, frame: number, o: PoseOpts = {}): Grid {
-  const look: Look = { ...look0, hair: readableHair(look0.hair) };
+  const hooded = look0.cut === 3 && !look0.lead && look0.acc !== "cap" && look0.acc !== "headphones" && look0.acc !== "bun";
+  const graded = grade(look0);
+  // a raised hood is drawn as hair in the shirt colour (crown, sides, back), plus a column each side that widens the head
+  const look: Look = hooded ? { ...graded, hair: shade(graded.shirt, -0.08), style: 1 } : graded;
   const g = new Grid(16, 24);
   const couch = pose === "couch";
   const sit = pose !== "walk" && !couch;
-  const think = pose === "sit-think" || !!o.think;
+  const think = !!o.think; // hand on chin
+  const leaned = pose === "sit-think"; // idle at the desk: leaned back 1px off the desk, arms down, hands off the keyboard
   const bd: Dir = pose === "sit-glance" ? "down" : dir; // body view; only the head turns in sit-glance
   const f = frame % WALK_FRAMES;
   const expr = o.expr ?? "neutral";
-  const oy = (sit ? 7 : couch ? 3 : o.drop ?? 1) + (think ? 1 : 0); // standing sits 1px lower so the bob/breath/topknot never clip the top edge // thinking slumps 1px; drop = sit-down/stand-up transition
+  const oy = (sit ? 7 : couch ? 3 : o.drop ?? 1) - (leaned ? 1 : 0); // standing sits 1px lower so the bob/breath/topknot never clip the top edge; drop = sit-down/stand-up transition
   const bob = !sit && (o.lift || (BOB[f] && !settings.reducedMotion)) ? -1 : 0;
   const Y = (y: number) => y + oy + bob;
   const hv = look.head, H = (y: number) => Y(y) + (o.dip ? 1 : 0), HT = (y: number) => H(y + hv); // HT: head-top rows start lower on a shorter head
   const side = dir === "side", bs = bd === "side", stocky = look.build === 1;
   const bx = bs ? (stocky ? 4 : 5) : stocky ? 3 : 4, bw = bs ? (stocky ? 7 : 6) : stocky ? 10 : 8;
   const [ax0, ax1] = stocky ? [2, 13] : [3, 12];
+  const cut = hooded ? 3 : look.cut ?? 0, sleeve = cut === 2 && look.style !== 5 ? shade(look.shirt, -0.1) : look.shirt; // raglan: two-tone sleeves (long-back hair hides them and would leave a 1px stub)
+  const gold = luma(GOLD) > luma(look.skin) - 0.02 ? toLuma(GOLD, luma(look.skin) - 0.02) : GOLD;
+  const arm = (x: number, y: number, w: number, h: number, c = sleeve) => { g.rect(x, y, w, h, c); if (cut === 1 && h > 2) g.rect(x, y + 2, w, h - 2, look.skin); }; // short sleeves: forearm skin
 
   if (couch) { // thighs forward (toward the viewer), shins down over the seat edge
     g.rect(4, 20, 3, 3, look.pants); g.rect(9, 20, 3, 3, look.pants);
@@ -141,23 +181,22 @@ export function person(look0: Look, dir: Dir, pose: Pose, frame: number, o: Pose
   g.rect(bx, Y(10), bw, 7 - bob, look.shirt);
   const team = look.team === undefined ? null : teamColor(look.team);
   g.rect(bx, Y(15) - bob, bw, 1, team ?? shade(look.shirt, -0.12)); // hem and badge halo: the team colour when the session has one
-  if (look.badge >= 0 && bd !== "up") stamp(g, look.acc === "tie" && bd === "down" ? 4 : 6, Y(10), GLYPHS[look.badge], GLYPH_INK, team ? shade(team, -0.3) : "#171421"); // soft grey, not white: the face stays the brightest part (critique R3) // badge halo carries the team hue
+  if (look.badge >= 0 && bd !== "up") stamp(g, look.acc === "tie" && bd === "down" ? 4 : 6, Y(10), GLYPHS[look.badge], glyphInk(look), team ? shade(team, -0.3) : "#171421"); // soft grey, not white: the face stays the brightest part (critique R3) // badge halo carries the team hue
   const L = look.lead;
   if (L && bd === "down") { // portrait lead: open collar V over a dark shirt, lapel edges, optional gold chain + pendant
     const inner = "#1a1722";
     g.rect(5, Y(10), 6, 1, inner); g.rect(6, Y(11), 4, 1, inner); g.rect(7, Y(12), 2, 3, inner);
     g.set(7, Y(11), L.dot);
     g.rect(bx + 1, Y(10), 1, 4, shade(look.shirt, -0.16)); g.rect(bx + bw - 2, Y(10), 1, 4, shade(look.shirt, -0.16));
-    if (L.chain) { g.set(5, Y(10), GOLD); g.set(6, Y(11), GOLD); g.set(7, Y(12), GOLD); g.set(10, Y(10), GOLD); g.set(9, Y(11), GOLD); g.set(8, Y(12), GOLD); g.rect(7, Y(13), 2, 1, GOLD); }
+    if (L.chain) { g.set(5, Y(10), gold); g.set(6, Y(11), gold); g.set(7, Y(12), gold); g.set(10, Y(10), gold); g.set(9, Y(11), gold); g.set(8, Y(12), gold); g.rect(7, Y(13), 2, 1, gold); }
   } else if (!L && (look.acc === "tie" || look.acc === "suit")) {
-    if (bd === "down") { g.rect(7, Y(10), 2, 5, look.acc === "suit" ? "#c23b4a" : look.accColor); g.rect(7, Y(10), 2, 1, "#f2f2f2"); }
+    if (bd === "down") { g.rect(7, Y(10), 2, 5, look.acc === "suit" ? "#c23b4a" : look.accColor); g.rect(7, Y(10), 2, 1, shade(look.acc === "suit" ? "#c23b4a" : look.accColor, -0.12)); } // knot: a darker fold, not white (the face stays brightest)
   }
-  if (!L && look.acc === "suit" && bd === "down") { // lead: gold lapels + star badge
-    g.rect(bx + 1, Y(10), 1, 3, GOLD); g.rect(bx + bw - 2, Y(10), 1, 3, GOLD);
-    g.map(bx + bw - 3, Y(11), [".#.", "###", ".#."], { "#": GOLD });
-  }
+  if (L && bd !== "side") { g.rect(ax0 - 1, Y(10), 1, 2, shade(look.shirt, -0.16)); g.rect(ax1 + 1, Y(10), 1, 2, shade(look.shirt, -0.16)); } // lead cue: padded blazer shoulders, the widest silhouette in the room
   const swing = sit ? 0 : SWING[f];
   const raised = expr === "stretch" && !bs && !couch;
+  const hand = o.raise && !bs && !couch && !raised; // waiting on you: the right hand goes up beside the head
+  if (hand) { g.rect(ax1, Y(10), 1, 1, sleeve); g.rect(ax1 + 1, Y(3), 1, 8, sleeve); g.rect(ax1 + 1, Y(1), 1, 2, look.skin); } // one column outside the head, hair and ear cups; the hand clears the crown
   if (raised) {
     g.rect(ax0, Y(5), 1, 6, look.shirt); g.rect(ax1, Y(5), 1, 6, look.shirt);
     g.set(ax0, Y(4), look.skin); g.set(ax1, Y(4), look.skin);
@@ -167,22 +206,27 @@ export function person(look0: Look, dir: Dir, pose: Pose, frame: number, o: Pose
     g.rect(6, Y(13), 4, 1, look.skin); g.rect(7, Y(11), 2, 2, "#7fe3ff");
   } else if (bs) {
     const ay = sit ? Y(11) : Y(10) + swing;
-    g.rect(7, ay, 2, 5, shade(look.shirt, 0.08)); g.rect(7, ay + 5, 2, 1, look.skin);
+    arm(7, ay, 2, 5, cut === 2 ? sleeve : shade(look.shirt, 0.08)); g.rect(7, ay + 5, 2, 1, look.skin);
     if (expr === "stretch") { g.rect(12, Y(5), 1, 6, look.shirt); g.set(12, Y(4), look.skin); }
-  } else if (sit) {
-    g.rect(ax0, Y(10), 1, 4, look.shirt); g.rect(ax1, Y(10), 1, 4, look.shirt);
-    const typing = frame % 2 === 0;
-    g.rect(ax0, Y(14), 3, 2, look.skin);
-    if (!think) { g.rect(ax1 - 2, Y(14), 3, 2, look.skin); g.rect(typing ? ax1 - 2 : ax1 - 1, Y(15), 2, 1, look.skin); }
-    g.rect(typing ? ax0 + 1 : ax0, Y(15), 2, 1, look.skin);
+  } else if (sit && leaned) { // arms hang at the sides, hands rest out of sight: nothing on the keyboard
+    arm(ax0, Y(10), 1, 5); if (!hand) arm(ax1, Y(10), 1, 5);
+    g.set(ax0, Y(15), look.skin); if (!hand && !think) g.set(ax1, Y(15), look.skin);
+  } else if (sit) { // working: forearms along the desk edge, both hands meet on the keyboard in the middle; a knuckle lifts, alternating per typing frame
+    const typing = frame % 2 === 0, fore = cut === 1 ? look.skin : sleeve, both = !hand && !think;
+    arm(ax0, Y(10), 1, 5); g.rect(ax0, Y(15), 3, 1, fore); g.rect(ax0 + 3, Y(15), both ? ax1 - ax0 - 5 : 2, 1, look.skin);
+    const knuckle = (x: number) => { if (bd !== "up") g.set(x, Y(14), look.skin); }; // from behind the body hides them
+    knuckle(typing ? ax0 + 3 : ax0 + 4);
+    if (both) { arm(ax1, Y(10), 1, 5); g.rect(ax1 - 2, Y(15), 3, 1, fore); knuckle(typing ? ax1 - 4 : ax1 - 3); }
   } else {
-    g.rect(ax0, Y(10) + swing, 1, 5, look.shirt); g.rect(ax1, Y(10) - swing, 1, 5, look.shirt);
-    g.set(ax0, Y(15) + swing, look.skin); g.set(ax1, Y(15) - swing, look.skin);
+    arm(ax0, Y(10) + swing, 1, 5); if (!hand) arm(ax1, Y(10) - swing, 1, 5);
+    g.set(ax0, Y(15) + swing, look.skin); if (!hand) g.set(ax1, Y(15) - swing, look.skin);
   }
   if (expr === "phone" && dir !== "up") g.rect(side ? 9 : 10, Y(side ? 12 : 13), 2, 1, "#7fe3ff"); // phone glow
   // head
   g.rect(4, HT(2), 8, 8 - hv, look.skin);
-  const acc = look.accColor, streak = look.style >= 4;
+  const acc = look.accColor, wide = hooded || look.style === 7;
+  if (look.style === 7) g.rect(3, HT(1), 10, 4, look.hair); // puffy: a crown wider than the head
+  if (look.style === 6) { if (dir === "up") g.rect(7, H(10), 2, 3, look.hair); else g.rect(side ? 3 : 12, H(3), 1, 5, look.hair); } // ponytail: down the back, or out past the head
   if (dir === "up") {
     g.rect(4, HT(2), 8, 8 - hv, look.hair);
     if (look.style === 4) g.rect(5, H(10), 6, 1, look.hair);
@@ -219,8 +263,10 @@ export function person(look0: Look, dir: Dir, pose: Pose, frame: number, o: Pose
       else { g.rect(8, H(7), 3, 1, bc); g.rect(9, H(8), 3, 2, bc); }
     }
   }
-  // rim light: a lit crown edge (plus a parting from behind) so the head reads as a head against any shirt or floor
-  const lit = shade(look.hair, 0.14), hairDark = shade(look.hair, -0.12);
+  if (wide) { g.rect(3, HT(3), 1, 4, look.hair); if (!side) g.rect(12, HT(3), 1, 4, look.hair); } // hood rim / puffy sides
+  // rim light: a lit crown edge plus the key-light (left) edge, so dark hair reads against the navy floor, chairs and outline
+  const lit = toLuma(shade(look.hair, 0.14), Math.min(luma(shade(look.hair, 0.14)), luma(look.skin) - 0.02)), hairDark = shade(look.hair, -0.12), xl = wide ? 3 : 4;
+  for (let y = HT(1); y <= HT(3); y++) if (g.get(xl, y) === look.hair) g.set(xl, y, lit);
   if (dir === "up") { g.rect(5, HT(2), 6, 1, lit); g.rect(7, HT(3), 2, 4, hairDark); }
   else g.rect(side ? 4 : 5, HT(2), side ? 5 : 6, 1, lit);
   if (dir === "down") {
@@ -240,7 +286,7 @@ export function person(look0: Look, dir: Dir, pose: Pose, frame: number, o: Pose
   if (o.sip && dir === "down") { g.rect(10, H(6), 3, 3, "#f4f1e6"); g.rect(10, H(6), 3, 1, "#6b4a2e"); g.set(13, H(7), "#f4f1e6"); g.rect(9, H(9), 3, 1, look.skin); } // mug raised to the face
   else if (think && dir === "down") g.rect(9, H(8), 3, 2, look.skin); // hand on chin
   if (look.acc === "cap") { g.rect(4, HT(1), 8, 3, acc); if (dir !== "up") g.rect(side ? 8 : 4, HT(4), side ? 4 : 8, 1, shade(acc, -0.15)); }
-  separate(g, look.skin, [look.hair, lit, hairDark, look.shirt, shade(look.shirt, 0.08), team]);
+  separate(g, look.skin, [look.hair, lit, hairDark, look.shirt, sleeve, shade(look.shirt, 0.08), team]);
   return g;
 }
 
@@ -280,7 +326,7 @@ export const personTex = (look: Look, dir: Dir, pose: Pose, frame: number, o: Po
   // a back view shows no face, so face expressions share the neutral texture there
   const expr = dir === "up" && o.expr !== "stretch" ? "neutral" : o.expr ?? "neutral";
   const fr = pose === "walk" ? frame % WALK_FRAMES : pose === "sit" || pose === "sit-glance" ? frame % 2 : 0;
-  const key = `${lookKey(look)}:${dir}${pose}${fr}${expr}${o.lift ? "L" : ""}${o.dip ? "D" : ""}${o.think ? "T" : ""}${o.sip ? "S" : ""}${o.drop ?? 0}${settings.reducedMotion ? "r" : ""}`;
+  const key = `${lookKey(look)}:${dir}${pose}${fr}${expr}${o.lift ? "L" : ""}${o.dip ? "D" : ""}${o.think ? "T" : ""}${o.sip ? "S" : ""}${o.raise ? "R" : ""}${o.drop ?? 0}${settings.reducedMotion ? "r" : ""}`;
   let t = people.get(key);
   if (!t) people.set(key, (t = person(look, dir, pose, fr, { ...o, expr }).outline(theme().outline).texture()));
   return t;

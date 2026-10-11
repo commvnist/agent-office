@@ -498,6 +498,7 @@ export class Actor {
       dip: seated && this.working && !still && now - last < 90, // head dips on each tool hit
       sip: this.sip === "sip" && !glancing,
       think: (glancing && !this.working) || (this.sip === "sip" && !glancing), // the glance turns the head only; arms keep the think pose
+      raise: this.alert === "waiting" && !moving && !pc, // waiting on you: a hand goes up (readable at pod scale without a UI mark)
     });
     const ls = this.lead ? 1.08 : 1;
     this.sprite.scale.x = (glancing ? this.glanceFlip : this.flip) ? -ls : ls;

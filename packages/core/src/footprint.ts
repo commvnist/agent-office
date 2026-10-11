@@ -30,25 +30,17 @@ export function placements(l: Layout): Foot[] {
   l.decor.forEach((d, i) => add(`decor:${d.kind}:${i}`, d.kind, d.x, d.y, d.w ?? 1, d.h ?? 1, true, "furniture"));
   add("door", "door", l.door.x, l.door.y, 1, 1, false, "wall");
   add("board", "board", l.board.x, 0, l.board.w, l.wallRows, false, "wall");
-  for (let x = 2; x + 1 < (l.cols - 1) / 2; x += 4) { // scene.ts windows(): a run either side of the board, mirrored
-    if (x + 2 > l.board.x - 1) continue;
-    add(`window:${x}`, "window", x, 0, 2, l.wallRows, false, "wall");
-    add(`window:${l.cols - 2 - x}`, "window", l.cols - 2 - x, 0, 2, l.wallRows, false, "wall");
-  }
-  // signage plates (OPS / AGENT OFFICE) sit centred between the first two windows and its mirror; modelled as the 2 tiles they cover
-  const wx = out.filter((f) => f.kind === "window").map((f) => f.x).sort((a, b) => a - b);
-  if (wx.length >= 2) {
-    const gx = Math.floor(((wx[0] + 2 + wx[1]) / 2));
-    add("plate:ops", "sign", gx - 1, 0, 2, l.wallRows, false, "wall");
-    add("plate:agent", "sign", l.cols - 1 - gx, 0, 2, l.wallRows, false, "wall");
-  }
-  // clock: circle r9 + 2px stroke (outer r10) centred 4px into tile b.x+b.w+1, y 14; gauge: 18px square + stroke, its mirror (scene.ts drawClock/drawGauge).
-  // Footprints are the bounding tiles of that 20px extent; signage plates (text-width dependent) are not modelled.
-  const cx = (l.board.x + l.board.w + 1) * T + 4;
-  for (const [id, c] of [["clock", cx], ["gauge", l.cols * T - cx]] as const) {
-    const x = Math.floor((c - 10) / T);
-    add(id, id, x, 0, Math.ceil((c + 10) / T) - x, 2, false, "wall");
-  }
+  // Wall slots, from the board outwards on a fixed pitch and mirrored (critique E8): dial (2 tiles), window (2), sign plate (3), window (2).
+  // Every item draws inside its slot, so gaps are fixed (7-10 px) and nothing is wedged; tiles left over toward the corner get a sconce.
+  const pair = (x: number, w: number, kind: string, left: string, right: string) => {
+    if (x < 0) return false;
+    add(left, kind, x, 0, w, l.wallRows, false, "wall");
+    add(right, kind === "gauge" ? "clock" : kind, l.cols - x - w, 0, w, l.wallRows, false, "wall");
+    return true;
+  };
+  const b0 = l.board.x, w1 = b0 - 4, w2 = b0 - 9;
+  if (pair(b0 - 2, 2, "gauge", "gauge", "clock") && pair(w1, 2, "window", `window:${w1}`, `window:${l.cols - w1 - 2}`) && pair(b0 - 7, 3, "sign", "plate:ops", "plate:agent"))
+    pair(w2, 2, "window", `window:${w2}`, `window:${l.cols - w2 - 2}`);
   // wall sconces: one in the last free wall tile of every free run left of the centre, mirrored (the wall light that exists in frame)
   const wallUsed = new Set(out.filter((f) => f.layer === "wall" && f.kind !== "door").flatMap((f) => Array.from({ length: f.w }, (_, i) => f.x + i)));
   for (let x = 0; x < (l.cols - 1) / 2; x++) if (!wallUsed.has(x) && (x + 1 >= (l.cols - 1) / 2 || wallUsed.has(x + 1))) {
@@ -60,7 +52,7 @@ export function placements(l: Layout): Foot[] {
   // lobby band and lounge rugs (drawn under furniture, over the floor)
   const qy = l.zones[0].queue[0].y;
   add("rug:lobby", "rug", 1, l.lobby[0].y - 1, l.cols - 2, 4, false, "floor");
-  add("rug:lounge", "rug", l.door.x - 7, qy + 1, 15, Math.max(2, l.rows - 2 - qy - 1), false, "floor");
+  add("rug:lounge", "rug", l.door.x - 7, qy + 1, 15, l.rows - qy - 1, false, "floor"); // down to the trim row, so the rug can frame the couches with a margin (E3)
   return out;
 }
 
@@ -91,18 +83,23 @@ export function lines(l: Layout): Line[] {
   return out;
 }
 
-/** A light pool anchor (art px, world): it exists only where a source footprint does. Wall sconces cast a cool pool that fades within `reach` px of the wall; floor lamps a warm one. */
-export type Light = { id: string; source: string; x: number; y: number; reach: number; tone: "cool" | "warm" };
+/**
+ * A light pool anchor (art px, world): it exists only where a source footprint does. Wall sconces and holo tables cast a cool pool that fades
+ * within `reach` px; floor lamps a warm one; a window casts `window` light (daylight / moonlight) down from its sill, clipped to its own x-range.
+ */
+export type Light = { id: string; source: string; x: number; y: number; reach: number; tone: "cool" | "warm" | "window" };
 export function lights(l: Layout): Light[] {
   const out: Light[] = [];
   for (const f of placements(l)) {
     if (f.kind === "sconce") out.push({ id: `light:${f.id}`, source: f.id, x: f.x * T + 8, y: (f.y + f.h) * T, reach: 3 * T, tone: "cool" });
     if (f.kind === "lamp") out.push({ id: `light:${f.id}`, source: f.id, x: f.x * T + 8, y: (f.y + 1) * T, reach: 3 * T, tone: "warm" });
+    if (f.kind === "window") out.push({ id: `light:${f.id}`, source: f.id, x: f.x * T + T, y: (f.y + f.h) * T, reach: 3 * T, tone: "window" });
+    if (f.kind === "holo") out.push({ id: `light:${f.id}`, source: f.id, x: (f.x + f.w / 2) * T, y: f.y * T, reach: 2 * T, tone: "cool" });
   }
   return out;
 }
 /** Footprint kinds a light pool may hang off. */
-const LIGHT_SOURCES = new Set(["sconce", "lamp", "window", "rack", "desk", "gauge", "clock"]);
+const LIGHT_SOURCES = new Set(["sconce", "lamp", "window", "holo", "rack", "desk", "gauge", "clock"]);
 
 const key = (x: number, y: number) => `${x},${y}`;
 const px = (f: Foot) => ({ l: f.x * T, t: f.y * T, r: (f.x + f.w) * T, b: (f.y + f.h) * T });
@@ -150,7 +147,7 @@ export function checkLayout(l: Layout, ls: Line[] = lines(l), lt: Light[] = ligh
     if (!id.startsWith("queue") && !blockedAt(t.x, t.y + 1)) v.push(`seat ${id} has no desk below it at ${key(t.x, t.y + 1)}`);
   }
   // mirror symmetry about the door aisle for paired kinds, and the couch set
-  const pairKinds = new Set(["couch", "table", "armchair", "booth", "lamp", "sconce"]);
+  const pairKinds = new Set(["couch", "table", "armchair", "booth", "lamp", "sconce", "holo", "window", "sign"]);
   for (const d of feet.filter((f) => pairKinds.has(f.kind))) {
     const mx = l.cols - 1 - (d.x + d.w - 1);
     if (!feet.some((e) => e.kind === d.kind && e.x === mx && e.y === d.y && e.w === d.w && e.h === d.h)) v.push(`${d.kind} at ${d.x},${d.y} has no mirror at x=${mx}`);
