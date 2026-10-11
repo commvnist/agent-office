@@ -87,13 +87,18 @@ export function stackBubbles(items: BubbleBox[], maxTools = 3): BubbleOut[] {
     }
     const l = it.x - it.w / 2, r = it.x + it.w / 2;
     let y = it.top === undefined ? it.y : Math.max(it.y, it.top + it.h), shifts = 0; // start where the edge clamp would put it
-    for (let guard = 0; guard < 12; guard++) {
+    // fixed obstacles (prio >= 3: tags, alert rings and flags, figures, badges) never move: overlapping each other is fine,
+    // shifting them would move the obstacle away from the thing it protects
+    if (it.prio >= 3) { placed.push({ l, r, t: it.y - it.h, b: it.y }); continue; }
+    let clear = false;
+    for (let guard = 0; guard < 32; guard++) {
       const hit = placed.find((p) => l < p.r && r > p.l && y - it.h < p.b && y > p.t);
-      if (!hit) break;
+      if (!hit) { clear = true; break; }
       y = hit.t - 2;
       shifts++;
     }
-    if (shifts && it.top !== undefined && y - it.h < it.top) { out[i].visible = false; continue; }
+    // no clear spot found, or it would rise past the floor/HUD edge: hidden, never left overprinting (A6)
+    if (!clear || (shifts && it.top !== undefined && y - it.h < it.top)) { out[i].visible = false; continue; }
     out[i].y = y;
     out[i].alpha = it.prio >= 2.5 ? 1 : 1 - 0.25 * Math.min(2, shifts); // an alert's own words never fade
     placed.push({ l, r, t: y - it.h, b: y });

@@ -45,6 +45,7 @@ body:has(.view:not([hidden])) #top{background:var(--bg)}
 .tile.ended{cursor:default}
 .tlview{display:flex;flex-direction:column;overflow:hidden}
 .tlbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+@media (max-width:800px){.tlbar{display:grid;grid-template-columns:repeat(auto-fit,minmax(88px,1fr))}}
 .tlwrap{flex:1;min-height:0;overflow-y:auto;position:relative}
 .tlwrap canvas{position:sticky;top:0;display:block;cursor:crosshair}
 .tl-legend{display:flex;flex-wrap:wrap;gap:4px 12px;padding:0 16px 8px;font-size:calc(11px * var(--ts,1))}

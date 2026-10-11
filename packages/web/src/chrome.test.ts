@@ -20,16 +20,16 @@ test("demo script plays to an empty office and seek is repeatable", () => {
   assert.equal(p.countAt(p.end), p.events.length);
 });
 
-test("radar: blocked, waiting, stuck; first-seen is remembered by the caller", () => {
+test("radar: waiting, gave up, stuck (STATUS_ORDER); first-seen is remembered by the caller", () => {
   const st: OfficeState = emptyState();
   st.sessions.a = { id: "a", project: "pa", waiting: true, startedAt: 0, lastAt: 500 };
   st.sessions.b = { id: "b", project: "pb", waiting: false, startedAt: 0, prompt: "x", lastAt: 1000 };
   st.sessions.c = { id: "c", project: "pc", waiting: false, startedAt: 0, lastAt: 1000 }; // idle, not stuck
   const ac = [{ id: "x1", label: "Dev", lead: false, status: "blocked", project: "pa" } as ActorInfo];
   const r = radar(ac, { ...st, outcomes: undefined }, 200_000, (_k, f) => f); // an older daemon: blocked actors
-  assert.deepEqual(r.map((i) => i.kind), ["blocked", "waiting", "stuck"]);
-  assert.equal(r[1].since, 500);
-  assert.equal(titleFor([r[1]]), "(1) waiting: pa - Agent Office");
+  assert.deepEqual(r.map((i) => i.kind), ["waiting", "blocked", "stuck"]);
+  assert.equal(r[0].since, 500);
+  assert.equal(titleFor([r[0]]), "(1) waiting: pa - Agent Office");
   assert.equal(titleFor(r), "(3) needs you: pa - Agent Office");
   assert.equal(titleFor([]), "Agent Office");
 });
@@ -46,9 +46,9 @@ test("C6/C7/X3: gave-up rows come from outcomes until the next prompt or Seen; s
   ];
   st.agents.h4 = { id: "h4", session: "a", agentType: "qa", role: "qa", seat: { id: "d0", role: "qa", kind: "permanent", index: 0, name: "Ann" }, parent: "lead:a", lastAt: 1000 };
   const r = radar([], st, 1000 + 3 * 60_000 + 1, (_k, f) => f, 60_000);
-  assert.deepEqual(r.map((i) => [i.kind, i.label]), [["blocked", "Dev"], ["waiting", "pa"], ["stuck", "Ann"]]);
-  assert.equal(r[0].key, "blocked:h1:200");
-  assert.equal(r[1].reason, "Rebuilt; want me to fix links?");
+  assert.deepEqual(r.map((i) => [i.kind, i.label]), [["waiting", "pa"], ["blocked", "Dev"], ["stuck", "Ann"]]);
+  assert.equal(r[1].key, "blocked:h1:200");
+  assert.equal(r[0].reason, "Rebuilt; want me to fix links?");
   assert.equal(radar([], st, 2000, (_k, f) => f, 60_000, (k) => k === "blocked:h1:200").filter((i) => i.kind === "blocked").length, 0, "seen");
   st.sessions.a.promptAt = 250;
   assert.equal(radar([], st, 2000, (_k, f) => f, 60_000).filter((i) => i.kind === "blocked").length, 0, "the next prompt clears it");

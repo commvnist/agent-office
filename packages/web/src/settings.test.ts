@@ -81,3 +81,17 @@ test("stackBubbles: a shifted alert bubble keeps full opacity", () => {
   const r = stackBubbles([box({ prio: 3 }), box({ prio: 2.5 })]);
   assert.equal(r[1].alpha, 1);
 });
+
+test("stackBubbles: a bubble that finds no clear spot is hidden, never left overlapping", () => {
+  const box = (o: Partial<BubbleBox>): BubbleBox => ({ x: 0, y: 1000, w: 40, h: 20, prio: 3, age: 0, zone: "z", tool: false, ...o });
+  const wall = Array.from({ length: 40 }, (_, k) => box({ y: 1000 - k * 22 })); // a column of obstacles taller than the guard
+  const r = stackBubbles([...wall, box({ prio: 2, y: 1000 })]);
+  assert.equal(r.at(-1)!.visible, false);
+});
+
+test("stackBubbles: fixed obstacles overlapping each other stay put and still block bubbles", () => {
+  const box = (o: Partial<BubbleBox>): BubbleBox => ({ x: 0, y: 100, w: 40, h: 20, prio: 3, age: 0, zone: "z", tool: false, ...o });
+  const r = stackBubbles([box({}), box({ y: 110 }), box({ prio: 2, y: 105, top: 0 })]);
+  assert.deepEqual([r[0].y, r[1].y], [100, 110], "obstacles never shift");
+  assert.ok(r[2].y <= 78, "the bubble clears both");
+});

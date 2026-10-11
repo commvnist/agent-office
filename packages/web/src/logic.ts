@@ -27,7 +27,7 @@ export const usageTotal = (u?: Usage) => (u ? u.input + u.output + u.cacheCreate
 /** Elapsed time for a row: "42s", then the coarse `fmtAge` form. */
 export const fmtDur = (ms: number) => (ms < 60_000 ? `${Math.max(0, Math.floor(ms / 1000))}s` : fmtAge(ms));
 /** Stable hue 0..359 per project name, for a colour accent that survives reloads. */
-const HUE_BANDS: [number, number][] = [[64, 129], [218, 315]];
+const HUE_BANDS: [number, number][] = [[80, 129], [218, 300]]; // clear of amber (39) and the neon magenta (~330) with margin
 const HUE_SPAN = HUE_BANDS.reduce((n, [lo, hi]) => n + hi - lo, 0);
 /** Any hash onto an identity hue that is never a status hue or the magenta neon (see choreo.ts sessionHue). */
 export function safeHue(n: number): number {
@@ -97,8 +97,9 @@ export function radar(actors: ActorInfo[], state: OfficeState, now: number, sinc
     if (!a.seat || !a.lastAt || now - a.lastAt <= stuckMs * 3 || (s?.waiting && s.waitBy === a.id)) continue;
     add({ key: `stuck:${a.id}`, kind: "stuck", id: a.id, label: actors.find((x) => x.id === a.id)?.label ?? a.seat.name ?? a.role, project: s?.project ?? a.session, since: a.lastAt, session: a.session });
   }
-  const rank = { blocked: 0, waiting: 1, stuck: 2 };
-  return out.sort((a, b) => rank[a.kind] - rank[b.kind] || a.since - b.since);
+  // one urgency order on every surface (STATUS_ORDER): permission, your turn, gave up, then silent
+  const rk = (i: { kind: string; session?: string }) => i.kind === "waiting" ? (state.sessions[i.session ?? ""]?.waitKind === "turn" ? 1 : 0) : i.kind === "blocked" ? 2 : 3;
+  return out.sort((a, b) => rk(a) - rk(b) || a.since - b.since);
 }
 /** The Seen key of a gave-up outcome (no "@": notify.ts uses it for escalation tiers). */
 export const gaveUpKey = (o: { agentId: string; t: number }) => `blocked:${o.agentId}:${o.t}`;
@@ -140,7 +141,7 @@ export const bySession = (items: FeedItem[]) => {
 export const urgency = (s: SessionInfo, acts: ActorInfo[]) =>
   acts.some((a) => a.session === s.id && a.status === "blocked") ? 0 : s.waiting ? 1 : acts.find((a) => a.id === s.lead)?.status === "idle" ? 3 : 2;
 
-export const RANK: Record<string, number> = { blocked: 0, waiting: 1, queued: 2, working: 3, thinking: 4, idle: 5 };
+export const RANK: Record<string, number> = { waiting: 0, blocked: 1, queued: 2, working: 3, thinking: 4, idle: 5 };
 export type RosterRow = { a: ActorInfo; s: string };
 /** One group per session, the most urgent first (then project name); inside a group the lead, then by RANK, then label. */
 export function rosterGroups(rows: RosterRow[], projectOf: (sid: string) => string) {

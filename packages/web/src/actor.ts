@@ -645,6 +645,12 @@ export class Actor {
     const w = this.glyph.width, h = this.glyph.height, r = this.ringScr;
     out.push({ x: this.glyph.x, y: this.glyph.y - h, w, h, pri: 2, own: this }, { x: r.x, y: r.y - r.h / 2, w: r.w, h: r.h, pri: 2, own: this });
   }
+  /** Screen box of the whole figure (feet to the top of the head, art width), for agents that need you: no bubble covers them. */
+  figureBox(out: Box[]) {
+    if (!this.alert || this.low || this.hidden) return;
+    const sc = this.sc, h = (this.sitting ? 22 : 28) * sc, w = 16 * sc;
+    out.push({ x: this.ringScr.x, y: this.ringScr.y + 12 * sc - h, w, h, pri: 2, own: this });
+  }
   /** Apply a stacking offset and redraw the dark backing plate (#F3). */
   placeTag(dy: number, hide = false) {
     if (hide !== this.demoted) { // no room in the floor: status pip instead of an overlapping tag
@@ -698,7 +704,13 @@ function addBubble(a: Actor, b: { node: Container; born: number } | null, tool: 
  * Name tags are fixed obstacles: bubbles shift up clear of them. Call after layoutTags and every actor.syncUi in a frame;
  * syncUi resets positions/alpha, so skipping this keeps the old behaviour.
  */
-export function layoutBubbles(actors: Iterable<Actor>, view?: { w: number; h: number; top: number }) {
+const bubbleActors: Actor[] = []; // per-frame scratch
+export function layoutBubbles(it: Iterable<Actor>, view?: { w: number; h: number; top: number }) {
+  // the caller passes map.values(): an iterator is used up by the first loop, so copy it once (the alert and figure loop
+  // below used to see nothing, and bubbles covered the agents that need you)
+  bubbleActors.length = 0;
+  for (const a of it) bubbleActors.push(a);
+  const actors = bubbleActors;
   bubbleBoxes.length = 0;
   bubbleNodes.length = 0;
   for (const a of actors) {
@@ -713,7 +725,7 @@ export function layoutBubbles(actors: Iterable<Actor>, view?: { w: number; h: nu
     bubbleNodes.push({ node: null, fade: 1, fl: null });
   }
   alertScratch.length = 0;
-  for (const a of actors) if (!a.hidden) a.alertBoxes(alertScratch);
+  for (const a of actors) if (!a.hidden) { a.alertBoxes(alertScratch); a.figureBox(alertScratch); } // and the figure itself: a bubble never sits on someone who needs you
   for (const o of alertScratch) { // an alert's flag and ring: fixed like tags, so no bubble ever covers them (x = centre, y = top; bubble boxes use the bottom edge)
     bubbleBoxes.push({ x: o.x, y: o.y + o.h, w: o.w, h: o.h, prio: 3, age: 0, zone: "", tool: false });
     bubbleNodes.push({ node: null, fade: 1, fl: null });

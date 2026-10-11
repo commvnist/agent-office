@@ -49,7 +49,7 @@
   #handle:hover::after,#handle:focus-visible::after{background:var(--acc)}
   #pbody{flex:1;overflow-y:auto;min-width:0}
   .b{background:color-mix(in srgb,var(--raise) 55%,transparent);border:1px solid var(--line);border-radius:var(--r);padding:4px 8px;cursor:pointer;white-space:nowrap;transition:border-color .15s var(--ease),background-color .15s var(--ease),box-shadow .15s var(--ease)}
-  .b:hover,.b:focus-visible{border-color:var(--glow);box-shadow:0 0 0 1px color-mix(in srgb,var(--glow) 35%,transparent)} .b[aria-pressed=true]{background:var(--acc);border-color:var(--acc);color:var(--ink)} .b[aria-pressed=true]::before{content:"✓\a0"} /* B2: filled plus a non-colour mark */
+  .b:hover,.b:focus-visible{border-color:var(--glow);box-shadow:0 0 0 1px color-mix(in srgb,var(--glow) 35%,transparent)} .b[aria-pressed=true]{background:var(--raise);border-color:var(--glow);color:var(--fg);box-shadow:inset 0 -2px 0 var(--acc)} .b[aria-pressed=true]::before{content:"✓\a0"} /* B2: filled plus a non-colour mark */
   .b.sm{padding:0 8px;font-size:calc(11px * var(--ts,1));min-block-size:24px;min-inline-size:24px}
   #tg{flex:none} #tg .cnt{display:inline-block;min-width:16px;padding:0 4px;border-radius:var(--r);background:var(--st-permission,var(--warn));color:var(--ink);font-weight:700}
   .note{padding:4px var(--pad);color:var(--mute);font-size:calc(11px * var(--ts,1));text-wrap:balance}
@@ -150,8 +150,8 @@
     #side{width:min(var(--swx,340px),92vw);box-shadow:-8px 0 24px #0008}
     #settings{inset-inline-end:8px}
     #top{flex-wrap:wrap;gap:4px 8px;padding-bottom:4px}
-    #need{order:9;flex:1 1 100%;max-width:none;min-block-size:32px} /* H2: its own row, name + state, tap to open */
-    #privchip{justify-content:center;padding:0;border-radius:var(--r);min-inline-size:24px} /* the glyph alone: a square button */
+    #need{order:-1;flex:1 1 100%;max-width:none;min-block-size:32px} /* H2: its own row first: the one thing not to miss */
+    #privchip{justify-content:center;padding:0;border-radius:var(--r);min-inline-size:24px;align-self:center} /* the glyph alone: a square button */
     #radar h2{height:auto;padding-block:12px} /* the sheet has no header beside it to line up with */
     #top b{flex:none;overflow:visible}
   }
