@@ -1083,6 +1083,7 @@ app.ticker.add((tk) => {
     const quietMs = a.busyAt > 0 && !isRun && !a.leaving ? now - a.busyAt : 0;
     a.setStaleMin(quietMs >= idleTagMs ? Math.floor(quietMs / 60_000) : 0); // "idle 7m" in the tag, at the Stuck threshold
     a.thinking = !a.lead || !!state.sessions[meta.get(id)?.session ?? ""]?.prompt;
+    a.setQuiet(a.lead && !a.thinking && !a.working && !a.alert);
     a.toolSince = isRun && now - a.busyAt < STALE_MS ? a.busyAt : 0; // past 5 min a missing tool_end is likelier than a real call
     if (a.toolSince) { const sess = state.sessions[meta.get(id)?.session ?? ""], tool = a.lead ? sess?.doing : state.agents[id]?.doing; a.longAfter = longToolMs(tool ? sess?.toolStats?.[tool] : undefined); }
     a.update(dt, now);

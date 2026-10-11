@@ -124,7 +124,10 @@ export class Actor {
   private jitterMs = JITTER_MS; // time since jitter()
   get hop() { return this.hopMs < HOP_MS ? 1 : 0; }
   alert: Alert | null = null;
-  idle = false;
+  idle = false; // on an ambient stroll (motion only; the tag does not show it)
+  private quiet = false; // really idle: no prompt, no tool, no alert (main.ts setQuiet)
+  /** Real idleness for the tag; refreshes it only when it changes. */
+  setQuiet(b: boolean) { if (this.quiet !== b) { this.quiet = b; this.refreshTag(); } }
   private t = 0; // last `now` seen in update
   get now() { return this.t; }
   private v = 0; // current walk speed (art px/s)
@@ -237,7 +240,9 @@ export class Actor {
     const lines = this.label.split("\n").map((l) => (l.length > 24 ? l.slice(0, 23) + "…" : l)); // labels are clipped so tags stay short (#F1)
     const q = this.queued && this.qpos ? ` #${this.qpos}` : "";
     const st = this.alert === "blocked" ? STATUS.blocked : this.alert === "waiting" ? STATUS[this.waitKind] : null;
-    this.tag.text = `${st ? st.glyph + " " : ""}${lines.join("\n")}${q}${this.idle ? " (idle)" : this.staleMin ? ` idle ${this.staleMin}m` : ""}`;
+    // "(idle)" follows the session's real state (set each frame by main.ts), never the ambient stroll: a lead that has done
+    // nothing must not flip between idle and not idle as it walks to the couch and back
+    this.tag.text = `${st ? st.glyph + " " : ""}${lines.join("\n")}${q}${this.quiet ? " (idle)" : this.staleMin ? ` idle ${this.staleMin}m` : ""}`;
     this.tag.style.fill = st ? st.color : KEY.text.fg;
   }
   /** "idle Nm" tag suffix once the agent is stale; 0 clears. */
