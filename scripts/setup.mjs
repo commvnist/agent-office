@@ -73,9 +73,17 @@ if (hasClaude()) {
     const r = plugin(["marketplace", "add", ROOT, "--scope", "user"]);
     say(r.status === 0, r.status === 0 ? "marketplace added" : `marketplace add failed: ${(r.stderr || r.stdout || "").trim()}`);
   }
-  if (listed(["list"]).includes(PLUGIN)) say(true, "plugin already installed (updating from this checkout)");
-  const r = plugin(["install", PLUGIN, "--scope", "user"]);
-  say(r.status === 0, r.status === 0 ? "plugin installed" : `plugin install failed: ${(r.stderr || r.stdout || "").trim()}`);
+  if (listed(["list"]).includes(PLUGIN)) {
+    // `install` is a no-op for an installed plugin and `list` reports the SOURCE version, so a stale cached copy looked current:
+    // refresh the marketplace, then update (the cache only changes when the manifest version was bumped).
+    say(true, "plugin already installed (updating from this checkout)");
+    plugin(["marketplace", "update", MARKET]);
+    const u = plugin(["update", PLUGIN, "--scope", "user"]);
+    say(u.status === 0, u.status === 0 ? "plugin updated (bump plugin/.claude-plugin/plugin.json version when hooks change)" : `plugin update failed: ${(u.stderr || u.stdout || "").trim()}`);
+  } else {
+    const r = plugin(["install", PLUGIN, "--scope", "user"]);
+    say(r.status === 0, r.status === 0 ? "plugin installed" : `plugin install failed: ${(r.stderr || r.stdout || "").trim()}`);
+  }
   // A cached copy can stay old after "install": compare with this checkout and ask for an update once.
   const want = JSON.parse(readFileSync(join(ROOT, "plugin/.claude-plugin/plugin.json"), "utf8")).version;
   let have = installedVersion(listed(["list"]));

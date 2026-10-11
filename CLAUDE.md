@@ -11,6 +11,7 @@
 - `packages/web`: PixiJS client (procedural sprites).
 - `plugin/`: Claude Code plugin (hooks, agents, skills).
 - `docs/improvements.md`: the 100-item backlog; keep its status column current.
+- Visual consistency is enforced, not hoped for: every placed object and baked line comes from `placements()`/`lines()` in `packages/core/src/footprint.ts` (via `packages/web/src/geometry.ts`), and `checkLayout` must return `[]`. See `docs/visual-consistency.md` before adding any object, line or decor kind.
 
 ## Guardrails
 

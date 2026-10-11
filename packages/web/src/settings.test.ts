@@ -52,3 +52,18 @@ test("follow only accepts known modes", async () => {
   assert.equal(settings.follow, "busiest");
   setFollow("off");
 });
+
+test("scene-relative text: 1 at the reference scale, proportional above, quantized, floored at 10px", async () => {
+  const { setSceneScale, fontPx, textZoom, REF_SC, settings: st } = await import("./settings.ts");
+  st.textScale = 1;
+  setSceneScale(REF_SC);
+  assert.equal(textZoom.k, 1);
+  assert.equal(fontPx(12), 12);
+  assert.equal(setSceneScale(REF_SC * 2), true); // zooming in doubles it
+  assert.equal(fontPx(12), 24);
+  assert.equal(setSceneScale(REF_SC * 2 + 0.01), false); // within a quarter step: no re-rasterise
+  setSceneScale(0.5);
+  assert.equal(fontPx(11), 10); // zoomed out: floor
+  assert.equal(setSceneScale(NaN), true); // bad input falls back to 1
+  assert.equal(textZoom.k, 1);
+});

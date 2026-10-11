@@ -55,7 +55,7 @@ export type OfficeEvent = Base &
     | { type: "message"; session: string; from?: string; to: string; text: string; id?: string; t: number }
     | { type: "prompt"; session: string; text: string; t: number }
     | { type: "turn_end"; session: string; usage?: Usage; t: number }
-    | { type: "waiting"; session: string; text?: string; t: number }
+    | { type: "waiting"; session: string; text?: string; idle?: boolean; t: number }
   );
 
 /** A source of events (Claude Code hooks today); must never throw, returns [] for input it cannot use. */

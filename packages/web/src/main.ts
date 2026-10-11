@@ -1,24 +1,25 @@
-import { Application, Container, Graphics, Sprite } from "pixi.js";
-import { buildLayout, emptyFun, findPath, seatTile, standNear, stepFun, leadId, childrenOf, parentChain, type FunEvent, type FunMemory, type Layout, type OfficeConfig, type OfficeState, type Tile } from "@agent-office/core";
+import { Application, Container, Graphics, Sprite, Text } from "pixi.js";
+import { buildLayout, deskCount, emptyFun, findPath, seatTile, standNear, stepFun, leadId, childrenOf, parentChain, type FunEvent, type FunMemory, type Layout, type OfficeConfig, type OfficeState, type Tile } from "@agent-office/core";
 import { Actor, T, feet, layoutBubbles, layoutTags, setBubbleBlank, setFloorBounds } from "./actor.ts";
 import { hideText } from "./stream.ts";
 import { Scene, type SeatState } from "./scene.ts";
-import { lookFor, whiteTex } from "./sprites.ts";
+import { courierTex, lookFor, whiteTex } from "./sprites.ts";
 import { setRoles } from "./theme.ts";
 import { isDelight, pickWeather, planDelight, pushSignal, type Delight, type Weather } from "./flair.ts";
 import { Floaters } from "./flairfx.ts";
 import { bindMinimap } from "./minimap.ts";
-import { ambientOn, burstAllowed, frozen, setTextScale, settings } from "./settings.ts";
+import { ambientOn, burstAllowed, fontPx, frozen, setSceneScale, setTextScale, settings } from "./settings.ts";
 import { FxBudget, scaled, type FxClass } from "./fx.ts";
 import { followDue, pickBusiest } from "./follow.ts";
 import { projectHue } from "./logic.ts";
 import { bake } from "./pixel.ts";
-import { clip } from "./dom.ts";
+import { dev, setDpr } from "./snap.ts";
+import { clip, store } from "./dom.ts";
 import { ticketTex } from "./ticket.ts";
 import { hash } from "./color.ts";
-import { alertsFor, boardLines, crowdLod, newAlerts, feedItem, isWorking, pickStroller, planInteraction, statusOf, couchSeats, ticketEnd, ticketFor, ticketT, TICKET_MS, uniqueNames, type Action, type PlanCtx, type Ticket } from "./choreo.ts";
+import { alertsFor, boardLines, crowdLod, doorHold, holds, loadLevel, newAlerts, feedItem, isWorking, pickPartner, pickStroller, planInteraction, sessionHue, shrinkFloor, pushCapped, courierDue, statusOf, stepHold, couchSeats, tetherAlpha, ticketEnd, ticketFor, ticketT, yieldsTo, TICKET_MS, uniqueNames, type Action, type PlanCtx, type Shrink, type StrollCand, type Ticket } from "./choreo.ts";
 import { advance, connect, newCursor, type Envelope } from "./net.ts";
-import { camera, bindPointer } from "./camera.ts";
+import { camera, bindPointer, isNarrow, phoneScale, pickAuto } from "./camera.ts";
 import { hooks, liveIn, office, publish, pushFeed, setConnection, isPresenter, type ActorInfo, type SessionInfo } from "./api.ts";
 import { bindUi } from "./ui.ts";
 
@@ -30,12 +31,16 @@ const STALE_MS = 5 * 60_000; // no tool activity for this long: desaturate the a
 const IDLE_FPS = 15;
 const ACTIVE_HOLD_MS = 1000; // a frame with motion or a bubble keeps the full frame rate this long
 const HUDDLE_RADIUS = 10; // tiles: seated burst members this close to the board join the huddle
-const TICKET_HOLD_MS = 300, DOT_HOLD_MS = 1000; // a landed ticket rests on the desk; reduced motion shows a still dot instead of the flight
-const MAX_MOVERS = 12, MAX_RINGS = 8;
+const TICKET_HOLD_MS = 600, DOT_HOLD_MS = 1000; // a landed ticket rests on the desk; reduced motion shows a still dot instead of the flight
+const MAX_MOVERS = 3, MAX_RINGS = 6, MAX_RIPPLES = 4; // overlays: <=3 tickets in flight, <=6 rings (<=4 of them desk ripples)
+const RIPPLE_GAP_MS = 3000, RIPPLE_MS = 1200;
+const GATHER_MS = 400; // arrival / leaving beat at the door
+const DOOR_R = T * 1.5, LINE_SHOWN = 6;
 const FRESH_QUIET_MS = 1500; // after a first snapshot the existing crowd is history, not news: no juice
 
 // raw DPR 3 on 4K allocates huge buffers for nearest-neighbour art: cap at 2 (#165)
 function dpr() { return Math.min(2, window.devicePixelRatio || 1); }
+setDpr(dpr()); // overlays snap to whole device pixels (snap.ts)
 const host = document.getElementById("stage")!;
 const app = new Application();
 const overlay = new URLSearchParams(location.search).get("overlay") === "1"; // transparent page for OBS-style capture
@@ -54,10 +59,16 @@ app.canvas.addEventListener("click", () => {
 const minimap = bindMinimap(host);
 const topEl = document.getElementById("top")!;
 new ResizeObserver(() => { TOP = topEl.offsetHeight; }).observe(topEl);
+// Phones: the open panel is a bottom sheet over the stage; the camera fits/centres in what is left above it.
+let SHEET = 0;
+const sideEl = document.getElementById("side")!;
+new ResizeObserver(() => { SHEET = sideEl.offsetHeight; }).observe(sideEl);
+const sheetPx = () => (matchMedia("(max-width:800px)").matches && !document.body.classList.contains("collapsed") ? SHEET : 0);
 camera.focusSelected = () => { if (office.selected) camera.focus(office.selected); };
 // moving the window to another monitor changes the DPR: follow it (#166)
 function watchDpr() {
   matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`).addEventListener("change", () => {
+    setDpr(dpr());
     app.renderer.resize(host.clientWidth, host.clientHeight, dpr());
     watchDpr();
   }, { once: true });
@@ -67,6 +78,11 @@ watchDpr();
 const world = new Container();
 const uiLayer = new Container();
 app.stage.addChild(world, uiLayer);
+// "+N" for arrivals waiting at the door beyond the six drawn in the line; a count of real agents, not text from any event
+const doorTok = new Text({ text: "", style: { fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: 11, fill: 0x7fe3ff, stroke: { color: 0x0e0d16, width: 3 } } });
+doorTok.anchor.set(0.5, 1);
+doorTok.visible = false;
+uiLayer.addChild(doorTok);
 
 let layout: Layout;
 let scene: Scene;
@@ -82,7 +98,12 @@ let liveIds = new Set<string>();
 let boardText: string[] = [];
 let skyT = 0; // replay: recorded time for the window sky and clock, 0 = wall clock
 let cooler: { x: number; y: number } | null = null;
-let seatStates = new Map<string, SeatState>(); // shared with the scene; `working` is refreshed per frame, no allocation
+// the signal fields are filled here (scene.ts renders them); working/stale/load/idleMs are refreshed per frame, no allocation
+type Seat = SeatState & { load?: 0 | 1 | 2 | 3; queueDepth?: number; idleMs?: number; hue?: number };
+let seatStates = new Map<string, Seat>();
+let idleTagMs = 120_000; // the "Stuck after" panel setting (ui.ts keeps it in the store); refreshed at 1 Hz
+const shrink: Shrink = { floor: 0, since: 0 };
+let shrinking = false; // built desks still above demand: the 1 Hz tick re-checks the ratchet
 const bindings: { key: string; id: string }[] = [];
 const running = new Set<string>(); // ids with a tool in flight (state.doing)
 const cursor = newCursor();
@@ -109,8 +130,9 @@ const spritePool: Sprite[] = []; // dead particle sprites, kept in fx (hidden) f
 /** Things that travel between two points: paper tickets and conflict sparks. Sprites pooled, <= MAX_MOVERS live. */
 type Mover = { s: Sprite; kind: Ticket["kind"] | "spark"; a: Actor; b: Actor; life: number; landed: boolean };
 const movers: Mover[] = [];
+const courier = { s: null as Sprite | null, path: [] as Tile[], x: 0, y: 0, wait: 0, back: false, last: Date.now() };
 const moverPool: Sprite[] = [];
-type Ring = { g: Graphics; x: number; y: number; life: number; delay: number; ms: number };
+type Ring = { g: Graphics; x: number; y: number; life: number; delay: number; ms: number; rip: boolean };
 const rings: Ring[] = [];
 const ringPool: Graphics[] = [];
 const GOLD = 0xffe08a;
@@ -155,14 +177,18 @@ const nearOf = (t: Actor) => standNear(layout, t.home ?? t.tile(), nextSlot(t.id
 
 const LEGIBLE = 2; // screen px per art px kept while the office grows; below that the world overflows and is panned instead
 const LOD_ON = 0.75, LOD_OFF = 0.9; // below this on-screen scale tags give way to status pips (hysteresis)
+let autoId: string | null = null; // phone auto-follow target (camera.ts pickAuto)
+const fitBtn = document.getElementById("fit") as HTMLButtonElement;
+fitBtn.addEventListener("click", () => camera.toggleFitAll());
 let lod = false; // tags give way to status pips while the office is drawn small
 const fitScale = (l: Layout, W: number, H: number) => {
-  const wFit = W / (l.cols * T);
-  const sc = Math.max(Math.min(wFit, H / (l.rows * T + 12)), Math.min(LEGIBLE, wFit)); // 12 art px spare so the bottom row's tags are not cut off
+  const wFit = Math.max(1, W - 2 * Math.min(8, W * 0.02)) / (l.cols * T); // a margin each side so the side walls never touch the viewport edge
+  const sc = camera.phone && !camera.fitAll ? phoneScale(W, H, l.rows * T + 12, T)
+    : Math.max(Math.min(wFit, H / (l.rows * T + 12)), Math.min(LEGIBLE, wFit)); // 12 art px spare so the bottom row's tags are not cut off
   const frac = Math.floor(sc * 16) / 16; // fine steps: use the window, art stays nearest-filtered
   const d = dpr(), whole = Math.floor(sc * d) / d; // whole device pixels per art pixel: crisp, no shimmer
-  // shortcut: integer wins unless it wastes >10% of the window; tune the 0.9 if small windows look too gappy
-  return Math.max(1 / d, whole >= 1 / d && whole >= frac * 0.9 ? whole : frac); // never below one device pixel per art pixel
+  // shortcut: whole device pixels per art pixel win unless that wastes >12% of the window (then fractional, offsets still snapped); see docs/visual-consistency.md
+  return Math.max(1 / d, whole >= 1 / d && whole >= frac * 0.88 ? whole : frac); // never below one device pixel per art pixel
 };
 
 /** Desk pool follows live demand (deskPos is stable, so growing the office never moves anyone); relayout only when the desk count or lobby changes. */
@@ -172,7 +198,10 @@ function chooseLayout(force = false) {
   const agents = Object.keys(state.agents).length;
   let top = -1; // highest desk index in use: it must stay built even after demand shrinks
   for (const a of Object.values(state.agents)) if (a.seat) top = Math.max(top, Number(a.seat.id.slice(1)) || 0);
-  const l = buildLayout(lastCfg, { lobbySlots, demand: { agents }, minDesks: top + 1 });
+  const demand = deskCount(lastCfg, agents);
+  const floorDesks = shrinkFloor(shrink, demand, top + 1, Date.now()); // grows at once, a trailing empty row decays after 90 s
+  shrinking = floorDesks > Math.max(demand, top + 1);
+  const l = buildLayout(lastCfg, { lobbySlots, demand: { agents }, minDesks: floorDesks });
   const key = `${cfgKey}|${lobbySlots}|${l.props.length}`;
   if (key === layoutKey && !force) return;
   layoutKey = key;
@@ -192,6 +221,7 @@ function relayout(l: Layout) {
   ysort = new Container();
   ysort.sortableChildren = true;
   fx = new Container();
+  courier.s = null; courier.path = []; // the old fx container (and its sprite) was destroyed with the previous scene
   scene = new Scene(layout, world, ysort, uiLayer, grew);
   setFloorBounds(scene.floorRect());
   tether = new Graphics();
@@ -244,18 +274,33 @@ const puff = (x: number, y: number, tint = 0xe8ecff) => {
 
 /** One-shot expanding ring (0.5 -> 2.2 scale over `ms`), pooled; `delay` staggers a double pulse. */
 function pulse(x: number, y: number, tint: number, delay = 0, ms = 450) {
-  if (!burstAllowed() || rings.length >= MAX_RINGS) return;
+  if (burstAllowed()) addRing(x, y, tint, delay, ms, false);
+}
+/** Desk ripple on a real tool start: one per desk per 3 s, <= 4 live; reduced motion shows a single static half-strength frame. */
+const ripAt = new Map<string, number>();
+function ripple(a: Actor, now: number) {
+  if (now - (ripAt.get(a.id) ?? -1e9) < RIPPLE_GAP_MS) return;
+  let n = 0;
+  for (const r of rings) if (r.rip) n++;
+  if (n >= MAX_RIPPLES) return;
+  ripAt.set(a.id, now);
+  addRing(a.pos.x, a.pos.y - 4, 0x7fe3ff, 0, settings.reducedMotion ? 160 : RIPPLE_MS, true);
+}
+function addRing(x: number, y: number, tint: number, delay: number, ms: number, rip: boolean) {
+  if (rings.length >= MAX_RINGS) return;
   let g = ringPool.pop();
-  if (!g) { g = new Graphics().circle(0, 0, 8).stroke({ width: 1.5, color: 0xffffff }); fx.addChild(g); }
+  if (!g) { g = new Graphics().circle(0, 0, 8).stroke({ width: 1, color: 0xffffff }).circle(0, 0, 6).stroke({ width: 1, color: 0xffffff, alpha: 0.35 }); fx.addChild(g); }
   g.tint = tint;
   g.visible = delay === 0;
   g.position.set(x, y);
-  rings.push({ g, x, y, life: 0, delay, ms });
+  rings.push({ g, x, y, life: 0, delay, ms, rip });
 }
 
 /** Send a paper ticket (or conflict spark) from a's current spot to b; reduced motion lands at once and shows a still dot. */
+const pending: { kind: Mover["kind"]; a: Actor; b: Actor }[] = []; // overflow beyond MAX_MOVERS: FIFO, bounded, drained in the frame loop
+const recvBadges = new Map<string, Text>(), recvCount = new Map<string, number>();
 function launch(kind: Mover["kind"], a: Actor, b: Actor) {
-  if (movers.length >= MAX_MOVERS) return;
+  if (movers.length >= MAX_MOVERS) { pushCapped(pending, { kind, a, b }); return; }
   let s = moverPool.pop();
   if (!s) { s = new Sprite(); s.anchor.set(0.5); fx.addChild(s); }
   const still = !burstAllowed();
@@ -333,6 +378,7 @@ function ensure(id: string, label: string, role: string, lead: boolean, home: Ti
     act.c.on("pointerover", () => { activeUntil = Date.now() + ACTIVE_HOLD_MS; hoverId = id; act.setHover(true); canvasHover(id); });
     act.c.on("pointerout", () => { if (hoverId === id) hoverId = null; act.setHover(false); canvasHover(null); });
     act.setSelected(office.selected === id);
+    if (!settings.reducedMotion) act.queue({ k: "wait", ms: GATHER_MS }); // arrival beat at the door before walking in
     actors.set(id, a);
   }
   a.leaving = false;
@@ -382,15 +428,15 @@ function syncActors() {
     }
     if (s.busyAt) a.busyAt = Math.max(a.busyAt, s.busyAt);
     const key = `lobby#${idx}`;
-    seatStates.set(key, { used: true, working: false, tool: s.doing, count: (tray.get(id) ?? 0) * TRAY_STEP, waiting: !!s.waiting, role: "lead", flash: flashes.get(key) });
+    seatStates.set(key, { used: true, working: false, tool: s.doing, count: (tray.get(id) ?? 0) * TRAY_STEP, waiting: !!s.waiting, role: "lead", flash: flashes.get(key), hue: sessionHue(s.id) });
     bindings.push({ key, id });
     if (s.doing) running.add(id);
     if (s.busyAt && lastBusy.get(id) !== s.busyAt) {
       lastBusy.set(id, s.busyAt);
       a.hit(s.busyAt);
-      if (s.doing) a.tool(clip(`${s.doing}${s.detail ? " " + s.detail : ""}`, 44));
+      if (s.doing) { a.tool(clip(`${s.doing}${s.detail ? " " + s.detail : ""}`, 44)); if (!quiet) ripple(a, Date.now()); }
     }
-    if (s.waiting && a.emote?.e !== "exclaim") a.showEmote("exclaim", 3000);
+    if (s.waiting && a.emote?.e !== "question") a.showEmote("question", 3000);
     if (s.waiting && s.waitingText && !a.speech) a.speak(s.waitingText, "say", 5000);
   });
 
@@ -408,8 +454,10 @@ function syncActors() {
     a.queued = !ag.seat;
     a.setQueuePos(ag.seat ? 0 : qseen + 1);
     if (ag.busyAt) a.busyAt = Math.max(a.busyAt, ag.busyAt);
+    a.tagAbove = ag.seat ? Number(ag.seat.id.slice(1)) % 4 < 2 : false; // pod rows: seats 0,1 are the upper row
     if (ag.seat) { const sess = state.sessions[ag.session];
-      seatStates.set(ag.seat.id, { used: true, working: false, tool: ag.doing, count: ag.toolCount, project: sess?.project ?? ag.session, role: ag.role, flash: flashes.get(ag.seat.id), prompt: sess?.prompt }); bindings.push({ key: ag.seat.id, id: ag.id }); }
+      seatStates.set(ag.seat.id, { used: true, working: false, tool: ag.doing, count: ag.toolCount, project: sess?.project ?? ag.session, role: ag.role, flash: flashes.get(ag.seat.id), prompt: sess?.prompt,
+        hue: sessionHue(ag.session), queueDepth: state.pending[`${ag.session}|${ag.agentType.slice(ag.agentType.lastIndexOf(":") + 1).toLowerCase()}`]?.length ?? 0 }); bindings.push({ key: ag.seat.id, id: ag.id }); }
     if (ag.doing) running.add(ag.id);
     errored(ag.id, ag.errors, a, Date.now() < freshUntil);
     if (!a.queued) {
@@ -418,13 +466,14 @@ function syncActors() {
     if (ag.busyAt && lastBusy.get(ag.id) !== ag.busyAt) {
       lastBusy.set(ag.id, ag.busyAt);
       a.hit(ag.busyAt);
-      if (ag.doing) a.tool(clip(`${ag.doing}${ag.detail ? " " + ag.detail : ""}`, 44));
+      if (ag.doing) { a.tool(clip(`${ag.doing}${ag.detail ? " " + ag.detail : ""}`, 44)); if (Date.now() >= freshUntil) ripple(a, Date.now()); }
     }
   }
   // lead "waiting on <names>" (#85)
   for (const s of sessions) {
     const id = leadId(s.id), n = kids.get(id), a = actors.get(id)!;
-    const want = n ? `${meta.get(id)?.name ?? s.project}\nwaiting on ${clip(n.slice(0, 2).join(", ") + (n.length > 2 ? ` +${n.length - 2}` : ""), 22)}` : meta.get(id)?.name ?? s.project;
+    // lead desks are two tiles apart: with several leads the second line would collide, so it shows for a lone lead only (the detail lives in NEEDS YOU and on selection)
+    const want = n && sessions.length < 2 ? `${clip(meta.get(id)?.name ?? s.project, 10)}\n> ${clip(n[0], 6)}${n.length > 1 ? ` +${n.length - 1}` : ""}` : meta.get(id)?.name ?? s.project;
     if (a.label !== want) { a.setLabel(want); gold(a); }
   }
   liveIds = live;
@@ -450,7 +499,7 @@ function departing() {
     a.seated = false;
     a.path = [];
     a.cur = null;
-    a.steps = [{ k: "exit" }];
+    a.steps = settings.reducedMotion ? [{ k: "exit" }] : [{ k: "wait", ms: GATHER_MS }, { k: "exit" }]; // the stop already happened: gather, then go
   }
 }
 
@@ -478,7 +527,7 @@ function exec(a: Action, now: number) {
   switch (a.k) {
     case "user": {
       const t = actors.get(a.id);
-      t?.speak(a.text, "user", 5000, "prompt");
+      t?.speak(`You: ${a.text}`, "user", 5000, "prompt"); // your words, not the agent talking to itself
       t?.showEmote("exclaim", 1500);
       break;
     }
@@ -496,7 +545,8 @@ function exec(a: Action, now: number) {
       const f = actors.get(a.from), t = actors.get(a.to);
       if (!f || !t || f === t) break;
       f.trim(3);
-      f.queue({ k: "walk", to: nearOf(t) }, { k: "face", toward: t.pos }, { k: "say", text: a.text, kind: "say", badge: a.badge });
+      f.squash(); // a small nod, then turn toward the recipient before setting off
+      f.queue({ k: "face", toward: t.pos }, { k: "walk", to: nearOf(t) }, { k: "face", toward: t.pos }, { k: "say", text: a.text, kind: "say", badge: a.badge });
       break;
     }
     case "huddle": {
@@ -529,6 +579,7 @@ function exec(a: Action, now: number) {
       f.cur = null;
       f.steps = [];
       if (t) {
+        t.glance(f.pos.x); // the lead looks up as the report comes in
         const near = nearOf(t);
         f.queue({ k: "walk", to: near }, { k: "face", toward: t.pos });
         f.queue({ k: "say", text: a.partial ? `PARTIAL: ${a.text}` : a.text, kind: a.partial ? "blocked" : "report", badge: "report", emote: a.partial ? "exclaim" : "check", ms: Math.min(4500, 1400 + a.text.length * 35) });
@@ -537,6 +588,7 @@ function exec(a: Action, now: number) {
         if (k) burst(feet(near).x, feet(near).y - 14, scaled(10, k), [0x5be37d, 0xffe08a, 0x8fd0ff]);
       }
       if (!a.partial) shipIt(meta.get(a.from)?.session ?? "");
+      if (!settings.reducedMotion) f.queue({ k: "wait", ms: GATHER_MS }); // gather beat after the report, then out
       f.queue({ k: "exit" });
       break;
     }
@@ -545,7 +597,9 @@ function exec(a: Action, now: number) {
       if (!f) break;
       blocked.set(a.id, { until: now + BLOCK_HOLD_MS, session: meta.get(a.id)?.session ?? "" });
       f.leaving = false;
+      const wasBlocked = f.alert === "blocked";
       f.setAlert("blocked");
+      if (!wasBlocked) f.glitch(); // here, not in the snapshot loop: this handler sets the alert first, so that loop never sees the change; no-op under reduced motion
       if (fxk("routine", "block")) { camera.shake(); scene.lightning(now); }
       f.speak(a.text, "blocked", 6000, "report");
       const lead = a.by ? actors.get(a.by) : undefined;
@@ -571,6 +625,14 @@ function exec(a: Action, now: number) {
       const d = layout.decor.find((x) => x.kind === a.where) ?? layout.decor.find((x) => x.kind === "coffee");
       if (!f || !d) break;
       strolled.set(a.id, now);
+      const buddy = a.with ? actors.get(a.with) : undefined;
+      if (buddy && d.kind === "coffee" && !buddy.leaving) { // two quiet agents of one session take coffee side by side, facing each other (no invented words)
+        strolled.set(buddy.id, now);
+        const t1 = standNear(layout, d, nextSlot(d.kind)), t2 = standNear(layout, d, nextSlot(d.kind)), ms = 6000 + (hash(a.id + a.with) % 4) * 1000;
+        f.idleStroll(t1, ms, { x: t2.x * T + T / 2, y: t2.y * T + T / 2 });
+        buddy.idleStroll(t2, ms, { x: t1.x * T + T / 2, y: t1.y * T + T / 2 });
+        break;
+      }
       const taken = new Set(couchHolds.values());
       const ck = catSeat(now);
       if (ck) taken.add(ck); // the cat has the seat
@@ -601,20 +663,78 @@ const ctx: PlanCtx = {
   get log() { return state.log; },
 };
 
+// ---- ambient courier -----------------------------------------------------------------------------------------
+// A clearly non-agent figure: 1 live, <= 1 per 8 min, door -> couch -> door on the walkable path. Not an Actor: no tag, not
+// hoverable, not in the roster/stats/seats. It always yields (leavers and anyone near it have right of way).
+// shortcut: it can overlap a walker that passes while it waits; upgrade by routing it around actors.
+function courierOff() { if (courier.s) courier.s.visible = false; courier.path = []; }
+function stepCourier(dt: number, now: number) {
+  const s = courier.s;
+  const live = !!s?.visible;
+  const quiet = ambientOn() && !isPresenter() && !office.privacy && !office.source.private && !document.hidden;
+  let alert = false;
+  for (const a of actors.values()) if (a.alert) { alert = true; break; }
+  if (live && (!quiet || alert)) return courierOff();
+  if (!live) {
+    if (!quiet || !layout || actors.size === 0 || !courierDue(now, courier.last, { live, alert, ambient: quiet })) return;
+    const d = layout.decor.find((x) => x.kind === "couch");
+    const path = d ? findPath(layout, layout.door, standNear(layout, d, 0)) : [];
+    courier.last = now;
+    if (!path.length) return;
+    const sp = (courier.s ??= fx.addChild(new Sprite()));
+    sp.anchor.set(0.5, 1);
+    sp.eventMode = "none";
+    sp.visible = true;
+    const f = feet(layout.door);
+    Object.assign(courier, { path, x: f.x, y: f.y, wait: 0, back: false });
+    return;
+  }
+  const sp = s!;
+  if (courier.wait > 0) courier.wait -= dt * 1000;
+  else if (courier.path.length) {
+    const n = feet(courier.path[0]), dx = n.x - courier.x, dy = n.y - courier.y, dist = Math.hypot(dx, dy);
+    let yield_ = false;
+    let near = false; // anticipate: a walker within 2.2 tiles stops the courier; one within a tile fades it, so the two never read as overlapping
+    for (const a of actors.values()) {
+      if (a.sitting) continue;
+      const dd = Math.hypot(a.pos.x - courier.x, a.pos.y - courier.y);
+      if (dd < T * 2.2) yield_ = true;
+      if (dd < T) near = true;
+    }
+    sp.alpha = near ? 0.3 : 1;
+    if (!yield_) {
+      const st = Math.min(dist, 34 * dt);
+      if (dist > 0) { courier.x += (dx / dist) * st; courier.y += (dy / dist) * st; }
+      if (dist - st < 0.5) { courier.x = n.x; courier.y = n.y; courier.path.shift(); }
+    }
+    const dir = Math.abs(dy) > Math.abs(dx) ? (dy < 0 ? "up" : "down") : "side";
+    sp.texture = courierTex(dir, Math.floor((now / 120) % 6));
+    sp.scale.x = dir === "side" && dx < 0 ? -1 : 1;
+  } else if (!courier.back) {
+    courier.back = true;
+    courier.wait = 3000;
+    const d = layout.decor.find((x) => x.kind === "couch")!;
+    courier.path = findPath(layout, standNear(layout, d, 0), layout.door);
+    if (!courier.path.length) return courierOff();
+  } else return courierOff();
+  sp.position.set(Math.round(courier.x), Math.round(courier.y));
+  sp.zIndex = courier.y;
+}
+
 /** Labeled idle ambient: one quiet seated agent at a time, never during alerts or reduced motion (#83). */
 function maybeStroll(now: number) {
   if (document.hidden || !layout || office.getEnvelope() === null || actors.size === 0) return;
   for (const a of actors.values()) if (a.alert) return;
   if (!ambientOn()) return;
   for (const [id] of couchHolds) if (!actors.get(id)?.perching) couchHolds.delete(id);
-  const cands = [];
+  const cands: StrollCand[] = [];
   for (const [id, a] of actors) {
     const ag = state.agents[id];
     if (!ag || !ag.seat || a.leaving || !a.sitting || a.steps.length || running.has(id)) continue;
-    cands.push({ id, lastActive: Math.max(a.busyAt, ag.seatedAt ?? 0, ag.startedAt ?? 0), strolledAt: strolled.get(id) ?? 0 });
+    cands.push({ id, lastActive: Math.max(a.busyAt, ag.seatedAt ?? 0, ag.startedAt ?? 0), strolledAt: strolled.get(id) ?? 0, session: ag.session });
   }
   const p = pickStroller(cands, now);
-  if (p) exec({ k: "stroll", ...p }, now);
+  if (p) exec({ k: "stroll", ...p, ...(p.where === "coffee" ? { with: pickPartner(cands, p.id, now) ?? undefined } : {}) }, now);
 }
 
 // ---- fast-forward after a hidden tab (#45) ---------------------------------------------------------------------
@@ -637,6 +757,7 @@ function fastForward() {
   particles.length = 0;
   for (const m of movers) { m.s.visible = false; moverPool.push(m.s); }
   movers.length = 0;
+  pending.length = 0;
   for (const r of rings) { r.g.visible = false; ringPool.push(r.g); }
   rings.length = 0;
   huddling.clear();
@@ -705,7 +826,7 @@ function onEnvelope(env: Envelope) {
   const lines = boardLines(state.tasks);
   if (lines.join("\n") !== boardText.join("\n")) boardText = lines;
   // prune per-actor maps of everything that left (#40)
-  for (const m of [meta, lastBusy, lastErr, visitors, huddling, strolled, tray] as Map<string, unknown>[])
+  for (const m of [meta, lastBusy, lastErr, visitors, huddling, strolled, tray, ripAt] as Map<string, unknown>[])
     for (const id of m.keys()) if (!actors.has(id) && !liveIds.has(id)) m.delete(id);
   publish(env);
 }
@@ -780,9 +901,19 @@ const walkers: Actor[] = []; // per-frame scratch
 let vw = -1, vh = -1, viewAt = 0, viewDirty = false, activeUntil = 0;
 let lastV = { sc: 0, ox: 0, oy: 0 };
 let coolerT = 0;
-/** Tether line from b's stem to a's (stems sit 8 px above the feet). */
-function tetherSeg(a: Actor | undefined, b: Actor | undefined) {
-  if (a && b) tether.moveTo(b.pos.x, b.pos.y - 8).lineTo(a.pos.x, a.pos.y - 8);
+/** Dashed segment whose dashes drift from a to b: reads as data in flight, not a flat rule. Still under reduced motion. */
+function dash(ax: number, ay: number, bx: number, by: number, t: number) {
+  const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy);
+  if (len < 1) return;
+  const ux = dx / len, uy = dy / len, step = 6, on = 3.5;
+  for (let s = (settings.reducedMotion ? 0 : (t / 60) % step) - step; s < len; s += step) {
+    const p = Math.max(0, s), q = Math.min(len, s + on);
+    if (q > p) tether.moveTo(ax + ux * p, ay + uy * p).lineTo(ax + ux * q, ay + uy * q);
+  }
+}
+/** Tether from b's stem to a's (stems sit 8 px above the feet). */
+function tetherSeg(a: Actor | undefined, b: Actor | undefined, t = 0) {
+  if (a && b) dash(b.pos.x, b.pos.y - 8, a.pos.x, a.pos.y - 8, t);
 }
 app.ticker.add((tk) => {
   if (!layout) return;
@@ -793,7 +924,7 @@ app.ticker.add((tk) => {
     if (e) { onEnvelope(e); fastForward(); }
   }
   wasFrozen = frozen.on;
-  const W = app.screen.width, H = app.screen.height - TOP;
+  const W = app.screen.width, H = app.screen.height - TOP - sheetPx();
   if (W !== vw || H !== vh) { vw = W; vh = H; viewAt = now; viewDirty = true; }
   if (viewDirty && now - viewAt >= RESIZE_DEBOUNCE_MS) {
     viewDirty = false;
@@ -801,9 +932,19 @@ app.ticker.add((tk) => {
     if (lastCfg) syncActors();
   }
   camera.minScale = 1 / dpr();
+  camera.phone = isNarrow(W, H + sheetPx()); // judged on the full stage, so opening the sheet never flips the mode
+  if (camera.phone && !camera.fitAll && camera.autoFollow) { // default phone focus: an alert, else a working agent, else the door aisle
+    const cand = [];
+    for (const a of actors.values()) if (!a.leaving && !a.queued && !a.gone) cand.push({ id: a.id, x: a.pos.x, y: a.pos.y, alert: !!a.alert, working: a.working });
+    const dp = feet(layout.door), pk = pickAuto(cand, autoId, { x: dp.x, y: dp.y + T * 2 });
+    autoId = pk.id;
+    camera.autoPos = pk;
+  }
+  fitBtn.hidden = !camera.phone;
+  fitBtn.textContent = camera.fitAll ? "Follow" : "Fit all"; // shortcut: English only, not in the i18n table
   const target = camera.follow ? actors.get(camera.follow)?.pos : null;
   if (camera.follow && !target) camera.setFollow(null);
-  const v = camera.view(fitScale(layout, W, H), W, H, TOP, layout.cols * T, layout.rows * T, target, dt);
+  const v = camera.view(fitScale(layout, W, H), W, H, TOP, layout.cols * T, layout.rows * T, target, dt, dpr());
   world.scale.set(v.sc);
   world.position.set(v.ox, v.oy);
   const ui = camera.still; // text and plaques ride the un-shaken view: a shake moves the world only (rubric B7)
@@ -818,9 +959,10 @@ app.ticker.add((tk) => {
   lod = v.sc < (lod ? LOD_OFF : LOD_ON) * narrow;
   // pips when zoomed out, or in a crowd for everyone but leads, the selected/hovered actor and alerts
   crowd = crowdLod(crowd, Object.keys(state.agents).length, displaced);
-  for (const a of actors.values()) a.setLod(lod || (crowd && !a.lead && !a.alert && a.id !== office.selected && a.id !== hoverId));
+  for (const a of actors.values()) a.setLod(lod || ((crowd || (overlay && camera.phone)) && !a.lead && !a.alert && a.id !== office.selected && a.id !== hoverId));
   const hud = { w: app.screen.width, h: app.screen.height, top: TOP };
   if (setBubbleBlank(hideText())) for (const a of actors.values()) a.refreshText(); // stream-safe blanks live canvas bubbles at once
+  if (setSceneScale(ui.sc)) { for (const a of actors.values()) a.refreshText(); doorTok.style.fontSize = fontPx(11); } // in-scene text keeps its size relative to the world
   if (frozen.on) { // paused: nothing advances, but pan/zoom/selection stay live (overlays re-follow the camera)
     minimap.draw(camera.still, W, TOP, H, frozen.since, overlay || isPresenter());
     for (const a of actors.values()) a.syncUi(ui.ox, ui.oy, ui.sc, hud);
@@ -837,11 +979,19 @@ app.ticker.add((tk) => {
   // walkers give way to a lower-id walker just ahead; the lowest id never yields, so no gridlock (#116)
   // shortcut: O(w^2) over walking actors only; use a grid if walkers reach hundreds
   walkers.length = 0;
-  for (const a of actors.values()) if (a.path.length && !a.gone) walkers.push(a);
+  for (const a of actors.values()) { a.lineX = 0; if (a.path.length && !a.gone) walkers.push(a); }
+  const doorPos = feet(layout.door);
+  let line = 0, lineMax = 0;
   for (const a of walkers) {
     const n = feet(a.path[0]);
-    a.yielding = walkers.some((o) => o.id < a.id && Math.hypot(o.pos.x - a.pos.x, o.pos.y - a.pos.y) < 10 && (o.pos.x - a.pos.x) * (n.x - a.pos.x) + (o.pos.y - a.pos.y) * (n.y - a.pos.y) > 0);
+    const atDoor = !a.leaving && walkers.some((o) => doorHold(a, o, doorPos, DOOR_R)); // one in at a time, leavers first
+    const want = atDoor || walkers.some((o) => yieldsTo(a, n, o));
+    a.held = stepHold(a.held, want, dt * 1000);
+    a.yielding = holds(a.held, want); // at most 1.5 s, then it slips past
+    if (a.yielding && atDoor) { a.lineX = (line % LINE_SHOWN) * 5; if (++line > LINE_SHOWN) lineMax = line; }
   }
+  doorTok.visible = lineMax > 0;
+  if (lineMax > 0) { doorTok.text = `+${lineMax - LINE_SHOWN}`; doorTok.position.set(dev(ui.ox + doorPos.x * ui.sc), dev(ui.oy + (doorPos.y - 14) * ui.sc)); }
   let active = viewDirty || !!camera.follow || v.sc !== lastV.sc || v.ox !== lastV.ox || v.oy !== lastV.oy;
   lastV = v;
   let doorNear = false;
@@ -850,7 +1000,10 @@ app.ticker.add((tk) => {
     const isRun = running.has(id);
     a.working = !a.queued && isWorking(isRun, a.busyAt, now);
     a.stale = !isRun && a.busyAt > 0 && now - a.busyAt > STALE_MS && !a.leaving;
-    a.toolSince = isRun ? a.busyAt : 0;
+    const quietMs = a.busyAt > 0 && !isRun && !a.leaving ? now - a.busyAt : 0;
+    a.setStaleMin(quietMs >= idleTagMs ? Math.floor(quietMs / 60_000) : 0); // "idle 7m" in the tag, at the Stuck threshold
+    a.thinking = !a.lead || !!state.sessions[meta.get(id)?.session ?? ""]?.prompt;
+    a.toolSince = isRun && now - a.busyAt < STALE_MS ? a.busyAt : 0; // past 5 min a missing tool_end is likelier than a real call
     a.update(dt, now);
     a.syncUi(ui.ox, ui.oy, ui.sc, hud);
     if (a.path.length || a.speech || a.toolBubble || a.emote || a.hop > 0) active = true;
@@ -872,7 +1025,14 @@ app.ticker.add((tk) => {
   layoutBubbles(actors.values(), hud);
   for (const b of bindings) {
     const st = seatStates.get(b.key), a = actors.get(b.id);
-    if (st) { st.working = !!a?.working; st.stale = !!a?.stale; }
+    if (st) {
+      st.working = !!a?.working; st.stale = !!a?.stale;
+      let n = 0;
+      if (a) for (const h of a.recentHits) if (now - h < 30_000) n++;
+      st.load = loadLevel(n);
+      st.idleMs = a?.working || !a?.busyAt ? 0 : now - a.busyAt;
+      st.mug = a?.sip === "desk";
+    }
   }
   scene.setDoor(doorNear);
   scene.tick(now, ui.ox, ui.oy, ui.sc, boardText, skyT || now);
@@ -880,19 +1040,22 @@ app.ticker.add((tk) => {
   if (active) activeUntil = now + ACTIVE_HOLD_MS;
   app.ticker.maxFPS = document.hidden ? 4 : now < activeUntil ? 60 : IDLE_FPS;
 
-  // tethers: only the hovered/selected actor's chain and tickets in flight; the rest of the floor stays clear
+  // tethers exist only while a real delegation/report ticket is in flight (+600 ms fade); a hover/select chain is a faint static line
   tether.clear();
   for (const m of movers) {
     if (m.kind === "spark") continue;
     const e = moverEnd(m);
-    tether.moveTo(m.a.pos.x, m.a.pos.y - 8).lineTo(e.x, e.y); // both ends follow the actors, not where the sender stood at launch
+    dash(m.a.pos.x, m.a.pos.y - 8, e.x, e.y, now); // both ends follow the actors, not where the sender stood at launch
+    tether.stroke({ width: 1, color: 0x7fe3ff, alpha: 0.55 * tetherAlpha(m.life) });
   }
-  tether.stroke({ width: 0.8, color: 0xffffff, alpha: 0.4 });
   const fid = office.selected ?? hoverId;
   if (fid) {
     const chain = [fid, ...parentChain(state, fid)];
-    for (let i = 0; i + 1 < chain.length; i++) tetherSeg(actors.get(chain[i]), actors.get(chain[i + 1]));
-    tether.stroke({ width: 1.5, color: 0x9ad7f5, alpha: 0.85 });
+    for (let i = 0; i + 1 < chain.length; i++) {
+      const p = actors.get(chain[i]), q = actors.get(chain[i + 1]);
+      if (p && q) tether.moveTo(p.pos.x, p.pos.y - 8).lineTo(q.pos.x, q.pos.y - 8);
+    }
+    tether.stroke({ width: 1, color: 0x7fe3ff, alpha: 0.3 });
   }
 
   steamT += dt;
@@ -909,6 +1072,23 @@ app.ticker.add((tk) => {
     p.s.alpha = Math.max(0, 1 - p.life / p.max);
     if (p.life >= p.max) { p.s.visible = false; spritePool.push(p.s); particles.splice(i, 1); }
   }
+  while (pending.length && movers.length < MAX_MOVERS) {
+    const p = pending.shift()!;
+    if (actors.get(p.a.id) === p.a && actors.get(p.b.id) === p.b && !p.b.leaving) launch(p.kind, p.a, p.b);
+  }
+  recvCount.clear();
+  for (const p of pending) recvCount.set(p.b.id, (recvCount.get(p.b.id) ?? 0) + 1);
+  for (const [id, t] of recvBadges) t.visible = recvCount.has(id);
+  for (const [id, n] of recvCount) { // "+N" on the receiver while tickets for it wait for a free flight slot
+    const b = actors.get(id);
+    if (!b) continue;
+    let t = recvBadges.get(id);
+    if (!t) { t = new Text({ text: "", style: { fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: 10, fill: 0x7fe3ff, stroke: { color: 0x0e0d16, width: 3 } } }); t.anchor.set(0, 1); t.eventMode = "none"; uiLayer.addChild(t); recvBadges.set(id, t); }
+    t.visible = true;
+    t.text = `+${n}`;
+    t.position.set(dev(ui.ox + (b.pos.x + 7) * ui.sc), dev(ui.oy + (b.pos.y - 22) * ui.sc));
+  }
+  stepCourier(dt, now);
   for (let i = movers.length - 1; i >= 0; i--) {
     const m = movers[i], still = !burstAllowed(), blockedKind = m.kind === "blocked";
     // an end actor that left or was destroyed retires the ticket at once: nothing is ever left on the floor
@@ -935,7 +1115,10 @@ app.ticker.add((tk) => {
     const u = (r.life - r.delay) / r.ms;
     if (u >= 1) { r.g.visible = false; ringPool.push(r.g); rings.splice(i, 1); continue; }
     r.g.visible = u >= 0;
-    if (u >= 0) { r.g.scale.set(0.5 + 1.7 * u); r.g.alpha = 1 - u; }
+    if (u >= 0) {
+      if (r.rip) { r.g.scale.set(settings.reducedMotion ? 1.2 : 0.5 + 2.3 * u); r.g.alpha = settings.reducedMotion ? 0.5 : 0.6 * (1 - u); }
+      else { r.g.scale.set(0.5 + 1.7 * u); r.g.alpha = 1 - u; }
+    }
   }
 });
 
@@ -944,6 +1127,9 @@ setInterval(() => {
   const now = Date.now();
   if (!layout || frozen.on) return;
   releaseBlocked(now);
+  const sm = Number(store.get("stuck"));
+  idleTagMs = ([1, 2, 5, 10].includes(sm) ? sm : 2) * 60_000;
+  if (shrinking) chooseLayout(); // the ratchet decays on a clock, not on snapshots
   maybeStroll(now);
   const w = pickWeather(doneAt, errAt, now);
   if (w !== weather) { weather = w; scene.setWeather(w); }

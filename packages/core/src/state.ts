@@ -377,6 +377,11 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
     case "turn_end":
       return say(patchSession(s, e.session, { doing: undefined, detail: undefined, why: undefined, prompt: undefined, ...(e.usage ? { usage: e.usage } : {}) }), { t: e.t, kind: "done", session: e.session, from: leadId(e.session), to: "user", text: "" });
     case "waiting":
-      return patchSession(s, e.session, { waiting: true, waitingText: e.text });
+      // idle_prompt: Claude is at the prompt, so a tool or turn that never reported its end (interrupt) is over
+      if (e.idle) { // the session's agents too: a tool whose end never arrived (interrupt, lost hook) would otherwise show 'running' for the 5 min cap; a live tool re-sets it on its next event
+        const agents = Object.fromEntries(Object.entries(s.agents).map(([id, ag]) => [id, ag.session === e.session && ag.doing ? { ...ag, doing: undefined, detail: undefined, why: undefined } : ag]));
+        s = { ...s, agents };
+      }
+      return patchSession(s, e.session, { waiting: true, waitingText: e.text, ...(e.idle ? { doing: undefined, detail: undefined, why: undefined, prompt: undefined } : {}) });
   }
 }

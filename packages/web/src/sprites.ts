@@ -27,7 +27,7 @@ const LEAD_BEARD: (0 | 1 | 2)[] = [0, 0, 0, 1, 2]; // mostly full beards, some s
 /** Team colour buckets (30 degrees of hue each): the session's repo hue shows on the hem and badge halo so a team reads as a team. */
 export const TEAMS = 12;
 export const teamColor = (b: number) => hsl(b * 30 + 15, 0.6, 0.5);
-export type PoseOpts = { expr?: Expr; lift?: boolean; dip?: boolean; drop?: number; think?: boolean };
+export type PoseOpts = { expr?: Expr; lift?: boolean; dip?: boolean; drop?: number; think?: boolean; sip?: boolean };
 
 const ROLE_ACC: Record<string, Accessory> = {
   architect: "glasses", frontend: "headphones", backend: "cap", qa: "glasses", reviewer: "tie", researcher: "bun",
@@ -186,7 +186,7 @@ export function person(look0: Look, dir: Dir, pose: Pose, frame: number, o: Pose
     g.rect(4, HT(2), 8, 8 - hv, look.hair);
     if (look.style === 4) g.rect(5, H(10), 6, 1, look.hair);
     if (look.style === 5) g.rect(5, H(10), 6, 4, look.hair);
-    if (streak) g.rect(9, H(4), 1, 4, acc);
+    // no back-view streak: it was a 1px stub at x=9 (1.5px right of centre) that read as a stray mark on a faded entrant at the door
   } else {
     g.rect(4, HT(2), 8, 3, look.hair);
     if (side) g.rect(4, HT(2), 4, 8 - hv, look.hair);
@@ -236,7 +236,8 @@ export function person(look0: Look, dir: Dir, pose: Pose, frame: number, o: Pose
     else { g.rect(8, H(5), 3, 2, lens); g.rect(5, H(5), 3, 1, DARK); g.set(11, H(5), DARK); g.set(8, H(5), glint); }
   }
   if (look.acc === "headphones") { g.rect(4, HT(1), 8, 1, acc); g.rect(3, H(4), 1, 4, acc); g.rect(12, H(4), 1, 4, acc); }
-  if (think && dir === "down") g.rect(9, H(8), 3, 2, look.skin); // hand on chin
+  if (o.sip && dir === "down") { g.rect(10, H(6), 3, 3, "#f4f1e6"); g.rect(10, H(6), 3, 1, "#6b4a2e"); g.set(13, H(7), "#f4f1e6"); g.rect(9, H(9), 3, 1, look.skin); } // mug raised to the face
+  else if (think && dir === "down") g.rect(9, H(8), 3, 2, look.skin); // hand on chin
   if (look.acc === "cap") { g.rect(4, HT(1), 8, 3, acc); if (dir !== "up") g.rect(side ? 8 : 4, HT(4), side ? 4 : 8, 1, shade(acc, -0.15)); }
   separate(g, look.skin, [look.hair, lit, hairDark, look.shirt, shade(look.shirt, 0.08), team]);
   return g;
@@ -278,7 +279,7 @@ export const personTex = (look: Look, dir: Dir, pose: Pose, frame: number, o: Po
   // a back view shows no face, so face expressions share the neutral texture there
   const expr = dir === "up" && o.expr !== "stretch" ? "neutral" : o.expr ?? "neutral";
   const fr = pose === "walk" ? frame % WALK_FRAMES : pose === "sit" || pose === "sit-glance" ? frame % 2 : 0;
-  const key = `${lookKey(look)}:${dir}${pose}${fr}${expr}${o.lift ? "L" : ""}${o.dip ? "D" : ""}${o.think ? "T" : ""}${o.drop ?? 0}${settings.reducedMotion ? "r" : ""}`;
+  const key = `${lookKey(look)}:${dir}${pose}${fr}${expr}${o.lift ? "L" : ""}${o.dip ? "D" : ""}${o.think ? "T" : ""}${o.sip ? "S" : ""}${o.drop ?? 0}${settings.reducedMotion ? "r" : ""}`;
   let t = people.get(key);
   if (!t) people.set(key, (t = person(look, dir, pose, fr, { ...o, expr }).outline(theme().outline).texture()));
   return t;
@@ -303,10 +304,35 @@ export const shadowTex = () =>
     return g;
   });
 
-export const chairTex = () =>
-  memo("chair", () => {
-    const g = new Grid(16, 16);
-    slab(g, 3, 2, 10, 11, "#3b3f55"); slab(g, 4, 3, 8, 9, "#4a4f69"); slab(g, 2, 10, 12, 3, "#2f3246");
+// chair upholstery: slate, teal, plum, amber (outer, back, base)
+const CHAIRS = [["#3b3f55", "#4a4f69", "#2f3246"], ["#2c4f58", "#3a6b78", "#223d45"], ["#4a3556", "#62466f", "#382a42"], ["#5a4a2c", "#7a6338", "#44381f"]];
+export const CHAIR_STYLES = CHAIRS.length;
+export const chairTex = (v = 0) =>
+  memo(`chair:${v}`, () => {
+    const g = new Grid(16, 16), c = CHAIRS[v % CHAIRS.length];
+    slab(g, 3, 2, 10, 11, c[0]); slab(g, 4, 3, 8, 9, c[1]); slab(g, 2, 10, 12, 3, c[2]);
+    return g;
+  });
+
+/** Drafting stool for standing-desk pods: a small round seat on a thin post with a foot ring (the occupant perches, not sits). */
+export const stoolTex = (v = 0) =>
+  memo(`stool:${v}`, () => {
+    const g = new Grid(16, 16), c = CHAIRS[v % CHAIRS.length];
+    slab(g, 4, 8, 8, 3, c[1]); g.rect(4, 8, 8, 1, c[0]); g.rect(7, 11, 2, 4, "#2a2d3b"); g.rect(4, 14, 8, 1, "#171a24"); g.rect(5, 15, 6, 1, "rgba(26,20,40,0.22)");
+    return g;
+  });
+
+/** The table tile that joins two desks of a bench pod: same top and front as a desk, with a shared item on it (plant, papers, hub, mugs). */
+export const benchTex = (v: number) =>
+  memo(`bench:${Math.abs(v) % 4}`, () => {
+    const g = new Grid(16, 16), d = theme().desk;
+    slab(g, 0, 1, 16, 5, d.top); g.rect(0, 1, 16, 1, d.edge);
+    slab(g, 0, 6, 16, 9, d.front); g.rect(1, 8, 14, 6, d.inset); g.rect(3, 10, 2, 1, d.top); g.rect(11, 10, 2, 1, d.top);
+    const k = Math.abs(v) % 4;
+    if (k === 0) { g.rect(6, 3, 4, 3, "#a0633a"); g.rect(5, 0, 6, 3, "#4fa05a"); g.rect(7, 0, 2, 1, "#7fd18a"); }
+    else if (k === 1) { g.rect(4, 2, 5, 3, "#e8e4d6"); g.rect(5, 1, 5, 3, "#cfcab8"); }
+    else if (k === 2) { g.rect(5, 3, 6, 2, "#2a2d3b"); g.rect(7, 3, 1, 1, "#7fe3ff"); g.rect(9, 3, 1, 1, "#7fe3ff"); }
+    else { g.rect(4, 2, 3, 3, "#e9edf5"); g.rect(9, 2, 3, 3, "#c0524d"); }
     return g;
   });
 
@@ -314,8 +340,8 @@ export const chairTex = () =>
  * Desk seen from the front; the monitor is angled so its screen faces the camera.
  * variant 0: single monitor + lamp + mug (steam wisps while working); 1: dual-monitor rig.
  */
-export const deskTex = (accent: string, screen: 0 | 1 | 2 | 3, variant: 0 | 1 = 0) =>
-  memo(`desk:${accent}:${screen}:${variant}`, () => {
+export const deskTex = (accent: string, screen: 0 | 1 | 2 | 3, variant: 0 | 1 = 0, style: 0 | 1 | 2 = 0) =>
+  memo(`desk:${accent}:${screen}:${variant}:${style}`, () => {
     const g = new Grid(16, 16);
     const d = theme().desk;
     slab(g, 0, 1, 16, 5, d.top); g.rect(0, 1, 16, 1, d.edge);
@@ -344,6 +370,12 @@ export const deskTex = (accent: string, screen: 0 | 1 | 2 | 3, variant: 0 | 1 = 
       if (screen === 1) { g.set(0, 1, "#dfe6f5"); g.set(1, 0, "#dfe6f5"); }
       else if (screen === 2) { g.set(0, 0, "#dfe6f5"); g.set(1, 1, "#dfe6f5"); }
     }
+    if (style === 1) { // standing: the cabinet becomes two raised legs and a thin riser, so the top reads higher
+      g.rect(1, 7, 14, 8, null); g.rect(2, 7, 2, 8, d.front); g.rect(12, 7, 2, 8, d.front); g.rect(2, 7, 12, 1, shade(d.front, -0.2));
+      g.rect(4, 14, 8, 1, shade(d.front, -0.2));
+    } else if (style === 2) { // carrel: low fabric screens down both sides
+      for (const x of [0, 14]) { g.rect(x, 0, 2, 15, "#3b4a6e"); g.rect(x, 0, 2, 1, "#6a7aa8"); }
+    }
     return g;
   });
 
@@ -351,7 +383,7 @@ export const laptopTex = (tier: number) =>
   memo(`laptop:${tier}`, () => {
     const g = new Grid(16, 16);
     if (tier === 0) {
-      slab(g, 2, 4, 12, 3, "#caa06a"); g.rect(3, 7, 2, 7, "#8d6a43"); g.rect(11, 7, 2, 7, "#6f5333"); // stool-table
+      slab(g, 2, 4, 12, 3, "#5a6a98"); g.rect(3, 7, 2, 7, "#3a4366"); g.rect(11, 7, 2, 7, "#2d3454"); // stool-table
     } else {
       slab(g, 0, 3, 16, 3, "#d4d7e2"); g.rect(1, 6, 1, 9, "#7e8296"); g.rect(14, 6, 1, 9, "#666a7e");
       g.rect(2, 11, 12, 1, "#7e8296");
@@ -362,16 +394,53 @@ export const laptopTex = (tier: number) =>
   });
 
 /** Wall-hugging server rack; `blink` flips which LEDs are lit. */
-export const rackTex = (blink: 0 | 1) =>
-  memo(`rack:${blink}`, () => {
+/** One cabinet of the server bank. `pos` 0/1/2 = left/middle/right: all the same height, LED rows on the same y, a 1px lit seam where racks meet so the three read as one row. */
+export const rackTex = (blink: 0 | 1, pos: 0 | 1 | 2 = 0) =>
+  memo(`rack:${blink}:${pos}`, () => {
     const g = new Grid(16, 16);
-    slab(g, 2, 0, 12, 16, "#2e3144");
+    g.rect(0, 0, 16, 16, "#2e3144");
+    g.rect(0, 0, 16, 1, "#4a5170"); // lit top edge
+    g.rect(0, 15, 16, 1, "#171a24"); // base
+    if (pos !== 2) g.rect(15, 0, 1, 15, "#4a5170"); // lit seam against the next cabinet
+    if (pos !== 0) g.rect(0, 1, 1, 14, "#1f2233"); // shadowed seam on this side
     for (let i = 0; i < 4; i++) {
-      g.rect(3, 1 + i * 4, 10, 3, "#1b1d2b"); g.rect(4, 2 + i * 4, 5, 1, "#3a3e55");
-      g.set(11, 2 + i * 4, (i + blink) % 2 ? "#5be37d" : "#2c5a3a"); g.set(12, 2 + i * 4, (i + blink) % 3 ? "#2c5a3a" : "#ffb347");
+      g.rect(2, 2 + i * 3, 11, 2, "#1b1d2b"); g.rect(3, 2 + i * 3, 5, 1, "#3a3e55");
+      g.set(10, 3 + i * 3, (i + blink) % 2 ? "#5be37d" : "#2c5a3a"); g.set(11, 3 + i * 3, (i + blink) % 3 ? "#2c5a3a" : "#ffb347");
     }
     return g;
   });
+
+/** Wall sconce: a bracket plate with a lit lens; the pool under it comes from lights(). 16x16, placed 10px below the cove. */
+export const sconceTex = () =>
+  memo("sconce", () => {
+    const g = new Grid(16, 16);
+    g.rect(7, 0, 2, 5, "#4a5578"); g.rect(5, 5, 6, 2, "#2d3556"); g.rect(6, 7, 4, 1, "#dcecff"); g.set(7, 8, "#9fd8ee"); g.set(8, 8, "#9fd8ee");
+    return g;
+  });
+
+/** Floor lamp: weighted base, pole, warm shade. 16x16 (one tile). */
+export const floorLampTex = () =>
+  memo("floorlamp", () => {
+    const g = new Grid(16, 16);
+    g.rect(5, 14, 6, 2, "#2a2f45"); g.rect(7, 6, 2, 8, "#5a6490");
+    g.rect(4, 1, 8, 5, "#ffc870"); g.rect(4, 1, 8, 1, "#ffe3a8"); g.rect(5, 6, 6, 1, "#a8743a");
+    return g;
+  });
+
+/** Pod junction box: 6x4 dark steel with a lit top edge; the status LED is a separate pooled sprite at (4,1). */
+export const junctionTex = () =>
+  memo("junction", () => {
+    const g = new Grid(6, 4);
+    g.rect(0, 0, 6, 4, "#1c2030"); g.rect(0, 0, 6, 1, "#5a6490"); g.rect(0, 3, 6, 1, "#10131f");
+    return g;
+  });
+
+/** How busy the office is, 0..1: more working seats and a bigger working share of the seated both raise it. 0 when nobody is seated. */
+export const activity = (working: number, used: number) =>
+  used <= 0 ? 0 : Math.min(1, (Math.min(working, used) / 6) * 0.7 + (Math.min(working, used) / used) * 0.3);
+
+/** Deterministic 0..1 noise for LED `i` at time step `step`: no Math.random in the hot path. */
+export const ledNoise = (i: number, step: number) => (Math.imul(Math.imul(i + 1, 374761393) ^ Math.imul(step + 1, 668265263), 2246822519) >>> 8) / 16777216;
 
 export const plantTex = () =>
   memo("plant", () => {
@@ -402,7 +471,7 @@ export const coolerTex = () =>
 export const shelfTex = () =>
   memo("shelf", () => {
     const g = new Grid(16, 16);
-    slab(g, 1, 0, 14, 16, "#6b4a2d"); g.rect(2, 1, 12, 6, "#3f2c1a"); g.rect(2, 9, 12, 6, "#3f2c1a"); g.rect(2, 1, 12, 1, "#2a1c10"); g.rect(2, 9, 12, 1, "#2a1c10");
+    slab(g, 1, 0, 14, 16, "#3a4366"); g.rect(2, 1, 12, 6, "#171b30"); g.rect(2, 9, 12, 6, "#171b30"); g.rect(2, 1, 12, 1, "#10131f"); g.rect(2, 9, 12, 1, "#10131f");
     ["#d85a5a", "#e8c25a", "#5a9ad8", "#6bc17a", "#b86bd8"].forEach((c, i) => { g.rect(3 + i * 2, 2, 2, 5, c); g.rect(3 + i * 2, 10, 2, 5, c === "#d85a5a" ? "#5a9ad8" : "#d85a5a"); });
     return g;
   });
@@ -410,34 +479,57 @@ export const shelfTex = () =>
 export const couchTex = () =>
   memo("couch", () => {
     const g = new Grid(32, 16);
-    slab(g, 1, 3, 30, 7, "#6a4a8c");
-    slab(g, 0, 7, 4, 8, "#583c76"); slab(g, 28, 7, 4, 8, "#583c76");
-    slab(g, 4, 9, 11, 5, "#7d5ba3"); slab(g, 17, 9, 11, 5, "#7d5ba3");
+    slab(g, 1, 3, 30, 7, "#3b4a6e");
+    slab(g, 0, 7, 4, 8, "#323f5f"); slab(g, 28, 7, 4, 8, "#323f5f");
+    slab(g, 4, 9, 11, 5, "#4a5a82"); slab(g, 17, 9, 11, 5, "#4a5a82");
     return g;
   });
 
-// ---- floor / wall tiles ----------------------------------------------------------------------
+/** 16x32 phone booth (1x2 tiles): frosted door facing +x, a dim status strip over it. */
+export const boothTex = () =>
+  memo("booth", () => {
+    const g = new Grid(16, 32);
+    slab(g, 1, 0, 14, 32, "#2d3556"); g.rect(3, 3, 9, 24, "#1c2238"); g.rect(4, 4, 7, 22, "#2a3a58"); g.rect(4, 4, 7, 1, "#4a5a82");
+    g.rect(12, 8, 2, 14, "#171b30"); g.rect(5, 1, 6, 1, "#7fe3ff"); g.rect(5, 28, 6, 2, "#171b30");
+    return g;
+  });
 
-export const woodTex = (v: number) =>
-  memoRaw(`wood${v % 2}`, () => {
+export const fridgeTex = () =>
+  memo("fridge", () => {
     const g = new Grid(16, 16);
-    const w = theme().wood;
-    g.rect(0, 0, 16, 16, v % 2 ? w.b : w.a);
-    const lit = shade(v % 2 ? w.b : w.a, 0.05); // plank top catches the key light just under each seam
-    for (let y = 0; y < 16; y += 4) { g.rect(0, y, 16, 1, w.grain); g.rect(0, y + 1, 16, 1, lit); }
-    g.rect(v % 2 ? 5 : 11, 0, 1, 4, w.grain); g.rect(v % 2 ? 12 : 3, 8, 1, 4, w.grain);
+    slab(g, 3, 0, 10, 16, "#aab4cc"); g.rect(3, 6, 10, 1, "#6a7390"); g.rect(11, 2, 1, 3, "#4a5068"); g.rect(11, 8, 1, 4, "#4a5068");
     return g;
   });
 
-export const carpetTex = (v: number) =>
-  memoRaw(`carpet${v % 2}`, () => {
-    const g = new Grid(16, 16);
-    const c = theme().carpet;
-    g.rect(0, 0, 16, 16, c.base);
-    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) if ((x * 7 + y * 13 + v * 5) % 11 === 0) g.set(x, y, c.fleck);
-    g.rect(0, 15, 16, 1, c.edge); g.rect(15, 0, 1, 16, c.edge);
+/** Low lounge table, 32x16 (two tiles): same composite as the desks, with a lit edge. */
+export const tableTex = () =>
+  memo("table", () => {
+    const g = new Grid(32, 16), d = theme().desk;
+    slab(g, 3, 5, 26, 6, d.top); g.rect(3, 5, 26, 1, d.edge); g.rect(5, 11, 2, 3, d.front); g.rect(25, 11, 2, 3, d.front);
+    g.rect(13, 6, 5, 3, "#e8e4d6"); g.rect(21, 6, 3, 3, "#c0524d");
     return g;
   });
+
+/** Armchair facing the table (+x); the scene mirrors it for the right-hand side. */
+export const armchairTex = () =>
+  memo("armchair", () => {
+    const g = new Grid(16, 16);
+    slab(g, 2, 3, 12, 11, "#3b4a6e"); slab(g, 3, 5, 9, 7, "#4a5a82"); slab(g, 1, 7, 3, 7, "#323f5f");
+    return g;
+  });
+
+/** Round collaboration table; k = 0 carries the projector, k = 1 a hub and papers. */
+export const huddleTex = (k: number) =>
+  memo(`huddle:${k & 1}`, () => {
+    const g = new Grid(16, 16), d = theme().desk;
+    g.rect(2, 3, 12, 10, d.top); g.rect(4, 1, 8, 14, d.top); g.rect(4, 13, 8, 2, d.front); g.rect(2, 11, 12, 2, d.front);
+    g.rect(4, 1, 8, 1, d.edge);
+    if (k & 1) { g.rect(5, 6, 4, 3, "#e8e4d6"); g.rect(10, 6, 2, 2, "#2a2d3b"); g.set(10, 6, "#7fe3ff"); }
+    else { g.rect(6, 5, 5, 4, "#2a2d3b"); g.rect(6, 5, 5, 1, "#4a5068"); g.set(9, 7, "#7fe3ff"); g.set(10, 7, "#7fe3ff"); }
+    return g;
+  });
+
+// ---- wall tile + floor print -----------------------------------------------------------------
 
 export const wallTex = () =>
   memoRaw("wall", () => {
@@ -498,3 +590,44 @@ export const catTex = () => memo("cat", () => {
   g.rect(6, 2, 2, 1, "#c27a38"); g.rect(3, 3, 1, 1, "#1d1b2b"); g.rect(8, 4, 2, 1, "#e8a45c"); g.rect(1, 4, 8, 1, "#c27a38");
   return g;
 });
+
+// ---- environment helpers (pure) ----------------------------------------------------------------
+
+/** 0..1 desaturation of a desk: grows from 30 s to 5 min of real silence; the boolean `stale` alone means fully stale. */
+export const staleK = (idleMs?: number, stale?: boolean) =>
+  idleMs === undefined ? (stale ? 1 : 0) : Math.round(Math.max(0, Math.min(1, (idleMs - 30000) / 270000)) * 4) / 4;
+
+/** Queue chips drawn on a desk: up to 5, and `more` is true when the queue is deeper than that (a "+" is drawn). */
+export const chipStack = (depth = 0) => ({ n: Math.max(0, Math.min(5, Math.floor(depth))), more: depth > 5 });
+
+// 3x5 pixel font for floor plates and wall signage (letters/digits used there only)
+const FONT_ROWS: Record<string, string[]> = {
+  A: [".#.", "#.#", "###", "#.#", "#.#"], B: ["##.", "#.#", "##.", "#.#", "##."], C: [".##", "#..", "#..", "#..", ".##"],
+  E: ["###", "#..", "##.", "#..", "###"], F: ["###", "#..", "##.", "#..", "#.."], G: [".##", "#..", "#.#", "#.#", ".##"],
+  I: ["###", ".#.", ".#.", ".#.", "###"], N: ["##.", "#.#", "#.#", "#.#", "#.#"], O: ["###", "#.#", "#.#", "#.#", "###"],
+  P: ["##.", "#.#", "##.", "#..", "#.."], S: [".##", "#..", ".#.", "..#", "##."], T: ["###", ".#.", ".#.", ".#.", ".#."],
+  0: ["###", "#.#", "#.#", "#.#", "###"], 1: [".#.", "##.", ".#.", ".#.", "###"], 2: ["##.", "..#", ".#.", "#..", "###"],
+  3: ["##.", "..#", ".#.", "..#", "##."], 4: ["#.#", "#.#", "###", "..#", "..#"], 5: ["###", "#..", "##.", "..#", "##."],
+  6: [".##", "#..", "###", "#.#", "###"], 7: ["###", "..#", ".#.", ".#.", ".#."], 8: ["###", "#.#", "###", "#.#", "###"],
+  9: ["###", "#.#", "###", "..#", "##."],
+};
+/** Width in px of `text` in the 3x5 font (1px gap between glyphs). */
+export const pxTextW = (text: string) => Math.max(0, text.length * 4 - 1);
+/** Draw `text` in the 3x5 pixel font at (x, y) on a 2D canvas; unknown characters are skipped (blank). */
+export function drawPx(c: CanvasRenderingContext2D, text: string, x: number, y: number, color: string) {
+  c.fillStyle = color;
+  [...text].forEach((ch, i) => FONT_ROWS[ch]?.forEach((row, j) => [...row].forEach((v, k) => { if (v === "#") c.fillRect(x + i * 4 + k, y + j, 1, 1); })));
+}
+
+// ---- ambient courier: a figure that is deliberately not an agent (own palette, hi-vis cap and band, a parcel; no tag) ------
+const COURIER: Look = { skin: "#d9a07a", hair: "#2a1d12", shirt: "#4f5d3a", pants: "#2a2f3a", style: 0, build: 0, head: 0, acc: "cap", accColor: "#d7ff3a", badge: -1 };
+const courierCache: Record<string, Texture> = {};
+export function courierTex(dir: Dir, frame: number): Texture {
+  const k = `${dir}${frame % WALK_FRAMES}${settings.reducedMotion ? "r" : ""}`;
+  return (courierCache[k] ??= (() => {
+    const g = person(COURIER, dir, "walk", frame);
+    g.rect(4, 13, 8, 2, "#d7ff3a"); // hi-vis band, even-width and mirrored
+    if (dir !== "up") { g.rect(5, 15, 6, 4, "#b88a55"); g.rect(7, 15, 2, 4, "#8a6238"); } // parcel held in front
+    return g.outline(theme().outline).texture();
+  })());
+}

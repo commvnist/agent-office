@@ -352,3 +352,32 @@ test("a broken clock does not reap sessions and a backwards stop time never give
   const rep = back.log.find((i) => i.kind === "report");
   assert.ok(rep && (rep.durationMs ?? 0) >= 0, String(rep?.durationMs));
 });
+
+test("idle notification clears a tool and prompt whose end was never reported (interrupt)", () => {
+  let s = emptyState();
+  const run = (e: OfficeEvent) => { s = reduce(cfg, s, e); };
+  run({ type: "session_start", session: "s", t: 1 } as OfficeEvent);
+  run({ type: "prompt", session: "s", text: "go", t: 2 });
+  run({ type: "tool", session: "s", tool: "Bash", t: 3 } as OfficeEvent);
+  run({ type: "waiting", session: "s", text: "needs input", t: 4 });
+  assert.equal(s.sessions.s.doing, "Bash"); // an ordinary notification changes nothing about the tool
+  run({ type: "waiting", session: "s", idle: true, t: 5 });
+  assert.equal(s.sessions.s.doing, undefined);
+  assert.equal(s.sessions.s.prompt, undefined);
+  assert.equal(s.sessions.s.waiting, true);
+});
+
+test("idle notification also clears a subagent's stuck tool in that session, and only that session", () => {
+  let s = emptyState();
+  const run = (e: OfficeEvent) => { s = reduce(cfg, s, e); };
+  run({ type: "session_start", session: "a", t: 1 } as OfficeEvent);
+  run({ type: "session_start", session: "b", t: 1 } as OfficeEvent);
+  run({ type: "agent_start", session: "a", agentId: "x1", agentType: "qa-engineer", t: 2 } as OfficeEvent);
+  run({ type: "agent_start", session: "b", agentId: "y1", agentType: "qa-engineer", t: 2 } as OfficeEvent);
+  run({ type: "tool", session: "a", agentId: "x1", tool: "Bash", t: 3 } as OfficeEvent);
+  run({ type: "tool", session: "b", agentId: "y1", tool: "Bash", t: 3 } as OfficeEvent);
+  run({ type: "waiting", session: "a", idle: true, t: 4 });
+  const doing = (id: string) => Object.values(s.agents).find((a) => a.id === id || a.id.endsWith(id))?.doing;
+  assert.equal(doing("x1"), undefined);
+  assert.equal(doing("y1"), "Bash");
+});

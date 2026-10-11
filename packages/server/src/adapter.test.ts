@@ -88,3 +88,9 @@ test("UserPromptSubmit: harness notifications are not user prompts; their summar
   // a plain prompt is untouched
   assert.deepEqual(adapt({ hook_event_name: "UserPromptSubmit", session_id: "s", prompt: "fix the header" }, 7), [{ type: "prompt", session: "s", text: "fix the header", t: 7 }]);
 });
+
+test("idle_prompt notification is flagged idle; other notifications are not", () => {
+  const n = (type?: string) => adapt({ hook_event_name: "Notification", session_id: "s", message: "m", notification_type: type }, 1)[0];
+  assert.equal((n("idle_prompt") as { idle?: boolean }).idle, true);
+  assert.equal((n("permission_prompt") as { idle?: boolean }).idle, undefined);
+});

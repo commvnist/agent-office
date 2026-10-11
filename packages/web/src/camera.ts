@@ -9,6 +9,23 @@ export const SHAKE_LIGHT = 3, SHAKE_HEAVY = 6; // px caps
 export const shakeOffset = (trauma: number, cap: number, tick: number) =>
   trauma <= 0 ? 0 : Math.min(cap, Math.ceil(cap * Math.min(1, trauma))) * (tick % 2 ? 1 : -1);
 const KEY = "agent-office.camera";
+const PHONE_TILES = 14, PHONE_MIN_TILES = 12;
+/** A stage too narrow to show the whole room legibly: phone portrait, or any tall stage. */
+export const isNarrow = (W: number, H: number) => W <= 560 || W / Math.max(1, H) < 0.8;
+/** Phone fit: about 14 tiles across (never fewer than 12), taller if the room is short so the stage is filled. `lh` is the room height in art px incl. spare. */
+export function phoneScale(W: number, H: number, lh: number, tile = 16) {
+  return Math.max(W / (PHONE_TILES * tile), Math.min(H / lh, W / (PHONE_MIN_TILES * tile)));
+}
+export type AutoCand = { id: string; x: number; y: number; alert?: boolean; working?: boolean };
+/** Default phone focus: an alert agent, else a working one, else `rest` (the door aisle). Lowest id wins; `cur` is kept while it still qualifies so the camera never ping-pongs. */
+export function pickAuto(c: AutoCand[], cur: string | null, rest: { x: number; y: number }): { id: string | null; x: number; y: number } {
+  for (const k of ["alert", "working"] as const) {
+    const m = c.filter((a) => a[k]);
+    const w = m.find((a) => a.id === cur) ?? m.reduce<AutoCand | null>((b, a) => (!b || a.id < b.id ? a : b), null);
+    if (w) return w;
+  }
+  return { id: null, ...rest };
+}
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
 export class Camera {
@@ -28,6 +45,11 @@ export class Camera {
   focusSelected: (() => void) | null = null;
   /** Eased zoom target (follow mode); any user zoom/pan/reset cancels it. */
   zoomGoal: number | null = null;
+  /** Set by main.ts each frame: narrow stage, so the room is not fit whole; the view follows `autoPos` (pickAuto) until the user pans or picks "fit all". */
+  phone = false;
+  fitAll = false;
+  autoFollow = true;
+  autoPos: { x: number; y: number } | null = null;
   /** This frame's view without the shake: the minimap and other HUD draw from it, so only the world moves. */
   still: View = { sc: 1, ox: 0, oy: 0 };
   private trauma = 0;
@@ -45,7 +67,7 @@ export class Camera {
   }
 
   /** Final transform for this frame. `target` is the followed actor's art-space position (eased towards when set). */
-  view(fit: number, W: number, H: number, top: number, lw: number, lh: number, target?: { x: number; y: number } | null, dt = 0): View {
+  view(fit: number, W: number, H: number, top: number, lw: number, lh: number, target?: { x: number; y: number } | null, dt = 0, dpr = 1): View {
     if (this.zoomGoal !== null) {
       const kz = dt > 0 ? Math.min(1, dt * 4) : 1;
       this.zoom = Math.abs(this.zoomGoal - this.zoom) < 0.01 ? this.zoomGoal : this.zoom + (this.zoomGoal - this.zoom) * kz;
@@ -55,14 +77,21 @@ export class Camera {
     const sc = fit * this.zoom, cx = W / 2;
     this.last = { sc, ox: 0, oy: 0, cx, top, H, lw, lh };
     const cy = this.anchorY(sc);
-    if (this.follow && target) {
-      const k = dt > 0 ? Math.min(1, dt * 6) : 1;
-      this.panX += (-(target.x - lw / 2) * sc - this.panX) * k;
-      this.panY += (this.panYFor(target.y, sc) - this.panY) * k;
+    const auto = this.phone && !this.fitAll && this.autoFollow && !this.follow ? this.autoPos : null;
+    if ((this.follow && target) || auto) {
+      const t = (this.follow && target) || auto!;
+      const k = dt > 0 ? Math.min(1, dt * (auto ? 3 : 6)) : 1;
+      this.panX += (-(t.x - lw / 2) * sc - this.panX) * k;
+      this.panY += (this.panYFor(t.y, sc) - this.panY) * k;
     }
     this.panX = clamp(this.panX, -lw * sc, lw * sc);
     this.panY = clamp(this.panY, -lh * sc, lh * sc);
-    const ox = Math.round(cx - (lw / 2) * sc + this.panX), oy = Math.round(cy - (lh / 2) * sc + this.panY);
+    if (this.phone && !this.fitAll) { // a room larger than the stage never slides off it: no dead band beside or below the walls
+      if (lw * sc > W) this.panX = clamp(this.panX, -(lw * sc - W) / 2, (lw * sc - W) / 2);
+      if (lh * sc > H) this.panY = clamp(this.panY, H - lh * sc, 0);
+    }
+    const snap = (n: number) => Math.round(n * dpr) / dpr; // whole device pixels: art pixel edges never straddle a physical pixel
+    const ox = snap(cx - (lw / 2) * sc + this.panX), oy = snap(cy - (lh / 2) * sc + this.panY);
     this.last.ox = ox;
     this.last.oy = oy;
     this.still.sc = sc; this.still.ox = ox; this.still.oy = oy;
@@ -102,6 +131,7 @@ export class Camera {
   centerOn(x: number, y: number) {
     this.zoomGoal = null;
     this.follow = null;
+    this.autoFollow = false;
     this.touched = Date.now();
     this.panX = -(x - this.last.lw / 2) * this.last.sc;
     this.panY = this.panYFor(y, this.last.sc);
@@ -110,6 +140,7 @@ export class Camera {
   panBy(dx: number, dy: number) {
     this.zoomGoal = null;
     this.follow = null;
+    this.autoFollow = false;
     this.touched = Date.now();
     this.panX += dx;
     this.panY += dy;
@@ -117,6 +148,15 @@ export class Camera {
   }
   reset() {
     this.zoom = 1; this.panX = this.panY = 0; this.follow = null; this.zoomGoal = null;
+    this.fitAll = false; this.autoFollow = true;
+    this.touched = Date.now();
+    this.save();
+  }
+  /** Phone "fit all" toggle: the whole room at the fitted scale, or back to the followed close view. */
+  toggleFitAll() {
+    this.fitAll = !this.fitAll;
+    this.autoFollow = !this.fitAll;
+    this.follow = null; this.zoom = 1; this.zoomGoal = null; this.panX = this.panY = 0;
     this.touched = Date.now();
     this.save();
   }

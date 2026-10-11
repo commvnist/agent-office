@@ -31,7 +31,6 @@ body:has(.view:not([hidden])) #top{background:var(--bg)}
 #minimap{border:1px solid var(--line);border-radius:4px;cursor:crosshair;touch-action:none;max-width:120px;max-height:80px}
 #mm button{font:11px/1 inherit;padding:4px 4px;border:1px solid var(--line);border-radius:4px;background:var(--panel);color:inherit;cursor:pointer}
 @media (max-width:800px){
-  #side{height:100dvh;padding-bottom:env(safe-area-inset-bottom)}
   #top{padding-top:env(safe-area-inset-top)}
   .dlg{right:8px}
 }
@@ -42,9 +41,10 @@ body:has(.view:not([hidden])) #top{background:var(--bg)}
 .cb.working{--ring:var(--good)} .cb.thinking{--ring:var(--acc)} .cb.waiting{--ring:var(--warn)} .cb.blocked{--ring:var(--bad)} .cb.idle{--ring:var(--line)}
 .cb.queued{--ring:var(--mute);border-style:dashed}
 .cb[aria-pressed=true]{box-shadow:0 0 0 2px var(--acc)}
+/* hook: session identity on chips (project colour + 2-letter glyph) needs data-session/--pc on .cb in colonists.ts; the DOM only has the status ring and portrait today */
 .cb.more{width:auto;min-width:24px;padding:0 4px;border:0;border-radius:3px;color:var(--mute);cursor:default;font-size:calc(11px * var(--ts,1))}
 #hl{position:absolute;inset-inline-end:calc(var(--sw) + 12px);top:calc(var(--top-h,40px) + var(--cb-h,0px) + 8px);z-index:3;display:flex;flex-direction:column;gap:8px;align-items:flex-end;pointer-events:none}
-.hl,.toast{pointer-events:auto;display:flex;gap:8px;align-items:flex-start;text-align:start;max-width:min(340px,80vw);box-sizing:border-box;background:var(--panel);border:1px solid var(--line);border-inline-start:3px solid var(--glow);border-radius:6px;padding:8px 12px;cursor:pointer;animation:fx-in .25s ease-out}
+.hl,.toast{pointer-events:auto;display:flex;gap:8px;align-items:flex-start;text-align:start;max-width:min(340px,80vw);box-sizing:border-box;background:var(--panel);border:1px solid var(--line);border-inline-start:3px solid var(--glow);border-radius:3px;padding:8px 12px;cursor:pointer;animation:fx-in .2s cubic-bezier(0.16,1,0.3,1)}
 .toast{flex-direction:column;align-items:stretch;gap:4px;cursor:default} .toast .tmain{display:flex;gap:8px;align-items:flex-start;background:none;border:0;padding:0;text-align:start;cursor:pointer} .toast .b{align-self:flex-start}
 .hl.done{border-inline-start-color:var(--good)} .hl.blocked{border-inline-start-color:var(--bad)} .hl.partial{border-inline-start-color:var(--warn)}
 .hl.still,.toast.still{animation:fade .15s ease-out}
@@ -60,7 +60,14 @@ body.tick #fxbl{bottom:38px} body.tick.presenter #caption{bottom:44px}
 #ticker span{overflow:hidden;text-overflow:ellipsis}
 body.overlay #colony,body.overlay #toasts,body.overlay #hl{display:none}
 .sp{display:flex;align-items:center;gap:8px;padding:4px 16px;color:var(--acc)} .sp .k:first-child{min-width:78px}
-#spark:empty{display:none} #spark{padding:4px 0;border-bottom:1px solid var(--line)}
+/* events/min + tokens/min: a 24px strip pinned to the stage bottom (inside the panel DOM, so visibility:visible beats the collapsed panel's hidden); presenter/overlay/kiosk hide #side and with it the strip */
+#spark:empty{display:none}
+#spark{position:fixed;inset-inline:0 var(--sw);bottom:0;z-index:3;height:24px;box-sizing:border-box;display:flex;align-items:center;gap:24px;padding:0 16px;visibility:visible;overflow:hidden;white-space:nowrap;background:color-mix(in srgb,var(--panel) 94%,transparent);border-top:1px solid var(--line)}
+#spark .sp{padding:0;gap:8px} #spark .sp .k:first-child{min-width:0} #spark svg{flex:none;height:16px}
+body.tick #spark{bottom:26px}
+#mm{bottom:32px} #fxbl{bottom:36px} body.tick #fxbl{bottom:62px}
+@media (max-width:480px){#spark{gap:12px} #spark svg{display:none}}
+@media (max-width:800px){body:not(.collapsed) #spark{inset-inline-end:min(var(--swx,340px),92vw)}}
 .sess{position:relative} .sess.hasr{padding-inline-end:48px} .sess .rings{position:absolute;inset-inline-end:12px;top:8px}
 .pal{position:fixed;left:50%;right:auto;top:14vh;transform:translateX(-50%);width:min(520px,92vw);z-index:50}
 .pal input{width:100%;box-sizing:border-box;background:var(--raise);border:1px solid var(--line);border-radius:4px;padding:8px 8px}
@@ -83,11 +90,22 @@ input[type=number],input[type=text],input:not([type]){box-sizing:border-box;padd
 /* The side panel sits above the stage overlays (colony strip, minimap, highlights): on a phone it is a drawer over them,
    and the header's Hide-panel button gets its own row at the top of the open drawer instead of covering the first toolbar row. */
 #side{z-index:4}
+/* Phone: the open panel is a bottom sheet (45% of the height, grab handle on top); the header and its Hide-panel button stay uncovered
+   and the camera fits the stage above the sheet (main.ts sheetPx). #fit is the phone's "fit all / follow" toggle. */
+#fit{position:absolute;inset-inline-start:8px;bottom:36px;z-index:3}
+body.overlay #fit,body.presenter #fit,body.kiosk #fit{display:none}
 @media (max-width:800px){
-  body:not(.collapsed) #pbody{padding-top:44px}
+  #side{inset-inline:0;top:auto;bottom:0;width:auto;height:45dvh;border-inline-start:0;border-top:1px solid var(--line);border-radius:12px 12px 0 0;box-shadow:0 -8px 24px #0008}
+  #handle{display:none}
+  #side::before{content:"";position:absolute;top:6px;left:50%;width:40px;height:4px;margin-left:-20px;border-radius:2px;background:var(--mute);z-index:3}
+  #pbody{padding-top:16px;padding-bottom:28px}
+  body:not(.collapsed) #fit{bottom:calc(45dvh + 8px)}
+  #spark{inset-inline-end:0}
+  body:not(.collapsed) #spark{inset-inline-end:0}
+  #need{top:-16px}
 }
 
-/* Phones: the wordmark collapses to its tick so the status counts get the room (they were truncated to "20 WO…"). */
+/* Phones: the wordmark collapses so the status counts get the room (they were truncated to "20 WO…"). */
 @media (max-width:800px){
   #top .wm{font-size:0;gap:0}
   #stats{letter-spacing:0;font-size:calc(11px * var(--ts,1))}

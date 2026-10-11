@@ -1,12 +1,13 @@
 import { Container, Graphics, Sprite, Text } from "pixi.js";
-import type { Tile } from "@agent-office/core";
+import { TILE_PX, type Tile } from "@agent-office/core";
+import { dev } from "./snap.ts";
 import { personTex, emoteTex, toolIconTex, type Dir, type Emote, type Expr, type Look } from "./sprites.ts";
-import { easeSpeed, fontPx, settings, stackBubbles, type BubbleBox } from "./settings.ts";
+import { easeSpeed, fontPx, settings, stackBubbles, textZoom, type BubbleBox } from "./settings.ts";
 import { theme } from "./theme.ts";
-import { HOP_MS, JITTER_MS, SQUASH_MS, cleanText, clampBox, hopPose, jitterX, popScale, quirkAt, squashY, stackLabels, statusOf, stepDrop, toolIcon, type Box, type Rect } from "./choreo.ts";
+import { HOP_MS, JITTER_MS, SQUASH_MS, cleanText, clampBox, hopPose, idleTier, jitterX, microPose, microSlot, sipState, popScale, quirkAt, squashY, stackLabels, statusOf, stepDrop, toolIcon, type Box, type Rect } from "./choreo.ts";
 import { hash } from "./color.ts";
 
-export const T = 16; // art pixels per tile
+export const T = TILE_PX; // art pixels per tile
 export const feet = (t: Tile) => ({ x: t.x * T + T / 2, y: t.y * T + T });
 const SPEED = 3.4 * T; // art px / s
 
@@ -58,11 +59,12 @@ export const setBubbleBlank = (b: boolean) => { const c = blank !== b; blank = b
 function makeBubble(text: string, kind: BubbleKind, badge?: Badge): Container {
   const st = BUBBLE_STYLE[kind];
   const small = kind === "tool";
+  const u = textZoom.k; // bubble geometry follows the scene-relative text size
   const t = new Text({
     text: blank ? "…" : cleanText(text),
-    style: { fontFamily: MONO, fontSize: fontPx(small ? 10 : 12), fill: st.fg, wordWrap: true, wordWrapWidth: small ? 190 : 210, lineHeight: small ? 14 : 16 },
+    style: { fontFamily: MONO, fontSize: fontPx(small ? 10 : 12), fill: st.fg, wordWrap: true, wordWrapWidth: Math.round((small ? 190 : 210) * u), lineHeight: Math.round((small ? 14 : 16) * u) },
   });
-  const pad = 7, w = Math.ceil(t.width) + pad * 2, h = Math.ceil(t.height) + pad * 2;
+  const pad = Math.round(7 * u), w = Math.ceil(t.width) + pad * 2, h = Math.ceil(t.height) + pad * 2;
   const g = new Graphics();
   g.roundRect(0, 0, w, h, 6).fill(st.bg).stroke({ width: 2, color: st.border });
   g.poly([w / 2 - 6, h - 1, w / 2 + 6, h - 1, w / 2, h + 8]).fill(st.bg);
@@ -98,6 +100,7 @@ export class Actor {
   seated = true; // false for queue spots: stand there instead of sitting
   busyAt = 0;
   working = false;
+  thinking = true; // mid-turn but between tools; false for an idle lead, so it shows no dots
   queued = false;
   gone = false;
   leaving = false;
@@ -124,6 +127,7 @@ export class Actor {
   private nudge = 0; // 1 -> 0 chair pull-out slide
   private wasSitting = false;
   private ring = new Graphics(); // alert pulse, screen space (UI layer sits above the night overlay)
+  tagAbove = false; // upper-row seat: the name tag goes above the head, since below the desk is the lower row's head
   private mark = new Graphics(); // hover / selection outline, screen space
   private glyph = new Sprite(); // enlarged alert emote, screen space
   private hover = false;
@@ -152,6 +156,13 @@ export class Actor {
   private hits: number[] = []; // recent tool-event times, drives typing speed
   stale = false; // no activity for a while: desaturate (#101)
   yielding = false; // main.ts: hold still for a walker ahead (#116)
+  held = 0; // main.ts: ms held up so far, capped by choreo.YIELD_MAX_MS (no deadlock)
+  sip: "none" | "desk" | "sip" = "none"; // mug state (choreo.sipState), read by main.ts for the desk mug
+  lineX = 0; // main.ts: px offset while queued in the door line
+  staleMin = 0; // main.ts: whole minutes of silence once stale, 0 = not stale
+  private microAt = -1; // last micro-posture slot played
+  private lx = 0; // lane offset (art px): walkers keep to their right
+  private ly = 0;
   toolSince = 0; // start of the tool call in flight, 0 = none
   private glitchAt = 0; // wall ms of the last tag glitch (120ms jitter + chromatic tint)
 
@@ -209,8 +220,12 @@ export class Actor {
   private refreshTag() {
     const lines = this.label.split("\n").map((l) => (l.length > 24 ? l.slice(0, 23) + "…" : l)); // labels are clipped so tags stay short (#F1)
     const q = this.queued && this.qpos ? ` #${this.qpos}` : "";
-    this.tag.text = `${this.alert === "blocked" ? "! " : ""}${lines.join("\n")}${q}${this.idle ? " (idle)" : ""}`;
+    this.tag.text = `${this.alert === "blocked" ? "! " : ""}${lines.join("\n")}${q}${this.idle ? " (idle)" : this.staleMin ? ` idle ${this.staleMin}m` : ""}`;
     this.tag.style.fill = this.alert === "blocked" ? 0xff8a80 : 0xffffff;
+  }
+  /** "idle Nm" tag suffix once the agent is stale; 0 clears. */
+  setStaleMin(n: number) {
+    if (this.staleMin !== n) { this.staleMin = n; this.refreshTag(); }
   }
   /** Queue ordinal chip (#112): 0 clears. */
   setQueuePos(n: number) {
@@ -236,8 +251,12 @@ export class Actor {
     this.ring.clear();
     if (a) {
       const col = Number.parseInt(theme().alert[a].slice(1), 16);
-      this.ring.ellipse(0, 0, 13, 17).stroke({ width: 3, color: col });
-      this.glyph.texture = emoteTex(a === "blocked" ? "flag" : "exclaim");
+      // shape, not just colour: waiting = 4 segments + gold "!", blocked = 6 segments + red flag; syncUi spins and pulses it
+      const r = 15, n = a === "blocked" ? 6 : 4, step = (Math.PI * 2) / n;
+      for (let k = 0; k < n; k++) { const a0 = 0.25 + k * step; this.ring.moveTo(Math.cos(a0) * r, Math.sin(a0) * r).arc(0, 0, r, a0, a0 + step * 0.6); }
+      this.ring.stroke({ width: 2.5, color: col });
+      this.ring.circle(0, 0, r - 4).stroke({ width: 1, color: col, alpha: 0.35 });
+      this.glyph.texture = emoteTex(a === "blocked" ? "flag" : "exclaim"); // gold "!" = waiting, red flag = blocked
     }
     this.ring.visible = this.glyph.visible = !!a;
     this.refreshTag();
@@ -247,7 +266,15 @@ export class Actor {
   private drawMark() {
     this.mark.clear();
     this.mark.visible = this.hover || this.selected;
-    if (this.mark.visible) this.mark.ellipse(0, 0, 11, 15).stroke({ width: this.selected ? 3 : 2, color: this.selected ? 0xffffff : 0x9ad7f5 });
+    if (!this.mark.visible) return;
+    // HUD reticle: corner brackets around the person; selected adds mid-edge ticks
+    const sel = this.selected, col = sel ? 0x7fe3ff : 0x5aa9c9, w = 11, h = 15, L = sel ? 5 : 4, m = this.mark;
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) m.moveTo(sx * w, sy * (h - L)).lineTo(sx * w, sy * h).lineTo(sx * (w - L), sy * h);
+    m.stroke({ width: sel ? 1.5 : 1, color: col });
+    if (sel) {
+      for (const sx of [-1, 1]) m.moveTo(sx * w, -1).lineTo(sx * (w - 2), -1).moveTo(sx * w, 1).lineTo(sx * (w - 2), 1);
+      m.stroke({ width: 1, color: col, alpha: 0.8 });
+    }
   }
   /** Labeled idle ambient visit: walk to `to`, linger, return home. No speech; main.ts decides when. */
   idleStroll(to: Tile, ms: number, toward?: { x: number; y: number }, couch?: { x: number; y: number }) {
@@ -347,6 +374,8 @@ export class Actor {
   update(dt: number, now: number) {
     const ms = dt * 1000;
     this.t = now;
+    // a real event ends an idle visit at once: drop the walk and wait, go home (a couch sit already stands up on its own)
+    if (this.idle && this.working && !this.perch && !this.leaving) { this.path = []; this.cur = null; this.steps = [{ k: "idle", on: false }]; }
     // --- script
     if (!this.cur && !this.path.length) {
       this.cur = this.steps.shift() ?? null;
@@ -413,6 +442,14 @@ export class Actor {
     else if (this.drop !== target) { if ((this.dropT += ms) >= 50) { this.dropT = 0; this.drop = stepDrop(this.drop, target); } }
     else this.dropT = 0;
     const seated = sit && this.drop === 7;
+    // micro-posture while quiet 6-20s: a look to one side or a lean back, seeded per person and 5s slot (no random)
+    let lean = 0;
+    if (seated && !this.working && !still && !settings.ambientPaused && !this.alert && !this.emote && !this.speech && this.busyAt > 0 && idleTier(now - this.busyAt) === 1) {
+      const m = microPose(now, this.h);
+      if (m === "lean") lean = 1;
+      else if (m && this.microAt !== microSlot(now, this.h)) { this.microAt = microSlot(now, this.h); this.glance(this.pos.x + (m === "look-l" ? -1 : 1)); }
+    }
+    this.sip = sipState(now - this.busyAt, seated && !this.working && !this.alert && !this.emote && !this.speech && this.busyAt > 0, still || settings.ambientPaused, now, this.h);
     this.frameT += ms;
     let recent = 0;
     for (const h of this.hits) if (now - h < 30_000) recent++;
@@ -434,7 +471,8 @@ export class Actor {
       drop: pc ? (pc.k < 0.5 ? 2 : 5) : seated ? 0 : this.drop,
       lift: standing && !still && !settings.ambientPaused && !quirk && Math.floor((now + this.h) / 500) % 2 === 1, // breathing beat, phase by id
       dip: seated && this.working && !still && now - last < 90, // head dips on each tool hit
-      think: glancing && !this.working, // the glance turns the head only; arms keep the think pose
+      sip: this.sip === "sip" && !glancing,
+      think: (glancing && !this.working) || (this.sip === "sip" && !glancing), // the glance turns the head only; arms keep the think pose
     });
     const ls = this.lead ? 1.08 : 1;
     this.sprite.scale.x = (glancing ? this.glanceFlip : this.flip) ? -ls : ls;
@@ -449,14 +487,18 @@ export class Actor {
     this.nudge = Math.max(0, this.nudge - dt * 4);
     const hp = hopPose(this.hopMs);
     this.sprite.x = (standing && !still && !settings.ambientPaused && (now + this.h * 7) % 5000 < 240 ? 1 : 0) + jitterX(this.jitterMs); // occasional weight shift + error jitter
-    this.sprite.y = hp.y - this.nudge * 3; // up = away from the desk below
+    this.sprite.y = hp.y - this.nudge * 3 - lean; // up = away from the desk below
     this.sprite.scale.y = ls * hp.sy * squashY(this.squashMs) * (1 - 0.1 * Math.sin(this.settle * Math.PI));
-    this.c.position.set(Math.round(this.pos.x), Math.round(this.pos.y));
+    // lanes: walkers keep 2px to their right so opposite flows pass; standing, seated and couch figures sit on their tile
+    const k = moving && !pc ? 2 : 0;
+    const tx = this.dir === "down" ? -k : this.dir === "up" ? k : 0, ty = this.dir === "side" ? (this.flip ? -k : k) : 0;
+    if (still) { this.lx = tx; this.ly = ty; } else { const f = Math.min(1, dt * 12); this.lx += (tx - this.lx) * f; this.ly += (ty - this.ly) * f; }
+    this.c.position.set(Math.round(this.pos.x + this.lx + this.lineX), Math.round(this.pos.y + this.ly));
     this.c.zIndex = this.pos.y + (pc ? 2 : 0); // on the couch: above its back and cushions (sorted at its bottom edge)
     // --- emote: explicit one wins, else thinking dots while seated and idle, else waiting-in-line
     if (this.emote && (this.emote.left -= ms) <= 0) this.emote = null;
     let e: Emote | null = this.emote?.e ?? null;
-    if (!e && sit && !this.working) e = (still || settings.ambientPaused ? "dots1" : `dots${Math.floor(now / 350) % 3}`) as Emote;
+    if (!e && sit && !this.working && this.thinking) e = (still || settings.ambientPaused ? "dots1" : `dots${Math.floor(now / 350) % 3}`) as Emote;
     if (!e && this.queued && !moving) e = "question";
     const ek = e ? (e.startsWith("dots") ? "dots" : e) : "";
     if (ek !== this.emoteKey) { this.emoteKey = ek; this.emoteBorn = now; }
@@ -476,15 +518,16 @@ export class Actor {
     this.sc = sc;
     // neighbouring desks stagger their tool bubbles so they do not sit on top of each other
     const stagger = this.sitting ? (Math.round(this.pos.x / (T * 2)) % 2) * 26 : 0;
-    const sx = ox + this.pos.x * sc, sy = oy + this.pos.y * sc;
+    const sx = dev(ox + Math.round(this.pos.x) * sc), sy = dev(oy + Math.round(this.pos.y) * sc); // the sprite sits on whole art px; overlays on whole device px
     // seated: tag goes under the desk tile so it never covers the desk or the person
-    this.tag.position.set(sx, sy + 3 + (this.sitting ? T * sc : 0));
+    this.tag.position.set(sx, dev(sy + 3 + (this.sitting ? T * sc : 0)));
     const gl = this.glitchAt ? Date.now() - this.glitchAt : 1e9;
     if (gl < 120) { this.tag.x += Math.floor(gl / 30) % 2 ? 2 : -2; this.tag.tint = Math.floor(gl / 40) % 2 ? 0x00f0ff : 0xff2bd6; }
     else if (this.tag.tint !== 0xffffff) this.tag.tint = 0xffffff;
     if (floor) { this.flr.x = ox + floor.x * sc; this.flr.y = oy + floor.y * sc; this.flr.w = floor.w * sc; this.flr.h = floor.h * sc; this.clampTag(); }
     const couched = !!this.perch && this.perch.k >= 1; // lounging: head sits ~4px lower than standing
-    const headY = sy - (this.sitting ? 20 : couched ? 24 : 28) * sc - 6;
+    const headY = dev(sy - (this.sitting ? 20 : couched ? 24 : 28) * sc - 6);
+    if (this.tagAbove && this.sitting) { this.tag.y = dev(headY - this.tag.height - 1); if (floor) this.clampTag(); }
     const toolY = headY - stagger;
     // 120ms pop-in, 150ms fade-out (#109)
     const fade = (b: { left: number; born: number }) => (settings.reducedMotion ? 1 : Math.max(0, Math.min(1, (this.t - b.born) / 120, b.left / 150)));
@@ -501,21 +544,26 @@ export class Actor {
       this.toolBubble.node.position.set(sx, toolY);
     }
     // rings + alert glyph live in screen space so the night overlay never dims them
-    const pulse = this.alert && !settings.reducedMotion ? 1 + 0.1 * Math.sin(this.t / 160) : 1;
-    this.ring.position.set(sx, sy - 12 * sc);
+    const pulse = this.alert && !settings.reducedMotion ? 1 + 0.1 * Math.sin((this.t * Math.PI * 2) / (this.alert === "blocked" ? 900 : 1400)) : 1; // period 0.9s blocked, 1.4s waiting
+    this.ring.position.set(sx, dev(sy - 12 * sc));
     this.ring.scale.set(sc * pulse);
-    this.mark.position.set(sx, sy - 12 * sc);
-    this.mark.scale.set(sc);
+    this.ring.rotation = settings.reducedMotion ? 0 : this.t / 1400;
+    this.mark.position.set(sx, dev(sy - (this.sitting ? 9 : 12) * sc));
+    this.mark.scale.set(sc, sc * (this.sitting ? 0.82 : 1)); // a seated figure is shorter: keep the brackets hugging it
     const gs = Math.max(2, sc * 1.6);
     this.glyph.scale.set(gs);
-    this.glyph.position.set(sx + 14 * sc, sy - (this.sitting ? 18 : couched ? 22 : 26) * sc);
+    this.glyph.position.set(dev(sx + 14 * sc), dev(sy - (this.sitting ? 18 : couched ? 22 : 26) * sc));
     // arc for a tool call that has been running a while: busy, not hung (#114)
     const el = this.toolSince ? this.t - this.toolSince : 0;
     if (this.progOn) { this.prog.clear(); this.progOn = false; }
     if (el > 8000) {
       this.progOn = true;
-      this.prog.position.set(sx, sy - 12 * sc);
-      this.prog.arc(0, 0, 17 * sc, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, el / 300_000)).stroke({ width: 2, color: 0x7fe3ff });
+      this.prog.position.set(sx, dev(sy - 12 * sc));
+      const end = -Math.PI / 2 + Math.PI * 2 * Math.min(1, el / 300_000);
+      const r = 17 * sc;
+      this.prog.circle(0, 0, r).stroke({ width: 1, color: 0x7fe3ff, alpha: 0.18 }); // track
+      this.prog.moveTo(0, -r).arc(0, 0, r, -Math.PI / 2, end).stroke({ width: 2, color: 0x7fe3ff }); // moveTo: the arc must not continue the circle's path (that drew a spoke)
+      this.prog.circle(Math.cos(end) * 17 * sc, Math.sin(end) * 17 * sc, 2).fill(0xffffff); // head
     }
     // off-screen alert: arrow on the nearest viewport edge in the alert colour (#104)
     if (this.edgeOn) { this.edge.clear(); this.edgeOn = false; }
@@ -530,19 +578,19 @@ export class Actor {
 
   private clampTag() {
     const p = clampBox({ x: this.tag.x, y: this.tag.y, w: this.tag.width, h: this.tag.height }, this.flr);
-    this.tag.position.set(p.x, p.y);
+    this.tag.position.set(dev(p.x), dev(p.y));
   }
   /** True when the centred box overlaps this actor's visible selection/hover/alert ring (ellipse bbox, 13x17 world px). */
   ringHits(cx: number, cy: number, w: number, h: number) {
     if (!this.mark.visible && !this.ring.visible) return false;
-    return Math.abs(this.mark.x - cx) * 2 < w + 26 * this.sc && Math.abs(this.mark.y - cy) * 2 < h + 34 * this.sc;
+    return Math.abs(this.mark.x - cx) * 2 < w + 30 * this.sc && Math.abs(this.mark.y - cy) * 2 < h + 34 * this.sc;
   }
   /** Screen-space floor rect after syncUi, or null when no floor bounds are set. */
   floorPx(): Rect | null { return floor ? this.flr : null; }
 
   /** Screen-space box of the name tag after syncUi (for label stacking); alerts keep their place. */
   tagBox(): Box {
-    return { x: this.tag.x, y: this.tag.y, w: this.tag.width, h: this.tag.height, pri: this.alert ? 1 : 0 };
+    return { x: this.tag.x, y: this.tag.y, w: this.tag.width, h: this.tag.height, pri: this.alert ? 1 : 0, dir: this.lead ? 1 : undefined };
   }
   /** Apply a stacking offset and redraw the dark backing plate (#F3). */
   placeTag(dy: number, hide = false) {
@@ -559,7 +607,7 @@ export class Actor {
       this.plateW = w; this.plateH = h;
       this.plate.clear().roundRect(0, 0, w + 6, h + 2, 3).fill({ color: 0x0e0d16, alpha: 0.66 });
     }
-    this.plate.position.set(this.tag.x - w / 2 - 3, this.tag.y - 1);
+    this.plate.position.set(dev(this.tag.x - w / 2 - 3), dev(this.tag.y - 1));
   }
 
   destroy() {
@@ -614,6 +662,7 @@ export function layoutBubbles(actors: Iterable<Actor>, view?: { w: number; h: nu
       n.y = Math.max(n.y, view.top + 4 + bx.h);
       n.x = Math.max(bx.w / 2 + 2, Math.min(view.w - bx.w / 2 - 2, n.x));
     }
+    n.x = dev(n.x); n.y = dev(n.y); // bubbles land on whole device pixels
   });
 }
 

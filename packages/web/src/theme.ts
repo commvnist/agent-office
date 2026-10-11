@@ -7,8 +7,8 @@ export type Theme = {
   hairs: string[];
   /** CVD-safe role colours, assigned in first-seen role order (see setRoles). */
   roleColors: string[];
-  wood: { a: string; b: string; grain: string };
-  carpet: { base: string; fleck: string; edge: string; zoneMix: number; lobby: string };
+  /** The one floor material (dark composite deck): deep seams and trim, mid panels, lit lip and rugs. */
+  deck: { deep: string; mid: string; lit: string };
   wall: { face: string; top: string; line: string; base: string; trim: string };
   desk: { top: string; edge: string; front: string; inset: string };
   outline: string;
@@ -25,10 +25,9 @@ export const DEFAULT_THEME: Theme = {
   skins: ["#f6d3b0", "#e6b48a", "#c98d5f", "#8d5a3b", "#fadcbd"],
   hairs: ["#2a1c14", "#5b3a26", "#a86a2c", "#e0bd62", "#1b1b26", "#b9482f", "#cfcfd8"],
   roleColors: OKABE,
-  wood: { a: "#745739", b: "#6e5238", grain: "#5a4129" },
-  carpet: { base: "#8a8fa8", fleck: "#7b809a", edge: "#767b94", zoneMix: 0.7, lobby: "#aab4e0" },
-  wall: { face: "#4b4768", top: "#5d5880", line: "#413d5c", base: "#2f2c44", trim: "#6b658f" },
-  desk: { top: "#c79a63", edge: "#dfb67c", front: "#8d6a43", inset: "#7a5a38" },
+  deck: { deep: "#1c2036", mid: "#2a3050", lit: "#3a4366" },
+  wall: { face: "#232a45", top: "#2d3556", line: "#171b30", base: "#1c2238", trim: "#4a5578" },
+  desk: { top: "#56648f", edge: "#7a8ab8", front: "#3a4366", inset: "#2d3454" },
   outline: "#171421",
   alert: { waiting: "#ffd84a", blocked: "#ff4a4a" },
   nightMax: 0.32,

@@ -113,7 +113,7 @@ function events(p: Record<string, unknown>, session: string, agentId: string | u
     case "Stop":
       return [{ type: "turn_end", session, t }];
     case "Notification":
-      return [{ type: "waiting", session, text: clip(p.message, 80) || undefined, t }];
+      return [{ type: "waiting", session, text: clip(p.message, 80) || undefined, ...(p.notification_type === "idle_prompt" ? { idle: true } : {}), t }];
     case "PostToolUse": {
       const r = isObj(p.tool_response) ? p.tool_response : {};
       if (r.success === false || r.is_error === true)

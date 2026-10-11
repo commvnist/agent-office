@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { Camera, ignoreKey } from "./camera.ts";
+import { Camera, ignoreKey, isNarrow, phoneScale, pickAuto } from "./camera.ts";
 
 const V = [2, 800, 600, 34, 320, 200] as const; // fit, W, H, top, layout w/h in art px
 
@@ -89,4 +89,46 @@ test("easeFocus eases the zoom to 2x and a manual zoom cancels it", async () => 
   c.easeFocus("a");
   c.zoomBy(1.1);
   assert.equal(c.zoomGoal, null);
+});
+
+test("view offsets land on whole device pixels", () => {
+  const c = new Camera();
+  c.panBy(3.3, 1.7);
+  for (const d of [1, 1.5, 2]) { const v = c.view(1.37, 801, 601, 34, 400, 300, null, 0, d); assert.equal(v.ox * d, Math.round(v.ox * d)); assert.equal(v.oy * d, Math.round(v.oy * d)); }
+});
+
+test("narrow stages: phones and tall tablets, never desktop", () => {
+  assert.ok(isNarrow(390, 760) && isNarrow(360, 600) && isNarrow(768, 990));
+  assert.ok(!isNarrow(1245, 750) && !isNarrow(900, 700));
+});
+
+test("phoneScale shows about 14 tiles and fills a short room's stage, never under 12 tiles", () => {
+  const lh = 20 * 16 + 12;
+  assert.equal(phoneScale(390, 100, lh), 390 / 224); // tall room: 14 tiles across
+  const s = phoneScale(390, 760, lh);
+  assert.ok(s >= 390 / 224 && s <= 390 / 192); // 14..12 tiles across
+  assert.ok(Math.abs(s - Math.min(760 / lh, 390 / 192)) < 1e-9);
+});
+
+test("pickAuto: alert, else working, else rest; lowest id, sticky", () => {
+  const rest = { x: 5, y: 6 };
+  const c = [{ id: "b", x: 1, y: 1, working: true }, { id: "a", x: 2, y: 2, working: true }, { id: "z", x: 3, y: 3, alert: true }];
+  assert.equal(pickAuto(c, null, rest).id, "z");
+  assert.equal(pickAuto(c.slice(0, 2), null, rest).id, "a");
+  assert.equal(pickAuto(c.slice(0, 2), "b", rest).id, "b");
+  assert.deepEqual(pickAuto([{ id: "q", x: 0, y: 0 }], null, rest), { id: null, ...rest });
+});
+
+test("phone view follows the auto point and never shows past the walls", () => {
+  const c = new Camera();
+  c.phone = true;
+  c.autoPos = { x: 0, y: 0 };
+  const v = c.view(3, 390, 700, 40, 320, 400, null, 0); // 960 px wide world in a 390 stage
+  assert.ok(v.ox <= 0 && v.ox + 320 * 3 >= 390 && v.oy <= 40 && v.oy + 400 * 3 >= 40 + 700);
+  c.panBy(1, 1);
+  assert.equal(c.autoFollow, false);
+  c.toggleFitAll();
+  assert.ok(c.fitAll && c.zoom === 1);
+  c.toggleFitAll();
+  assert.ok(!c.fitAll && c.autoFollow);
 });

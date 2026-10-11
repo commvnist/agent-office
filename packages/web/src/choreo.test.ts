@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Interaction } from "@agent-office/core";
-import { planInteraction, alertsFor, statusOf, isWorking, boardLines, pickStroller, feedItem, cleanText, uniqueNames, stackLabels, toolKind, skyAt, clampBox, hopPose, stepDrop, popScale, quirkAt, toolIcon, HOP_MS, type PlanCtx } from "./choreo.ts";
+import { planInteraction, alertsFor, statusOf, isWorking, boardLines, pickStroller, feedItem, cleanText, uniqueNames, stackLabels, toolKind, skyAt, clampBox, hopPose, stepDrop, popScale, quirkAt, toolIcon, HOP_MS, idleTier, pickPartner, microPose, yieldsTo, stepHold, holds, doorHold, tetherAlpha, loadLevel, sessionHue, shrinkFloor, YIELD_MAX_MS, SLIP_MS, type PlanCtx, type Shrink } from "./choreo.ts";
 
 const it = (o: Partial<Interaction>): Interaction => ({ id: 1, t: 1000, kind: "delegate", session: "s", from: "lead:s", to: "a1", text: "do it", ...o });
 const ctx = (log: Interaction[] = [], ids = ["lead:s", "a1", "a2"]): PlanCtx => ({ has: (i) => ids.includes(i), resolve: (h) => ids.find((i) => i === h), log });
@@ -162,4 +162,114 @@ test("newAlerts reports only transitions, not every snapshot", async () => {
   assert.deepEqual(newAlerts(seen, new Map([["a", "blocked"], ["b", "waiting"]])), ["a", "b"]);
   assert.deepEqual(newAlerts(seen, new Map()), []);
   assert.deepEqual(newAlerts(seen, new Map([["a", "blocked"]])), ["a"]); // cleared then raised again
+});
+
+test("idle ladder: tiers by silence, coffee then couch", () => {
+  assert.deepEqual([0, 5999, 6000, 19_999, 20_000, 59_999, 60_000].map(idleTier), [0, 0, 1, 1, 2, 2, 3]);
+  assert.equal(pickStroller([{ id: "a", lastActive: 70_000, strolledAt: 0 }], 100_000)?.where, "coffee"); // 30s silent
+  assert.equal(pickStroller([{ id: "a", lastActive: 0, strolledAt: 0 }], 100_000)?.where, "couch"); // 100s silent
+});
+
+test("pair chat only within one session, both idle and off cooldown", () => {
+  const c = (id: string, session: string, lastActive = 0, strolledAt = 0) => ({ id, session, lastActive, strolledAt });
+  const now = 100_000;
+  assert.equal(pickPartner([c("a", "s1"), c("b", "s1")], "a", now), "b");
+  assert.equal(pickPartner([c("a", "s1"), c("b", "s2")], "a", now), null); // never across sessions
+  assert.equal(pickPartner([c("a", "s1"), c("b", "s1", 90_000)], "a", now), null); // b is busy
+  assert.equal(pickPartner([c("a", "s1"), c("b", "s1", 0, 90_000)], "a", now), null); // b strolled lately
+});
+
+test("micro-posture is seeded: same inputs, same pose; only in the first 1.5s of a slot", () => {
+  const seen = new Set<string | null>();
+  for (let t = 0; t < 200_000; t += 250) { assert.equal(microPose(t, 777), microPose(t, 777)); seen.add(microPose(t, 777)); }
+  assert.ok(seen.has("look-l") || seen.has("look-r")); assert.ok(seen.has("lean"));
+  assert.equal(microPose(1500 - (777 % 5000), 777), null);
+});
+
+test("two agents swapping places both get through, even when each wants to yield to the other", () => {
+  for (const mutual of [false, true]) {
+    const a = { id: "a", pos: { x: 0, y: 0 }, to: 100, held: 0 }, b = { id: "b", pos: { x: 100, y: 0 }, to: 0, held: 0 };
+    let t = 0;
+    for (; t < 20_000 && (Math.abs(a.pos.x - a.to) > 0.5 || Math.abs(b.pos.x - b.to) > 0.5); t += 16) {
+      for (const w of [a, b]) {
+        const o = w === a ? b : a, n = { x: w.to, y: 0 };
+        const want = mutual || yieldsTo(w, n, o);
+        w.held = stepHold(w.held, want, 16);
+        if (!holds(w.held, want)) w.pos.x += Math.sign(w.to - w.pos.x) * Math.min(0.64, Math.abs(w.to - w.pos.x)); // 40 px/s
+      }
+    }
+    assert.ok(t < 20_000, `deadlock (mutual=${mutual})`);
+  }
+  // a hold is capped, then slips for SLIP_MS, then rearms
+  let h = 0, held = 0;
+  for (let ms = 0; ms < YIELD_MAX_MS + SLIP_MS; ms += 10) { h = stepHold(h, true, 10); if (holds(h, true)) held++; }
+  assert.ok(held * 10 <= YIELD_MAX_MS + 20 && stepHold(YIELD_MAX_MS + SLIP_MS, true, 10) === 0);
+});
+
+test("door token: leavers first, then lowest id, others unaffected", () => {
+  const door = { x: 0, y: 0 }, p = (id: string, x: number, leaving = false) => ({ id, pos: { x, y: 0 }, leaving });
+  assert.equal(doorHold(p("b", 2), p("z", 10, true), door, 24), true); // a leaver near the door goes first
+  assert.equal(doorHold(p("b", 2), p("a", 5), door, 24), true); // lower id arriver still in the doorway
+  assert.equal(doorHold(p("a", 2), p("b", 5), door, 24), false);
+  assert.equal(doorHold(p("b", 60), p("z", 10, true), door, 24), false); // far from the door: not held
+  assert.equal(doorHold(p("b", 2), p("z", 50, true), door, 24), false);
+});
+
+test("tether fades 600ms after the ticket lands; load and hue helpers", () => {
+  assert.deepEqual([0, 499, 500, 800, 1100, 5000].map(tetherAlpha), [1, 1, 1, 0.5, 0, 0]);
+  assert.deepEqual([0, 1, 2, 3, 5, 6, 40].map(loadLevel), [0, 1, 1, 2, 2, 3, 3]);
+  for (let i = 0; i < 400; i++) {
+    const h = sessionHue(`s${i}`);
+    assert.ok(h >= 0 && h < 360 && !(h < 20) && !(h >= 40 && h < 60) && !(h >= 170 && h < 200), `hue ${h}`);
+    assert.equal(h, sessionHue(`s${i}`));
+  }
+});
+
+test("shrink ratchet: grow is instant, a row decays after 90s empty, never while a desk in it is used", () => {
+  const s: Shrink = { floor: 0, since: 0 };
+  const S = 1000;
+  assert.equal(shrinkFloor(s, 24, 0, 0), 24); // grow at once
+  assert.equal(shrinkFloor(s, 8, 0, 80 * S), 24); // demand fell, not yet 90s
+  assert.equal(shrinkFloor(s, 8, 0, 90 * S), 12); // one row (12..23) goes
+  assert.equal(shrinkFloor(s, 8, 0, 120 * S), 12); // one step per 90s
+  assert.equal(shrinkFloor(s, 8, 0, 180 * S), 8);
+  // a desk in the trailing row blocks the step and restarts the clock
+  const u: Shrink = { floor: 24, since: 0 };
+  assert.equal(shrinkFloor(u, 8, 17, 100 * S), 24); // desk 16 is used
+  assert.equal(shrinkFloor(u, 8, 17, 150 * S), 24);
+  assert.equal(shrinkFloor(u, 8, 0, 200 * S), 24); // vacated at 150s: only 50s empty
+  assert.equal(shrinkFloor(u, 8, 0, 241 * S), 12);
+  // floor never drops below the highest desk in use
+  const v: Shrink = { floor: 24, since: 0 };
+  for (let t = 0; t <= 600; t += 10) assert.ok(shrinkFloor(v, 8, 14, t * S) >= 14);
+});
+
+test("stackLabels: a downward-preferring box (lead plaque) never goes up over its own desk when a lower spot is free", () => {
+  const boxes = [{ x: 100, y: 50, w: 80, h: 24, pri: 0, dir: 1 as const }, { x: 130, y: 50, w: 80, h: 24, pri: 0, dir: 1 as const }];
+  const dy = stackLabels(boxes);
+  assert.ok(dy.every((d) => d >= 0), JSON.stringify(dy));
+});
+
+import { pushCapped, sipState, courierDue, MAX_QUEUED, COURIER_GAP_MS } from "./choreo.ts";
+test("pushCapped is FIFO and drops the oldest past the cap", () => {
+  const q: number[] = [];
+  for (let i = 0; i < MAX_QUEUED + 3; i++) pushCapped(q, i);
+  assert.equal(q.length, MAX_QUEUED);
+  assert.equal(q[0], 3);
+});
+test("sipState: only in tier 1 and only when calm; still never sips", () => {
+  for (const s of [0, 3000, 25_000, 90_000]) assert.equal(sipState(s, true, false, 1000, 7), "none");
+  assert.equal(sipState(10_000, false, false, 1000, 7), "none");
+  let sips = 0;
+  for (let t = 0; t < 200_000; t += 250) { assert.notEqual(sipState(10_000, true, true, t, 7), "sip"); if (sipState(10_000, true, false, t, 7) === "sip") sips++; }
+  assert.ok(sips > 0);
+});
+test("courierDue: rate cap, alert, live and ambient gates", () => {
+  const ok = { live: false, alert: false, ambient: true };
+  const t = 10 * COURIER_GAP_MS + COURIER_GAP_MS - 1; // late in a period: its seeded moment has passed
+  assert.equal(courierDue(t, 0, ok), true);
+  assert.equal(courierDue(t, t - 1000, ok), false);
+  assert.equal(courierDue(t, 0, { ...ok, alert: true }), false);
+  assert.equal(courierDue(t, 0, { ...ok, live: true }), false);
+  assert.equal(courierDue(t, 0, { ...ok, ambient: false }), false);
 });

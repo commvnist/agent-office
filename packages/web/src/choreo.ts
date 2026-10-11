@@ -17,7 +17,7 @@ export type Action =
   | { k: "block"; id: string; text: string; by?: string }
   | { k: "celebrate"; id: string }
   | { k: "spark"; a: string; b: string; file: string }
-  | { k: "stroll"; id: string; where: "coffee" | "couch" };
+  | { k: "stroll"; id: string; where: "coffee" | "couch"; with?: string };
 
 export type PlanCtx = {
   has: (id: string) => boolean;
@@ -47,7 +47,8 @@ export function uniqueNames(items: { id: string; name: string; t: number }[]): M
   return out;
 }
 
-export type Box = { x: number; y: number; w: number; h: number; pri?: number };
+/** `dir` 1 = prefer stacking downward (lead plaques: up would cover their own desk); unset = nearest spot wins. */
+export type Box = { x: number; y: number; w: number; h: number; pri?: number; dir?: 1 };
 export type Rect = { x: number; y: number; w: number; h: number };
 /**
  * Vertical offsets that push overlapping label boxes (x = centre, y = top) clear of each other (#F1). Higher `pri` (alerts) places first and keeps its spot.
@@ -62,7 +63,8 @@ export function stackLabels(boxes: Box[], r?: Rect, hide?: boolean[]): number[] 
     // the lowest free spot at/below the start is always flush under a placed box (or the start); inside a floor also try flush above one
     const cand = [c.y];
     for (const p of placed) { cand.push(p.b + 1); if (r) cand.push(p.t - k.h - 1); }
-    const ok = cand.filter((y) => (r ? y >= r.y && y + k.h <= r.y + r.h : y >= c.y) && !clash(y)).sort((a, b) => Math.abs(a - c.y) - Math.abs(b - c.y) || a - b);
+    const cost = (y: number) => Math.abs(y - c.y) + (k.dir && y < c.y ? 2 * k.h : 0); // an upward spot only when it is much closer than any downward one
+    const ok = cand.filter((y) => (r ? y >= r.y && y + k.h <= r.y + r.h : y >= c.y) && !clash(y)).sort((a, b) => cost(a) - cost(b) || a - b);
     if (!ok.length && hide) { hide[i] = true; continue; }
     const y = ok.length ? ok[0] : c.y;
     dy[i] = y - k.y;
@@ -260,14 +262,75 @@ export function boardLines(tasks: readonly Task[] | undefined, max = 6): string[
   return out;
 }
 
-export type StrollCand = { id: string; lastActive: number; strolledAt: number };
-/** First seated agent idle for `idleMs` and not strolled within `cooldownMs`; the target alternates by hash (#83). */
+export type StrollCand = { id: string; lastActive: number; strolledAt: number; session?: string };
+/** Idle ladder by real silence: 0 fidget (<6s), 1 micro-posture (<20s), 2 stroll (<60s), 3 drift to the lounge. */
+export const idleTier = (silenceMs: number) => (silenceMs < 6000 ? 0 : silenceMs < 20_000 ? 1 : silenceMs < 60_000 ? 2 : 3);
+/**
+ * First seated agent idle for `idleMs` and not strolled within `cooldownMs` (#83). The ladder picks the place:
+ * coffee at tier 2, the couch once silence passes a minute.
+ */
 export function pickStroller(c: readonly StrollCand[], now: number, idleMs = 20_000, cooldownMs = 60_000): { id: string; where: "coffee" | "couch" } | null {
   for (const x of c) {
-    if (now - x.lastActive >= idleMs && now - x.strolledAt >= cooldownMs)
-      return { id: x.id, where: hash(x.id + Math.floor(now / cooldownMs)) % 2 ? "couch" : "coffee" };
+    if (now - x.lastActive >= idleMs && now - x.strolledAt >= cooldownMs) return { id: x.id, where: idleTier(now - x.lastActive) >= 3 ? "couch" : "coffee" };
   }
   return null;
+}
+/** Chat partner at the coffee machine: another candidate of the SAME session who is equally idle and off cooldown; never across sessions. */
+export function pickPartner(c: readonly StrollCand[], first: string, now: number, idleMs = 20_000, cooldownMs = 60_000): string | null {
+  const a = c.find((x) => x.id === first);
+  if (!a?.session) return null;
+  return c.find((x) => x.id !== first && x.session === a.session && now - x.lastActive >= idleMs && now - x.strolledAt >= cooldownMs)?.id ?? null;
+}
+
+/** Micro-posture while seated and quiet (tier 1): one 5s slot per person phase; the first 1.5s of a slot may carry a look-left/right or a lean. */
+export const MICRO_SLOT_MS = 5000;
+export const microSlot = (now: number, h: number) => Math.floor((now + (h % MICRO_SLOT_MS)) / MICRO_SLOT_MS);
+export function microPose(now: number, h: number): "look-l" | "look-r" | "lean" | null {
+  if ((now + (h % MICRO_SLOT_MS)) % MICRO_SLOT_MS >= 1500) return null;
+  const k = ((h ^ Math.imul(microSlot(now, h), 2654435761)) >>> 0) % 5;
+  return k === 0 ? "look-l" : k === 1 ? "look-r" : k === 2 ? "lean" : null;
+}
+
+/** Walk yielding: a lower id just ahead of the walker's next step holds it; at most YIELD_MAX_MS, then it slips past for SLIP_MS (no deadlock). */
+export const YIELD_MAX_MS = 1500, SLIP_MS = 1000;
+type P = { id: string; pos: { x: number; y: number } };
+export const yieldsTo = (a: P, n: { x: number; y: number }, o: P) =>
+  o.id < a.id && Math.hypot(o.pos.x - a.pos.x, o.pos.y - a.pos.y) < 10 && (o.pos.x - a.pos.x) * (n.x - a.pos.x) + (o.pos.y - a.pos.y) * (n.y - a.pos.y) > 0;
+/** Next held-time counter; it rearms (0) after the slip window. */
+export const stepHold = (held: number, want: boolean, ms: number) => (!want ? 0 : held + ms > YIELD_MAX_MS + SLIP_MS ? 0 : held + ms);
+export const holds = (held: number, want: boolean) => want && held <= YIELD_MAX_MS;
+/** Door token: one arrival at a time, and anyone leaving has right of way. `a` is at the door; `o` walks near it. */
+export const doorHold = (a: P, o: P & { leaving: boolean }, door: { x: number; y: number }, r: number) => {
+  if (o.id === a.id || Math.hypot(a.pos.x - door.x, a.pos.y - door.y) > r * 0.6) return false;
+  const d = Math.hypot(o.pos.x - door.x, o.pos.y - door.y);
+  return o.leaving ? d < r : o.id < a.id && d < r * 0.6;
+};
+
+/** Delegation tether: full while the ticket flies, then a 600ms fade (events only; nothing persists). */
+export const TETHER_FADE_MS = 600;
+export const tetherAlpha = (lifeMs: number) => (lifeMs < TICKET_MS ? 1 : Math.max(0, 1 - (lifeMs - TICKET_MS) / TETHER_FADE_MS));
+
+/** Desk load step from tool calls in the last 30s: 0 idle, 1 light, 2 busy, 3 heavy. */
+export const loadLevel = (n: number): 0 | 1 | 2 | 3 => (n <= 0 ? 0 : n <= 2 ? 1 : n <= 5 ? 2 : 3);
+
+/** Per-session identity hue 0..359 that skips red (0-20), gold (40-60) and cyan (170-200): maps onto the 290 degrees left. */
+const HUE_BANDS: [number, number][] = [[20, 40], [60, 170], [200, 360]];
+export function sessionHue(id: string): number {
+  let p = hash(id) % 290;
+  for (const [lo, hi] of HUE_BANDS) { if (p < hi - lo) return lo + p; p -= hi - lo; }
+  return 220;
+}
+
+/** Client shrink ratchet: built desks only grow at once; a trailing row decays after sitting unused for `holdMs`, one step per hold. */
+export const SHRINK_HOLD_MS = 90_000;
+export type Shrink = { floor: number; since: number };
+export function shrinkFloor(s: Shrink, demand: number, used: number, now: number, rowDesks = 12, holdMs = SHRINK_HOLD_MS): number {
+  const need = Math.max(demand, used);
+  if (need >= s.floor) { s.floor = need; s.since = now; return need; }
+  const start = (Math.ceil(s.floor / rowDesks) - 1) * rowDesks; // first desk of the trailing row
+  if (used > start) s.since = now; // somebody sits in it: it stays
+  else if (now - s.since >= holdMs) { s.floor = Math.max(need, start); s.since = now; }
+  return s.floor;
 }
 
 export type FeedItem = {
@@ -292,3 +355,27 @@ export const feedItem = (it: Interaction, nameOf: (id: string) => string): FeedI
   session: it.session, fromId: it.from, toId: it.to,
   ...(it.outcome ? { outcome: it.outcome } : {}), ...(it.confidence ? { confidence: it.confidence } : {}),
 });
+
+/** Overflow mover queue: FIFO, bounded; past the hard cap the oldest is dropped (cosmetic only: the visit itself already happened). */
+export const MAX_QUEUED = 12;
+export function pushCapped<T>(q: T[], x: T, max = MAX_QUEUED): void {
+  q.push(x);
+  if (q.length > max) q.splice(0, q.length - max);
+}
+
+/**
+ * Mug state while seated, quiet and calm (idle tier 1, 6-20 s): "desk" = mug on the desk for the whole window,
+ * "sip" = raised to the face for the first 3.5 s of a seeded 5 s slot. `still` (reduced motion / ambient paused) never sips.
+ */
+export function sipState(silenceMs: number, calm: boolean, still: boolean, now: number, h: number): "none" | "desk" | "sip" {
+  if (!calm || idleTier(silenceMs) !== 1) return "none";
+  if (still || (now + (h % MICRO_SLOT_MS)) % MICRO_SLOT_MS >= 3500) return "desk";
+  return ((h ^ Math.imul(microSlot(now, h), 2654435761)) >>> 0) % 5 === 3 ? "sip" : "desk";
+}
+
+/** Ambient courier cadence: at most one per COURIER_GAP_MS, at a hash(period)-seeded moment of each period; never with an alert, a live one, or ambient off. */
+export const COURIER_GAP_MS = 8 * 60_000;
+export function courierDue(now: number, last: number, o: { live: boolean; alert: boolean; ambient: boolean }): boolean {
+  if (o.live || o.alert || !o.ambient || now - last < COURIER_GAP_MS) return false;
+  return now % COURIER_GAP_MS >= hash(`courier${Math.floor(now / COURIER_GAP_MS)}`) % (COURIER_GAP_MS / 2);
+}

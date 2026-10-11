@@ -22,7 +22,7 @@ export const endpoint = () => ({
 const clip = (v, n) => (typeof v === "string" ? v.slice(0, n) : undefined);
 const INPUT = ["command", "description", "file_path", "pattern", "url", "query", "subagent_type", "prompt", "to", "message", "content"];
 const TOP = ["session_id", "cwd", "hook_event_name", "agent_id", "agent_type", "tool_name", "tool_use_id", "branch", "source",
-  "prompt", "message", "last_assistant_message", "transcript_path", "agent_transcript_path", "error"];
+  "prompt", "message", "last_assistant_message", "transcript_path", "agent_transcript_path", "error", "notification_type"];
 
 /** Only what the daemon needs, each string clipped. */
 export function allowlist(p) {
