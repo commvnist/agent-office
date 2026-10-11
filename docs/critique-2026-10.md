@@ -572,6 +572,8 @@ Phase 0 re-check on the owner's live office (one page kept open across a real su
 | Per-client level of detail | `GET /state?lod=summary` on the live daemon returned no agents and no log, plus `crew` counts (1 agent, 1 working). |
 | History default | The History view opens on "Since your last visit" (Phase 2 screenshots). |
 
+Final build (1b02bb5): the full matrix re-run once more (3, 12, 45 and 100 agents; day and night; desktop and phone; 16 shots, 0 page errors) and inspected: the gave-up, permission and your-turn states read at every scale, crews that need you carry state-coloured badges, the pill keeps its count, and nothing covers an alert.
+
 Not observable here: a real GPU, a physical phone, a real tool-permission prompt and an `idle_prompt` notification (none occurred in the owner's sessions; covered by adapter and reducer tests with the documented payloads), and the Agent tool's result shape.
 
 ### Owner decisions (asked after the final review)
