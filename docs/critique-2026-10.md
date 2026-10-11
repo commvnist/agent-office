@@ -574,6 +574,8 @@ Phase 0 re-check on the owner's live office (one page kept open across a real su
 
 Final build (1b02bb5): the full matrix re-run once more (3, 12, 45 and 100 agents; day and night; desktop and phone; 16 shots, 0 page errors) and inspected: the gave-up, permission and your-turn states read at every scale, crews that need you carry state-coloured badges, the pill keeps its count, and nothing covers an alert.
 
+Per-phase re-run: the Phase 1 (92d7083) and Phase 2 (cda9ebb) commits were rebuilt in clean worktrees with their own dependencies and the full matrix re-run against each (3/12/45 agents, day and night, desktop and phone, all three alert states; 12 shots each, 0 page errors) and inspected. They show each phase as committed; the remaining overlaps visible there (the permission lead walking onto its blocked helper on the phone, cards over the stage, the truncated pill) are the ones Phase 5 fixed.
+
 Not observable here: a real GPU, a physical phone, a real tool-permission prompt and an `idle_prompt` notification (none occurred in the owner's sessions; covered by adapter and reducer tests with the documented payloads), and the Agent tool's result shape.
 
 ### Owner decisions (asked after the final review)
