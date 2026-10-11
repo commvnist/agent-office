@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { contrast, luma, ramp, shade } from "./color.ts";
+import { contrast, luma, ramp, shade, toLuma } from "./color.ts";
 
 const hue = (hex: string) => {
   const n = parseInt(hex.slice(1), 16), [r, g, b] = [n >> 16, (n >> 8) & 255, n & 255].map((v) => v / 255);
@@ -46,4 +46,12 @@ test("contrast pushes a colour away from the reference by the minimum luma delta
   const c = contrast("#f0e442", "#f6d3b0", 0.14);
   assert.ok(Math.abs(luma(c) - luma("#f6d3b0")) >= 0.14);
   assert.equal(contrast("#223344", "#f6d3b0", 0.14), "#223344");
+});
+
+test("toLuma lands on the target value and keeps the hue", () => {
+  for (const c of ["#3fa14c", "#d85a5a", "#aab4cc", "#5a4a2c"]) for (const t of [0.14, 0.3, 0.6]) {
+    const o = toLuma(c, t);
+    assert.ok(Math.abs(luma(o) - t) < 0.01, `${c} -> ${o}`);
+    assert.ok(Math.abs(delta(hue(o), hue(c))) < 4, `${c} -> ${o}`);
+  }
 });

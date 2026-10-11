@@ -4,8 +4,8 @@ import { T, tagHits } from "./actor.ts";
 import { sceneGeometry, selfCheck, type SceneGeometry } from "./geometry.ts";
 import { art, dev, place } from "./snap.ts";
 import { bake, Grid, hash, hsl, mix } from "./pixel.ts";
-import { shadeTo } from "./color.ts";
-import { roleColor, theme } from "./theme.ts";
+import { shade, shadeTo } from "./color.ts";
+import { KEY, roleColor, theme } from "./theme.ts";
 import { office } from "./api.ts";
 import { boardModel, COLS, ledgerLines, SUMMARY_MS, type Board, type Col, type Memo } from "./board.ts";
 import { podOwners, projectHue } from "./logic.ts";
@@ -27,6 +27,8 @@ const wingOf = (seat: string) => {
   return n === undefined ? "" : `wing${podRow(Math.floor(Number(n) / 4)) + 1}`;
 };
 const hexNum = (h: string) => parseInt(h.slice(1), 16);
+// R2 value key (theme.ts KEY): scene tints use the same env ramp and emitters as the sprites
+const E = KEY.env, CY = hexNum(KEY.cyan), CY_OFF = hexNum(KEY.cyanOff), WARM = hexNum(KEY.warm);
 
 /**
  * `tool` = last tool name (monitor glyph), `count` = tool calls so far (desk clutter), `stale` = long quiet (dim monitor),
@@ -261,7 +263,7 @@ export class Scene {
     const l = this.l, D = theme().deck, g = this.geo, w = l.cols * T, h = (l.rows - l.wallRows) * T, oy = l.wallRows * T;
     const rgba = (hex: string, a: number) => { const n = hexNum(hex); return `rgba(${n >> 16},${(n >> 8) & 255},${n & 255},${a})`; };
     for (const r of g.rugs) { // bordered rug: fill, 1px lit border inset 1px
-      c.fillStyle = r.id === "rug:lobby" ? mix(D.mid, D.lit, 0.45) : mix(D.mid, "#3b4a6e", 0.6); c.fillRect(r.x + 2, r.y - oy + 2, r.w - 4, r.h - 4);
+      c.fillStyle = r.id === "rug:lobby" ? mix(D.mid, D.lit, 0.45) : mix(D.mid, E[3], 0.6); c.fillRect(r.x + 2, r.y - oy + 2, r.w - 4, r.h - 4);
       c.strokeStyle = rgba(D.lit, 0.7); c.lineWidth = 1; c.strokeRect(r.x + 2.5, r.y - oy + 2.5, r.w - 5, r.h - 5);
     }
     c.globalCompositeOperation = "multiply"; // grade: a touch darker toward the edges so the lights carry the room
@@ -275,20 +277,20 @@ export class Scene {
     // spine: door -> lobby, a cyan strip with chevrons pointing in
     const [s0, s1] = g.line.get("spine")!.pts, sx = s0.x, sTop = s0.y - oy, sBot = s1.y - oy;
     // sx is a pixel BOUNDARY (the tile centre), so everything is even-width and mirrored about it: 8px strip, 2px apex
-    c.fillStyle = "rgba(127,227,255,0.1)"; c.fillRect(sx - 4, sTop, 8, sBot - sTop);
-    c.fillStyle = "rgba(127,227,255,0.3)"; c.fillRect(sx - 4, sTop, 1, sBot - sTop); c.fillRect(sx + 3, sTop, 1, sBot - sTop);
-    c.fillStyle = "rgba(127,227,255,0.55)";
+    c.fillStyle = rgba(KEY.cyan, 0.1); c.fillRect(sx - 4, sTop, 8, sBot - sTop);
+    c.fillStyle = rgba(KEY.cyan, 0.3); c.fillRect(sx - 4, sTop, 1, sBot - sTop); c.fillRect(sx + 3, sTop, 1, sBot - sTop);
+    c.fillStyle = rgba(KEY.cyan, 0.55);
     for (let y = sBot - T; y > sTop; y -= 2 * T) for (let k = 0; k < 3; k++) { c.fillRect(sx - 1 - k, y + k, 1, 1); c.fillRect(sx + k, y + k, 1, 1); }
     // mats under standing desks (no floor text anywhere: pod identity lives in the hover plaque)
-    for (const m of g.mats) { c.fillStyle = rgba("#10131f", 0.85); c.fillRect(m.x, m.y - oy, m.w, m.h); c.fillStyle = rgba(D.lit, 0.5); c.fillRect(m.x, m.y - oy, m.w, 1); }
+    for (const m of g.mats) { c.fillStyle = rgba(E[0], 0.85); c.fillRect(m.x, m.y - oy, m.w, m.h); c.fillStyle = rgba(D.lit, 0.5); c.fillRect(m.x, m.y - oy, m.w, 1); }
     // conduits (server bank -> trunk -> pod rows): 2px dark steel with a 1px lit edge on the upper/left side, centred on the line;
     // each segment is inclusive of both end pixels so bends and joints close
     const seg = g.conduits.flatMap((ln) => ln.pts.slice(1).map((b, i) => { const a = ln.pts[i]; return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y) - oy, w: Math.abs(b.x - a.x) + 1, h: Math.abs(b.y - a.y) + 1 }; }));
     c.fillStyle = rgba(D.lit, 0.85); for (const k of seg) k.w === 1 ? c.fillRect(k.x - 1, k.y, 1, k.h) : c.fillRect(k.x, k.y - 1, k.w, 1);
-    c.fillStyle = rgba("#0c0f1c", 0.95); for (const k of seg) k.w === 1 ? c.fillRect(k.x, k.y, 2, k.h) : c.fillRect(k.x, k.y, k.w, 2);
+    c.fillStyle = rgba(E[0], 0.95); for (const k of seg) k.w === 1 ? c.fillRect(k.x, k.y, 2, k.h) : c.fillRect(k.x, k.y, k.w, 2);
     // charging dock where the cleaning bot parks (start of its first rail)
     const d = g.dock;
-    if (d) { c.fillStyle = rgba("#10131f", 0.9); c.fillRect(d.x, d.y - oy, d.w, d.h); c.fillStyle = "#7fe3ff"; c.fillRect(d.x + 1, d.y + 1 - oy, 2, 1); }
+    if (d) { c.fillStyle = rgba(E[0], 0.9); c.fillRect(d.x, d.y - oy, d.w, d.h); c.fillStyle = KEY.cyan; c.fillRect(d.x + 1, d.y + 1 - oy, 2, 1); }
   }
 
   /** A helper reported and left its desk: leave its result there as a filed card (critique R7, world memory). */
@@ -329,10 +331,10 @@ export class Scene {
   private drawDoor() {
     const d = this.geo.rect("door"), x = d.x - 4, y = d.y + 6, w = d.w + 8; // frame overhangs its one-tile footprint by 4px each side
     this.doorG.clear();
-    this.doorG.rect(x - 1, y - 4, w + 2, 14).fill(0x2d3556); // steel frame
-    if (this.doorOpen) this.doorG.rect(x, y, w, 10).fill(0x0c0f1c).rect(x, y, 5, 10).fill(0x2a3050);
-    else this.doorG.rect(x, y, w, 10).fill(0x171b30).rect(x, y, w, 1).fill(0x3a4366);
-    this.doorG.rect(x, y - 3, w, 2).fill(this.doorOpen ? 0xffc870 : 0x2b5a6a); // light strip: lamp-warm while ajar
+    this.doorG.rect(x - 1, y - 4, w + 2, 14).fill(E[3]); // steel frame
+    if (this.doorOpen) this.doorG.rect(x, y, w, 10).fill(E[0]).rect(x, y, 5, 10).fill(E[2]);
+    else this.doorG.rect(x, y, w, 10).fill(E[1]).rect(x, y, w, 1).fill(E[4]);
+    this.doorG.rect(x, y - 3, w, 2).fill(this.doorOpen ? WARM : CY_OFF); // light strip: lamp-warm while ajar
   }
 
   private buildWalls() {
@@ -342,14 +344,14 @@ export class Scene {
       for (let x = 0; x < this.l.cols; x++) c.drawImage(wt.source.resource as CanvasImageSource, x * T, 0);
       c.fillStyle = theme().wall.trim; c.fillRect(0, 0, cw, 2); // ceiling cove: 2px trim and a cyan wash falling from it
       const g = c.createLinearGradient(0, 2, 0, 8);
-      g.addColorStop(0, "rgba(127,227,255,0.08)"); g.addColorStop(1, "rgba(127,227,255,0)");
+      g.addColorStop(0, "rgba(154,246,255,0.08)"); g.addColorStop(1, "rgba(154,246,255,0)"); // KEY.cyan
       c.fillStyle = g; c.fillRect(0, 2, cw, 6);
       const plate = (cx: number, lines: string[]) => { // signage plate, backlit ~10%, centred on cx
         const pw = Math.max(...lines.map(pxTextW)) + 4, ph = lines.length * 6 + 3, px = Math.round(cx - pw / 2), py = 17 - Math.round(ph / 2);
-        c.fillStyle = "rgba(127,227,255,0.1)"; c.fillRect(px - 2, py - 2, pw + 4, ph + 4);
-        c.fillStyle = "#10131f"; c.fillRect(px, py, pw, ph);
+        c.fillStyle = "rgba(154,246,255,0.1)"; c.fillRect(px - 2, py - 2, pw + 4, ph + 4);
+        c.fillStyle = E[0]; c.fillRect(px, py, pw, ph);
         c.fillStyle = theme().wall.trim; c.fillRect(px, py, pw, 1);
-        lines.forEach((t, i) => drawPx(c, t, Math.round(cx - pxTextW(t) / 2), py + 2 + i * 6, "#9fd8ee"));
+        lines.forEach((t, i) => drawPx(c, t, Math.round(cx - pxTextW(t) / 2), py + 2 + i * 6, KEY.cyan));
       };
       plate(sg.ops.x + sg.ops.w / 2, ["OPS"]); plate(sg.agent.x + sg.agent.w / 2, ["AGENT", "OFFICE"]);
     }));
@@ -359,7 +361,7 @@ export class Scene {
     // whiteboard frame (text is drawn in the screen-space overlay)
     const b = this.geo.rect("board");
     const g = new Graphics();
-    g.roundRect(b.x, 3, b.w, 24, 2).fill(0x0a1124).stroke({ width: 2, color: 0x3fb8d6 }); // dark glass panel, cyan rim
+    g.roundRect(b.x, 3, b.w, 24, 2).fill(E[0]).stroke({ width: 2, color: 0x3fb8d6 }); // dark glass panel, cyan rim
     g.rect(b.x + 4, 27, b.w - 8, 2).fill(0x1d5f73);
     this.walls.addChild(g, this.notes, this.gauge);
     for (let i = 0; i < CARDS_PER_COL * 4; i++) { // pooled paper cards, laid out when the task list changes
@@ -374,28 +376,28 @@ export class Scene {
       const warm = L.tone === "warm", pool = new Sprite(this.glowTex);
       pool.anchor.set(0.5); pool.position.set(L.x, L.y + (warm ? -4 : L.reach * 0.4));
       pool.width = L.reach * (warm ? 1.6 : 1.5); pool.height = L.reach * (warm ? 0.9 : 1);
-      pool.tint = warm ? 0xffc870 : 0xcfe6ff; pool.alpha = warm ? 0.16 : 0.14; pool.eventMode = "none";
+      pool.tint = warm ? WARM : 0xcfe6ff; pool.alpha = warm ? 0.16 : 0.14; pool.eventMode = "none";
       this.fixtures.addChild(pool);
     }
     this.fixtures.eventMode = "none";
     this.glow.addChild(this.fixtures);
     for (const j of this.geo.junctions) { // pod junction box (the conduit passes through its centre) + one status LED
       const box = place(new Sprite(junctionTex()), j.cx - 3, j.cy - 2), led = place(new Sprite(whiteTex()), j.cx + 1, j.cy - 1);
-      led.width = led.height = 1; led.tint = 0x2c5a3a; box.eventMode = led.eventMode = "none";
+      led.width = led.height = 1; led.tint = CY_OFF; box.eventMode = led.eventMode = "none";
       this.floor.addChild(box, led); this.jLeds[j.pod] = led;
     }
     const gcx = this.geo.dials.gauge.x;
     this.gaugeSpill = new Sprite(this.glowTex);
-    this.gaugeSpill.anchor.set(0.5); this.gaugeSpill.position.set(gcx, 16); this.gaugeSpill.width = 40; this.gaugeSpill.height = 30; this.gaugeSpill.tint = 0x7fe3ff; this.gaugeSpill.alpha = 0; this.gaugeSpill.eventMode = "none";
+    this.gaugeSpill.anchor.set(0.5); this.gaugeSpill.position.set(gcx, 16); this.gaugeSpill.width = 40; this.gaugeSpill.height = 30; this.gaugeSpill.tint = CY; this.gaugeSpill.alpha = 0; this.gaugeSpill.eventMode = "none";
     this.glow.addChild(this.gaugeSpill);
     if (this.geo.rails.length) { // roaming cleaning bot: under the actors, with a small additive headlamp
       this.bot = new Sprite(bake(10, 6, (c) => {
-        c.fillStyle = "#2a2f45"; c.fillRect(1, 1, 8, 4); c.fillStyle = "#5a6490"; c.fillRect(1, 1, 8, 1);
-        c.fillStyle = "#171a24"; c.fillRect(0, 5, 10, 1); c.fillStyle = "#7fe3ff"; c.fillRect(7, 2, 2, 1);
+        c.fillStyle = E[2]; c.fillRect(1, 1, 8, 4); c.fillStyle = E[4]; c.fillRect(1, 1, 8, 1);
+        c.fillStyle = E[0]; c.fillRect(0, 5, 10, 1); c.fillStyle = KEY.cyan; c.fillRect(7, 2, 2, 1);
       }));
       this.bot.anchor.set(0.5); this.bot.eventMode = "none"; this.bot.visible = false;
       this.botLamp = new Sprite(this.glowTex);
-      this.botLamp.anchor.set(0.5); this.botLamp.tint = 0x7fe3ff; this.botLamp.blendMode = "add"; this.botLamp.width = 18; this.botLamp.height = 10; this.botLamp.eventMode = "none"; this.botLamp.visible = false;
+      this.botLamp.anchor.set(0.5); this.botLamp.tint = CY; this.botLamp.blendMode = "add"; this.botLamp.width = 18; this.botLamp.height = 10; this.botLamp.eventMode = "none"; this.botLamp.visible = false;
       this.floor.addChild(this.bot); this.glow.addChild(this.botLamp);
     }
   }
@@ -454,8 +456,8 @@ export class Scene {
   /** The wall gauge mirrors the clock: 3 bars lit by real office activity (0..3). */
   private drawGauge(lvl: number) {
     const { x: px, y: cy } = this.geo.dials.gauge, g = this.gauge;
-    g.clear().roundRect(px - 9, cy - 9, 18, 18, 2).fill(0x0a1124).stroke({ width: 2, color: 0x3fb8d6 });
-    [[-5, 11], [-1, 7], [3, 9]].forEach(([dy, len], i) => g.rect(px - 6, cy + dy, len, 2).fill(i >= 3 - lvl ? 0x7fe3ff : 0x1d3f55));
+    g.clear().roundRect(px - 9, cy - 9, 18, 18, 2).fill(E[0]).stroke({ width: 2, color: 0x3fb8d6 });
+    [[-5, 11], [-1, 7], [3, 9]].forEach(([dy, len], i) => g.rect(px - 6, cy + dy, len, 2).fill(i >= 3 - lvl ? CY : CY_OFF));
     if (this.gaugeSpill) this.gaugeSpill.alpha = 0.04 * lvl;
   }
 
@@ -463,7 +465,7 @@ export class Scene {
   private tickPads(on: boolean, now: number) {
     this.jLeds.forEach((led, i) => {
       const blink = on && (this.podWork[i] ?? 0) > 0 && Math.floor(now / 500 + i) % 2 === 0;
-      led.tint = blink ? 0x5be37d : 0x2c5a3a;
+      led.tint = blink ? CY : CY_OFF;
     });
   }
 
@@ -472,7 +474,7 @@ export class Scene {
     if (!this.racks.length) return;
     if (!this.rackSpill) {
       const f = this.racks[0], e = this.racks[this.racks.length - 1], r = (this.rackSpill = new Sprite(this.glowTex));
-      r.anchor.set(0.5); r.position.set((f.x + e.x + 16) / 2, f.y + 8); r.width = e.x + 16 - f.x + 24; r.height = 34; r.tint = 0x5be37d; r.eventMode = "none";
+      r.anchor.set(0.5); r.position.set((f.x + e.x + 16) / 2, f.y + 8); r.width = e.x + 16 - f.x + 24; r.height = 34; r.tint = CY; r.eventMode = "none";
       this.glow.addChild(r);
     }
     this.rackSpill.alpha = on ? 0.03 + 0.09 * a : 0.03; // the LEDs' small spill follows the same activity
@@ -490,7 +492,7 @@ export class Scene {
     this.leds.forEach((s, i) => {
       const n = ledNoise(i, step), lit = n < 0.12 + 0.75 * a;
       s.visible = true;
-      s.tint = lit ? (ledNoise(i, 7) < 0.2 ? 0xffb347 : 0x5be37d) : 0x2c5a3a;
+      s.tint = lit ? (ledNoise(i, 7) < 0.2 ? WARM : CY) : CY_OFF; // machine emitters are cyan; amber is reserved for attention
     });
   }
 
@@ -573,15 +575,15 @@ export class Scene {
   private drawDeco(g: Graphics, o: { working: boolean; tool?: string; count: number; role?: string; v: number; waiting: boolean; flash: boolean; used: boolean; load: number; depth: number; mug: boolean; filed?: string }) {
     g.clear();
     const px = (x: number, y: number, col: string) => g.rect(x, y, 1, 1).fill(col);
-    if (o.filed) { g.rect(1, 3, 4, 3).fill("#e8e4d6").rect(1, 3, 4, 1).fill(FILED[o.filed] ?? "#8b93ad"); return; } // a filed result left on the empty desk
-    if (o.v === 0) g.rect(3, 0, 3, 1).fill(o.working ? "#ffd27a" : o.waiting ? "#ffd84a" : "#4a4f69");
+    if (o.filed) { g.rect(1, 3, 4, 3).fill(KEY.paper).rect(1, 3, 4, 1).fill(FILED[o.filed] ?? "#8b93ad"); return; } // a filed result left on the empty desk
+    if (o.v === 0) g.rect(3, 0, 3, 1).fill(o.working ? KEY.warm : o.waiting ? "#ffd84a" : E[3]);
     const r = o.role ?? "";
-    if (/qa|test/.test(r)) { g.rect(6, 0, 2, 3).fill("#2a2d3b").rect(6, 1, 2, 1).fill("#4a5068"); px(7, 0, "#5be37d"); }
-    else if (/design|front/.test(r)) { g.rect(6, 1, 2, 2).fill("#f4ead0"); px(7, 0, "#c9604a"); }
+    if (/qa|test/.test(r)) { g.rect(6, 0, 2, 3).fill(E[1]).rect(6, 1, 2, 1).fill(E[3]); px(7, 0, "#5be37d"); }
+    else if (/design|front/.test(r)) { g.rect(6, 1, 2, 2).fill(KEY.paper); px(7, 0, "#c9604a"); }
     else if (/secur/.test(r)) { g.rect(6, 0, 2, 1).fill("#c9ccd8").rect(6, 1, 2, 2).fill("#f2c14e"); px(7, 2, "#7a5a10"); }
     if (o.flash) g.rect(9, 1, 5, 4).fill("#5be37d");
     else if (o.working) {
-      const k = toolKind(o.tool), c = "#7fe3ff";
+      const k = toolKind(o.tool), c = KEY.cyan;
       if (k !== "other") g.rect(9, 1, 5, 4).fill("#12304a");
       if (k === "term") { px(9, 1, c); px(10, 2, c); px(9, 3, c); px(11, 3, c); px(12, 3, c); }
       else if (k === "edit") g.rect(9, 1, 3, 1).fill("#5be37d").rect(9, 2, 3, 1).fill("#ff6b6b").rect(9, 3, 2, 1).fill("#5be37d");
@@ -589,14 +591,14 @@ export class Scene {
       else if (k === "web") { for (const [x, y] of [[10, 1], [11, 1], [12, 1], [10, 4], [11, 4], [12, 4], [9, 2], [9, 3], [13, 2], [13, 3], [11, 2], [11, 3]]) px(x, y, c); }
     }
     if (o.used) { // power rail along the desk front: one step lit per load level (static); queue chips stacked in the front gap
-      for (let i = 0; i < 3; i++) g.rect(2 + i * 4, 14, 3, 1).fill(i < o.load ? "#7fe3ff" : "#1c2238");
+      for (let i = 0; i < 3; i++) g.rect(2 + i * 4, 14, 3, 1).fill(i < o.load ? KEY.cyan : E[1]);
       const q = chipStack(o.depth);
       for (let i = 0; i < q.n; i++) g.rect(7, 13 - i, 2, 1).fill(i % 2 ? "#e0a040" : "#ffc870");
       if (q.more) { px(7, 6, "#ffffff"); px(6, 7, "#ffffff"); px(7, 7, "#ffffff"); px(8, 7, "#ffffff"); px(7, 8, "#ffffff"); }
     }
-    if (o.mug) { g.rect(14, 4, 2, 2).fill("#f4f1e6"); g.rect(14, 4, 2, 1).fill("#6b4a2e"); } // idle sip window: a mug on the desk, gone when the agent works or leaves
+    if (o.mug) { g.rect(14, 4, 2, 2).fill(KEY.paper); g.rect(14, 4, 2, 1).fill("#6b4a2e"); } // idle sip window: a mug on the desk, gone when the agent works or leaves
     const lvl = o.count >= 40 ? 3 : o.count >= 20 ? 2 : o.count >= 8 ? 1 : 0;
-    for (let i = 0; i < lvl; i++) g.rect(8 + (i % 2), 5 - (i > 1 ? 1 : 0), 4, 1).fill(i % 2 ? "#dfe3f0" : "#f6f7fb");
+    for (let i = 0; i < lvl; i++) g.rect(8 + (i % 2), 5 - (i > 1 ? 1 : 0), 4, 1).fill(i % 2 ? shade(KEY.paper, -0.06) : KEY.paper);
   }
 
   destroy() {
@@ -758,7 +760,7 @@ export class Scene {
         g = new Sprite(this.glowTex);
         g.anchor.set(0.5);
         g.position.set(d.s.x + 8, d.s.y + 8);
-        g.tint = 0xffc870;
+        g.tint = WARM;
         g.blendMode = "add";
         g.eventMode = "none";
         this.glow.addChild(g);
@@ -992,13 +994,13 @@ export class Scene {
     const l = this.l;
     for (const x of this.geo.windows) {
       const wx = x * T, w = 2 * T;
-      this.sky.rect(wx - 3, 1, w + 6, 28).fill(0x171b30); // deep reveal
-      this.sky.rect(wx - 2, 2, w + 4, 1).fill(0x2d3556);
+      this.sky.rect(wx - 3, 1, w + 6, 28).fill(E[0]); // deep reveal
+      this.sky.rect(wx - 2, 2, w + 4, 1).fill(E[3]);
       this.sky.rect(wx, 4, w, 11).fill(top).rect(wx, 15, w, 11).fill(bottom);
       if (night) for (let i = 0; i < 4; i++) this.sky.rect(wx + 4 + ((i * 9 + x * 3) % 24), 6 + ((i * 5) % 12), 1, 1).fill(0xffffff);
       if (day) this.sky.roundRect(wx + 6, 7, 10, 3, 1).fill(0xffffff);
-      this.sky.rect(wx + T - 1, 4, 2, 22).fill(0x232a45).rect(wx, 14, w, 2).fill(0x232a45);
-      this.sky.rect(wx - 3, 26, w + 6, 3).fill(0x4a5578).rect(wx - 3, 26, w + 6, 1).fill(0x6b7aa8); // sill, lit edge
+      this.sky.rect(wx + T - 1, 4, 2, 22).fill(E[2]).rect(wx, 14, w, 2).fill(E[2]);
+      this.sky.rect(wx - 3, 26, w + 6, 3).fill(E[4]).rect(wx - 3, 26, w + 6, 1).fill(E[5]); // sill, lit edge
       this.sky.rect(wx + w - 6, 22, 4, 4).fill(0x3fa14c).rect(wx + w - 5, 21, 2, 1).fill(0x7fd18a).rect(wx + w - 5, 25, 2, 1).fill(0xa8643c); // sill plant
     }
   }
@@ -1006,10 +1008,10 @@ export class Scene {
   private drawClock(d: Date) {
     const { x: cx, y: cy } = this.geo.dials.clock;
     const g = this.clock;
-    g.clear().circle(cx, cy, 9).fill(0xe8ecf8).stroke({ width: 2, color: 0x171b30 });
+    g.clear().circle(cx, cy, 9).fill(KEY.paper).stroke({ width: 2, color: E[0] });
     const m = d.getMinutes() + d.getSeconds() / 60, h = (d.getHours() % 12) + m / 60;
     const hand = (a: number, len: number, w: number) =>
-      g.moveTo(cx, cy).lineTo(cx + Math.sin(a) * len, cy - Math.cos(a) * len).stroke({ width: w, color: 0x171b30 });
+      g.moveTo(cx, cy).lineTo(cx + Math.sin(a) * len, cy - Math.cos(a) * len).stroke({ width: w, color: E[0] });
     hand((h / 12) * Math.PI * 2, 4, 2);
     hand((m / 60) * Math.PI * 2, 6.5, 1);
   }

@@ -95,7 +95,7 @@ export function stackBubbles(items: BubbleBox[], maxTools = 3): BubbleOut[] {
     }
     if (shifts && it.top !== undefined && y - it.h < it.top) { out[i].visible = false; continue; }
     out[i].y = y;
-    out[i].alpha = 1 - 0.25 * Math.min(2, shifts);
+    out[i].alpha = it.prio >= 2.5 ? 1 : 1 - 0.25 * Math.min(2, shifts); // an alert's own words never fade
     placed.push({ l, r, t: y - it.h, b: y });
   }
   return out;

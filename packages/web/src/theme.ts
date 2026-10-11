@@ -20,14 +20,51 @@ export type Theme = {
 // Okabe-Ito: the standard colour-blind-safe categorical set.
 const OKABE = ["#e69f00", "#56b4e9", "#009e73", "#f0e442", "#0072b2", "#d55e00", "#cc79a7", "#999999"];
 
+// ---- status vocabulary (one map for every surface: ring, dot, row accent, pill, toast, legend) ----
+/**
+ * Loudest first. Every status is a colour AND a glyph AND a word, never colour alone (colour-vision safe).
+ * permission = Claude is asking to run something (act now); turn = idle at the prompt (your move); blocked = a helper gave up.
+ */
+export type StatusKey = "permission" | "turn" | "blocked" | "working" | "idle";
+export const STATUS: Record<StatusKey, { color: string; glyph: string; label: string }> = {
+  permission: { color: "#ffb020", glyph: "!", label: "needs permission" },
+  turn: { color: "#7fe3ff", glyph: "?", label: "your turn" },
+  blocked: { color: "#ff5c6c", glyph: "x", label: "gave up" },
+  working: { color: "#3ddc97", glyph: "", label: "working" },
+  idle: { color: "#8b93ad", glyph: "", label: "idle" },
+};
+export const STATUS_ORDER: StatusKey[] = ["permission", "turn", "blocked", "working", "idle"]; // a helper that gave up is usually handled by its lead, so it ranks below the two states that wait on you
+
+// ---- R2 value key: the one palette token the scene is graded to -----------------------------------
+/**
+ * Values are luma (Rec.601, 0..1). The room is dark and cool so every light source glows against it.
+ * env: one 6-step blue-violet ramp, shadows lean violet: 0 void/seams ~5%, 1 floor ~8%, 2 recesses/wall ~13%,
+ * 3 furniture bodies ~20%, 4 furniture tops ~30%, 5 lit edges ~42%. Nothing that is not a light goes above `paper` (~62%);
+ * emitters (screens, lamps, LEDs, signage) sit at 85%+. Roles: cyan = machine/working emitters only, warm = lamps,
+ * attention/blocked = STATUS (reserved for status), neon magenta = signage and skyline only, never status.
+ * char: value bands for the character pass (face brightest, hair lifted off the floor and outline); not enforced yet.
+ */
+export const KEY = {
+  env: ["#0d0b1a", "#131229", "#1d1e3d", "#2c3055", "#424a75", "#5b6a9b"],
+  cyan: "#9af6ff",
+  cyanOff: "#103338",
+  warm: "#ffd98c",
+  paper: "#a29e90",
+  attention: STATUS.permission.color,
+  blocked: STATUS.blocked.color,
+  neon: "#ff3ea5",
+  char: { face: [0.38, 0.85], shirt: [0.25, 0.6], hair: [0.2, 0.5], pants: [0.12, 0.25] },
+} as const;
+const E = KEY.env;
+
 export const DEFAULT_THEME: Theme = {
   name: "default",
   skins: ["#f6d3b0", "#e6b48a", "#c98d5f", "#8d5a3b", "#fadcbd"],
   hairs: ["#2a1c14", "#5b3a26", "#a86a2c", "#e0bd62", "#1b1b26", "#b9482f", "#cfcfd8"],
   roleColors: OKABE,
-  deck: { deep: "#1c2036", mid: "#2a3050", lit: "#3a4366" },
-  wall: { face: "#232a45", top: "#2d3556", line: "#171b30", base: "#1c2238", trim: "#4a5578" },
-  desk: { top: "#56648f", edge: "#7a8ab8", front: "#3a4366", inset: "#2d3454" },
+  deck: { deep: E[0], mid: E[1], lit: E[2] },
+  wall: { face: E[2], top: E[3], line: E[0], base: E[1], trim: E[4] },
+  desk: { top: E[4], edge: E[5], front: E[3], inset: E[2] },
   outline: "#171421",
   alert: { waiting: "#ffd84a", blocked: "#ff4a4a" },
   nightMax: 0.32,
@@ -47,17 +84,3 @@ export function roleColor(role: string): string {
   return i >= 0 ? p[i % p.length] : hsl(hash(role) % 360, 0.55, 0.52);
 }
 
-// ---- status vocabulary (one map for every surface: ring, dot, row accent, pill, toast, legend) ----
-/**
- * Loudest first. Every status is a colour AND a glyph AND a word, never colour alone (colour-vision safe).
- * permission = Claude is asking to run something (act now); turn = idle at the prompt (your move); blocked = a helper gave up.
- */
-export type StatusKey = "permission" | "turn" | "blocked" | "working" | "idle";
-export const STATUS: Record<StatusKey, { color: string; glyph: string; label: string }> = {
-  permission: { color: "#ffb020", glyph: "!", label: "needs permission" },
-  turn: { color: "#7fe3ff", glyph: "?", label: "your turn" },
-  blocked: { color: "#ff5c6c", glyph: "x", label: "gave up" },
-  working: { color: "#3ddc97", glyph: "", label: "working" },
-  idle: { color: "#8b93ad", glyph: "", label: "idle" },
-};
-export const STATUS_ORDER: StatusKey[] = ["permission", "turn", "blocked", "working", "idle"]; // a helper that gave up is usually handled by its lead, so it ranks below the two states that wait on you

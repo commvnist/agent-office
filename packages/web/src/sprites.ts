@@ -1,12 +1,15 @@
 import type { Texture } from "pixi.js";
 import { Grid, shade } from "./pixel.ts";
-import { STATUS, theme } from "./theme.ts";
+import { toLuma } from "./color.ts";
+import { KEY, STATUS, theme } from "./theme.ts";
 import { settings } from "./settings.ts";
 import type { ToolIconName } from "./choreo.ts";
 
 // Character art moved to people.ts (re-exported here, so importers are unchanged).
 import { memo, memoRaw, person, WALK_FRAMES, type Dir, type Look } from "./people.ts";
 export * from "./people.ts";
+// Environment art is graded to the R2 value key (theme.ts KEY): env ramp E[0..5], emitters at 85%+, paper the brightest non-light.
+const E = KEY.env, CY = KEY.cyan, PAPER = KEY.paper;
 function slab(g: Grid, x: number, y: number, w: number, h: number, c: string) {
   g.rect(x, y, w, h, c);
   g.rect(x, y, w, 1, shade(c, 0.12));
@@ -22,8 +25,8 @@ export const shadowTex = () =>
     return g;
   });
 
-// chair upholstery: slate, teal, plum, amber (outer, back, base)
-const CHAIRS = [["#3b3f55", "#4a4f69", "#2f3246"], ["#2c4f58", "#3a6b78", "#223d45"], ["#4a3556", "#62466f", "#382a42"], ["#5a4a2c", "#7a6338", "#44381f"]];
+// chair upholstery: slate, teal, plum, amber (outer ~20%, back ~27%, base ~14%)
+const CHAIRS = ["#3b3f55", "#2c4f58", "#4a3556", "#5a4a2c"].map((c) => [toLuma(c, 0.2), toLuma(c, 0.27), toLuma(c, 0.14)]);
 export const CHAIR_STYLES = CHAIRS.length;
 export const chairTex = (v = 0) =>
   memo(`chair:${v}`, () => {
@@ -36,7 +39,7 @@ export const chairTex = (v = 0) =>
 export const stoolTex = (v = 0) =>
   memo(`stool:${v}`, () => {
     const g = new Grid(16, 16), c = CHAIRS[v % CHAIRS.length];
-    slab(g, 4, 8, 8, 3, c[1]); g.rect(4, 8, 8, 1, c[0]); g.rect(7, 11, 2, 4, "#2a2d3b"); g.rect(4, 14, 8, 1, "#171a24"); g.rect(5, 15, 6, 1, "rgba(26,20,40,0.22)");
+    slab(g, 4, 8, 8, 3, c[1]); g.rect(4, 8, 8, 1, c[0]); g.rect(7, 11, 2, 4, E[2]); g.rect(4, 14, 8, 1, E[0]); g.rect(5, 15, 6, 1, "rgba(26,20,40,0.22)");
     return g;
   });
 
@@ -47,10 +50,10 @@ export const benchTex = (v: number) =>
     slab(g, 0, 1, 16, 5, d.top); g.rect(0, 1, 16, 1, d.edge);
     slab(g, 0, 6, 16, 9, d.front); g.rect(1, 8, 14, 6, d.inset); g.rect(3, 10, 2, 1, d.top); g.rect(11, 10, 2, 1, d.top);
     const k = Math.abs(v) % 4;
-    if (k === 0) { g.rect(6, 3, 4, 3, "#a0633a"); g.rect(5, 0, 6, 3, "#4fa05a"); g.rect(7, 0, 2, 1, "#7fd18a"); }
-    else if (k === 1) { g.rect(4, 2, 5, 3, "#e8e4d6"); g.rect(5, 1, 5, 3, "#cfcab8"); }
-    else if (k === 2) { g.rect(5, 3, 6, 2, "#2a2d3b"); g.rect(7, 3, 1, 1, "#7fe3ff"); g.rect(9, 3, 1, 1, "#7fe3ff"); }
-    else { g.rect(4, 2, 3, 3, "#e9edf5"); g.rect(9, 2, 3, 3, "#c0524d"); }
+    if (k === 0) { g.rect(6, 3, 4, 3, toLuma("#a0633a", 0.28)); g.rect(5, 0, 6, 3, toLuma("#4fa05a", 0.3)); g.rect(7, 0, 2, 1, toLuma("#7fd18a", 0.45)); }
+    else if (k === 1) { g.rect(4, 2, 5, 3, PAPER); g.rect(5, 1, 5, 3, shade(PAPER, -0.08)); }
+    else if (k === 2) { g.rect(5, 3, 6, 2, E[1]); g.rect(7, 3, 1, 1, CY); g.rect(9, 3, 1, 1, CY); }
+    else { g.rect(4, 2, 3, 3, PAPER); g.rect(9, 2, 3, 3, toLuma("#c0524d", 0.3)); }
     return g;
   });
 
@@ -65,34 +68,35 @@ export const deskTex = (accent: string, screen: 0 | 1 | 2 | 3, variant: 0 | 1 = 
     slab(g, 0, 1, 16, 5, d.top); g.rect(0, 1, 16, 1, d.edge);
     slab(g, 0, 6, 16, 9, d.front); g.rect(1, 8, 6, 6, d.inset); g.rect(9, 8, 6, 6, d.inset);
     g.rect(3, 10, 2, 1, d.top); g.rect(11, 10, 2, 1, d.top);
-    const base = screen === 0 ? "#171a24" : screen === 3 ? "#1a2230" : "#12304a";
+    const base = screen === 0 ? E[0] : screen === 3 ? E[1] : "#12304a"; // lit glass stays a deep blue so the content glows
     const content = (x: number, rows: number, w: number) => {
-      if (screen === 3) g.rect(x, 1 + (variant && x < 8 ? 1 : 0), 2, 1, "#3d4a63"); // dim idle screen: one faint line
-      else if (screen) for (let r = 0; r < rows; r++) g.rect(x, (variant && x < 8 ? 2 : 1) + r, 1 + ((r * 2 + screen * 3) % w), 1, r % 2 ? accent : "#7fe3ff");
+      if (screen === 3) g.rect(x, 1 + (variant && x < 8 ? 1 : 0), 2, 1, E[3]); // dim idle screen: one faint line
+      else if (screen) for (let r = 0; r < rows; r++) g.rect(x, (variant && x < 8 ? 2 : 1) + r, 1 + ((r * 2 + screen * 3) % w), 1, r % 2 ? accent : CY);
     };
-    // right monitor: bevel on top, 2x1 stand
-    g.rect(8, 0, 7, 6, "#2a2d3b"); g.rect(8, 0, 7, 1, "#4a5068");
+    // right monitor: bevel on top, 2x1 stand; the bezel (E2) sits between floor and desk top so it reads against both
+    g.rect(8, 0, 7, 6, E[2]); g.rect(8, 0, 7, 1, E[4]);
     g.rect(9, 1, 5, 4, base);
     content(9, 4, 4);
-    g.rect(11, 6, 2, 1, "#2a2d3b");
+    g.rect(11, 6, 2, 1, E[2]);
     if (variant) {
-      g.rect(0, 1, 6, 4, "#2a2d3b"); g.rect(0, 1, 6, 1, "#4a5068"); // leaves x6..7 free for the role item
+      g.rect(0, 1, 6, 4, E[2]); g.rect(0, 1, 6, 1, E[4]); // leaves x6..7 free for the role item
       g.rect(1, 2, 4, 2, base);
       content(1, 2, 3);
-      g.rect(2, 5, 2, 2, "#2a2d3b");
-      g.rect(1, 5, 6, 1, "#d8dbe6");
+      g.rect(2, 5, 2, 2, E[2]);
+      g.rect(1, 5, 6, 1, shade(PAPER, -0.1));
     } else {
-      g.rect(4, 1, 1, 1, "#2a2d3b"); g.rect(3, 2, 3, 1, "#2a2d3b"); // lamp pole + base; the shade is drawn per state
-      g.rect(3, 3, 5, 2, "#d8dbe6"); g.rect(3, 3, 5, 1, "#f2f4fa");
-      g.rect(0, 2, 2, 2, "#f2f2f2"); g.set(0, 2, "#c9604a");
-      if (screen === 1) { g.set(0, 1, "#dfe6f5"); g.set(1, 0, "#dfe6f5"); }
-      else if (screen === 2) { g.set(0, 0, "#dfe6f5"); g.set(1, 1, "#dfe6f5"); }
+      g.rect(4, 1, 1, 1, E[1]); g.rect(3, 2, 3, 1, E[1]); // lamp pole + base; the shade is drawn per state
+      g.rect(3, 3, 5, 2, shade(PAPER, -0.1)); g.rect(3, 3, 5, 1, PAPER);
+      g.rect(0, 2, 2, 2, PAPER); g.set(0, 2, toLuma("#c9604a", 0.3));
+      const steam = toLuma("#dfe6f5", 0.55);
+      if (screen === 1) { g.set(0, 1, steam); g.set(1, 0, steam); }
+      else if (screen === 2) { g.set(0, 0, steam); g.set(1, 1, steam); }
     }
     if (style === 1) { // standing: the cabinet becomes two raised legs and a thin riser, so the top reads higher
       g.rect(1, 7, 14, 8, null); g.rect(2, 7, 2, 8, d.front); g.rect(12, 7, 2, 8, d.front); g.rect(2, 7, 12, 1, shade(d.front, -0.2));
       g.rect(4, 14, 8, 1, shade(d.front, -0.2));
     } else if (style === 2) { // carrel: low fabric screens down both sides
-      for (const x of [0, 14]) { g.rect(x, 0, 2, 15, "#3b4a6e"); g.rect(x, 0, 2, 1, "#6a7aa8"); }
+      for (const x of [0, 14]) { g.rect(x, 0, 2, 15, E[3]); g.rect(x, 0, 2, 1, E[5]); }
     }
     return g;
   });
@@ -101,13 +105,13 @@ export const laptopTex = (tier: number) =>
   memo(`laptop:${tier}`, () => {
     const g = new Grid(16, 16);
     if (tier === 0) {
-      slab(g, 2, 4, 12, 3, "#5a6a98"); g.rect(3, 7, 2, 7, "#3a4366"); g.rect(11, 7, 2, 7, "#2d3454"); // stool-table
+      slab(g, 2, 4, 12, 3, E[4]); g.rect(3, 7, 2, 7, E[3]); g.rect(11, 7, 2, 7, E[2]); // stool-table
     } else {
-      slab(g, 0, 3, 16, 3, "#d4d7e2"); g.rect(1, 6, 1, 9, "#7e8296"); g.rect(14, 6, 1, 9, "#666a7e");
-      g.rect(2, 11, 12, 1, "#7e8296");
+      slab(g, 0, 3, 16, 3, toLuma("#d4d7e2", 0.42)); g.rect(1, 6, 1, 9, toLuma("#7e8296", 0.3)); g.rect(14, 6, 1, 9, toLuma("#666a7e", 0.24));
+      g.rect(2, 11, 12, 1, toLuma("#7e8296", 0.3));
     }
-    g.rect(4, -1, 8, 5, "#c9ccd8"); g.rect(5, 0, 6, 3, "#112033"); g.rect(6, 1, 3, 1, "#7fe3ff");
-    g.rect(3, 4, 10, 1, "#9a9eb0");
+    g.rect(4, -1, 8, 5, toLuma("#c9ccd8", 0.45)); g.rect(5, 0, 6, 3, "#112033"); g.rect(6, 1, 3, 1, CY);
+    g.rect(3, 4, 10, 1, toLuma("#9a9eb0", 0.36));
     return g;
   });
 
@@ -116,14 +120,14 @@ export const laptopTex = (tier: number) =>
 export const rackTex = (blink: 0 | 1, pos: 0 | 1 | 2 = 0) =>
   memo(`rack:${blink}:${pos}`, () => {
     const g = new Grid(16, 16);
-    g.rect(0, 0, 16, 16, "#2e3144");
-    g.rect(0, 0, 16, 1, "#4a5170"); // lit top edge
-    g.rect(0, 15, 16, 1, "#171a24"); // base
-    if (pos !== 2) g.rect(15, 0, 1, 15, "#4a5170"); // lit seam against the next cabinet
-    if (pos !== 0) g.rect(0, 1, 1, 14, "#1f2233"); // shadowed seam on this side
+    g.rect(0, 0, 16, 16, E[2]);
+    g.rect(0, 0, 16, 1, E[4]); // lit top edge
+    g.rect(0, 15, 16, 1, E[0]); // base
+    if (pos !== 2) g.rect(15, 0, 1, 15, E[4]); // lit seam against the next cabinet
+    if (pos !== 0) g.rect(0, 1, 1, 14, E[1]); // shadowed seam on this side
     for (let i = 0; i < 4; i++) {
-      g.rect(2, 2 + i * 3, 11, 2, "#1b1d2b"); g.rect(3, 2 + i * 3, 5, 1, "#3a3e55");
-      g.set(10, 3 + i * 3, (i + blink) % 2 ? "#5be37d" : "#2c5a3a"); g.set(11, 3 + i * 3, (i + blink) % 3 ? "#2c5a3a" : "#ffb347");
+      g.rect(2, 2 + i * 3, 11, 2, E[0]); g.rect(3, 2 + i * 3, 5, 1, E[3]);
+      g.set(10, 3 + i * 3, (i + blink) % 2 ? CY : KEY.cyanOff); g.set(11, 3 + i * 3, (i + blink) % 3 ? KEY.cyanOff : KEY.warm);
     }
     return g;
   });
@@ -132,7 +136,7 @@ export const rackTex = (blink: 0 | 1, pos: 0 | 1 | 2 = 0) =>
 export const sconceTex = () =>
   memo("sconce", () => {
     const g = new Grid(16, 16);
-    g.rect(7, 0, 2, 5, "#4a5578"); g.rect(5, 5, 6, 2, "#2d3556"); g.rect(6, 7, 4, 1, "#dcecff"); g.set(7, 8, "#9fd8ee"); g.set(8, 8, "#9fd8ee");
+    g.rect(7, 0, 2, 5, E[4]); g.rect(5, 5, 6, 2, E[3]); g.rect(6, 7, 4, 1, "#dcecff"); g.set(7, 8, CY); g.set(8, 8, CY);
     return g;
   });
 
@@ -140,8 +144,8 @@ export const sconceTex = () =>
 export const floorLampTex = () =>
   memo("floorlamp", () => {
     const g = new Grid(16, 16);
-    g.rect(5, 14, 6, 2, "#2a2f45"); g.rect(7, 6, 2, 8, "#5a6490");
-    g.rect(4, 1, 8, 5, "#ffc870"); g.rect(4, 1, 8, 1, "#ffe3a8"); g.rect(5, 6, 6, 1, "#a8743a");
+    g.rect(5, 14, 6, 2, E[2]); g.rect(7, 6, 2, 8, E[4]);
+    g.rect(4, 1, 8, 5, KEY.warm); g.rect(4, 1, 8, 1, "#ffe3a8"); g.rect(5, 6, 6, 1, toLuma("#a8743a", 0.4));
     return g;
   });
 
@@ -149,7 +153,7 @@ export const floorLampTex = () =>
 export const junctionTex = () =>
   memo("junction", () => {
     const g = new Grid(6, 4);
-    g.rect(0, 0, 6, 4, "#1c2030"); g.rect(0, 0, 6, 1, "#5a6490"); g.rect(0, 3, 6, 1, "#10131f");
+    g.rect(0, 0, 6, 4, E[1]); g.rect(0, 0, 6, 1, E[4]); g.rect(0, 3, 6, 1, E[0]);
     return g;
   });
 
@@ -163,9 +167,10 @@ export const ledNoise = (i: number, step: number) => (Math.imul(Math.imul(i + 1,
 export const plantTex = () =>
   memo("plant", () => {
     const g = new Grid(16, 16);
-    g.rect(5, 9, 6, 6, "#a8643c"); g.rect(5, 9, 6, 1, "#c78250");
-    g.rect(7, 4, 2, 6, "#2f7d3a");
-    g.rect(3, 3, 4, 3, "#3fa14c"); g.rect(9, 2, 4, 4, "#46b256"); g.rect(5, 0, 6, 4, "#3fa14c");
+    const leaf = toLuma("#3fa14c", 0.28);
+    g.rect(5, 9, 6, 6, toLuma("#a8643c", 0.28)); g.rect(5, 9, 6, 1, toLuma("#c78250", 0.36));
+    g.rect(7, 4, 2, 6, toLuma("#2f7d3a", 0.2));
+    g.rect(3, 3, 4, 3, leaf); g.rect(9, 2, 4, 4, toLuma("#46b256", 0.34)); g.rect(5, 0, 6, 4, leaf);
     return g;
   });
 
@@ -173,33 +178,34 @@ export const plantTex = () =>
 export const coffeeTex = (on = false) =>
   memo(`coffee:${on}`, () => {
     const g = new Grid(16, 16);
-    g.rect(2, 2, 12, 13, "#3a3d4d"); g.rect(3, 3, 10, 5, "#1a1c26"); g.rect(5, 4, 6, 3, "#7a4a2a");
-    g.rect(6, 10, 4, 4, "#f2f2f2"); g.rect(11, 9, 2, 1, on ? "#5be37d" : "#e0524a");
+    g.rect(2, 2, 12, 13, E[3]); g.rect(3, 3, 10, 5, E[0]); g.rect(5, 4, 6, 3, toLuma("#7a4a2a", 0.22));
+    g.rect(6, 10, 4, 4, PAPER); g.rect(11, 9, 2, 1, on ? "#5be37d" : "#e0524a");
     return g;
   });
 
 export const coolerTex = () =>
   memo("cooler", () => {
     const g = new Grid(16, 16);
-    g.rect(4, 0, 8, 7, "#9ad7f5"); g.rect(5, 1, 6, 5, "#c9ecfb");
-    g.rect(3, 7, 10, 8, "#d9dce8"); g.rect(5, 9, 2, 2, "#4aa3e0"); g.rect(9, 9, 2, 2, "#e0524a");
+    g.rect(4, 0, 8, 7, toLuma("#9ad7f5", 0.45)); g.rect(5, 1, 6, 5, toLuma("#c9ecfb", 0.55));
+    g.rect(3, 7, 10, 8, toLuma("#d9dce8", 0.42)); g.rect(5, 9, 2, 2, "#4aa3e0"); g.rect(9, 9, 2, 2, "#e0524a");
     return g;
   });
 
 export const shelfTex = () =>
   memo("shelf", () => {
     const g = new Grid(16, 16);
-    slab(g, 1, 0, 14, 16, "#3a4366"); g.rect(2, 1, 12, 6, "#171b30"); g.rect(2, 9, 12, 6, "#171b30"); g.rect(2, 1, 12, 1, "#10131f"); g.rect(2, 9, 12, 1, "#10131f");
-    ["#d85a5a", "#e8c25a", "#5a9ad8", "#6bc17a", "#b86bd8"].forEach((c, i) => { g.rect(3 + i * 2, 2, 2, 5, c); g.rect(3 + i * 2, 10, 2, 5, c === "#d85a5a" ? "#5a9ad8" : "#d85a5a"); });
+    slab(g, 1, 0, 14, 16, E[3]); g.rect(2, 1, 12, 6, E[1]); g.rect(2, 9, 12, 6, E[1]); g.rect(2, 1, 12, 1, E[0]); g.rect(2, 9, 12, 1, E[0]);
+    const books = ["#d85a5a", "#e8c25a", "#5a9ad8", "#6bc17a", "#b86bd8"].map((c) => toLuma(c, 0.32));
+    books.forEach((c, i) => { g.rect(3 + i * 2, 2, 2, 5, c); g.rect(3 + i * 2, 10, 2, 5, i ? books[0] : books[2]); });
     return g;
   });
 
 export const couchTex = () =>
   memo("couch", () => {
     const g = new Grid(32, 16);
-    slab(g, 1, 3, 30, 7, "#3b4a6e");
-    slab(g, 0, 7, 4, 8, "#323f5f"); slab(g, 28, 7, 4, 8, "#323f5f");
-    slab(g, 4, 9, 11, 5, "#4a5a82"); slab(g, 17, 9, 11, 5, "#4a5a82");
+    slab(g, 1, 3, 30, 7, E[3]);
+    slab(g, 0, 7, 4, 8, shade(E[3], -0.04)); slab(g, 28, 7, 4, 8, shade(E[3], -0.04));
+    slab(g, 4, 9, 11, 5, E[4]); slab(g, 17, 9, 11, 5, E[4]);
     return g;
   });
 
@@ -207,15 +213,15 @@ export const couchTex = () =>
 export const boothTex = () =>
   memo("booth", () => {
     const g = new Grid(16, 32);
-    slab(g, 1, 0, 14, 32, "#2d3556"); g.rect(3, 3, 9, 24, "#1c2238"); g.rect(4, 4, 7, 22, "#2a3a58"); g.rect(4, 4, 7, 1, "#4a5a82");
-    g.rect(12, 8, 2, 14, "#171b30"); g.rect(5, 1, 6, 1, "#7fe3ff"); g.rect(5, 28, 6, 2, "#171b30");
+    slab(g, 1, 0, 14, 32, E[3]); g.rect(3, 3, 9, 24, E[1]); g.rect(4, 4, 7, 22, E[2]); g.rect(4, 4, 7, 1, E[4]);
+    g.rect(12, 8, 2, 14, E[0]); g.rect(5, 1, 6, 1, CY); g.rect(5, 28, 6, 2, E[0]);
     return g;
   });
 
 export const fridgeTex = () =>
   memo("fridge", () => {
     const g = new Grid(16, 16);
-    slab(g, 3, 0, 10, 16, "#aab4cc"); g.rect(3, 6, 10, 1, "#6a7390"); g.rect(11, 2, 1, 3, "#4a5068"); g.rect(11, 8, 1, 4, "#4a5068");
+    slab(g, 3, 0, 10, 16, E[5]); g.rect(3, 6, 10, 1, E[3]); g.rect(11, 2, 1, 3, E[2]); g.rect(11, 8, 1, 4, E[2]);
     return g;
   });
 
@@ -224,7 +230,7 @@ export const tableTex = () =>
   memo("table", () => {
     const g = new Grid(32, 16), d = theme().desk;
     slab(g, 3, 5, 26, 6, d.top); g.rect(3, 5, 26, 1, d.edge); g.rect(5, 11, 2, 3, d.front); g.rect(25, 11, 2, 3, d.front);
-    g.rect(13, 6, 5, 3, "#e8e4d6"); g.rect(21, 6, 3, 3, "#c0524d");
+    g.rect(13, 6, 5, 3, PAPER); g.rect(21, 6, 3, 3, toLuma("#c0524d", 0.3));
     return g;
   });
 
@@ -232,7 +238,7 @@ export const tableTex = () =>
 export const armchairTex = () =>
   memo("armchair", () => {
     const g = new Grid(16, 16);
-    slab(g, 2, 3, 12, 11, "#3b4a6e"); slab(g, 3, 5, 9, 7, "#4a5a82"); slab(g, 1, 7, 3, 7, "#323f5f");
+    slab(g, 2, 3, 12, 11, E[3]); slab(g, 3, 5, 9, 7, E[4]); slab(g, 1, 7, 3, 7, shade(E[3], -0.04));
     return g;
   });
 
@@ -242,8 +248,8 @@ export const huddleTex = (k: number) =>
     const g = new Grid(16, 16), d = theme().desk;
     g.rect(2, 3, 12, 10, d.top); g.rect(4, 1, 8, 14, d.top); g.rect(4, 13, 8, 2, d.front); g.rect(2, 11, 12, 2, d.front);
     g.rect(4, 1, 8, 1, d.edge);
-    if (k & 1) { g.rect(5, 6, 4, 3, "#e8e4d6"); g.rect(10, 6, 2, 2, "#2a2d3b"); g.set(10, 6, "#7fe3ff"); }
-    else { g.rect(6, 5, 5, 4, "#2a2d3b"); g.rect(6, 5, 5, 1, "#4a5068"); g.set(9, 7, "#7fe3ff"); g.set(10, 7, "#7fe3ff"); }
+    if (k & 1) { g.rect(5, 6, 4, 3, PAPER); g.rect(10, 6, 2, 2, E[1]); g.set(10, 6, CY); }
+    else { g.rect(6, 5, 5, 4, E[1]); g.rect(6, 5, 5, 1, E[3]); g.set(9, 7, CY); g.set(10, 7, CY); }
     return g;
   });
 

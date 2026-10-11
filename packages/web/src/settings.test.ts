@@ -75,3 +75,9 @@ test("stackBubbles hides a bubble that cannot rise clear instead of letting a cl
   assert.equal(r[1].visible, false, "no room above the alert bubble");
   assert.equal(stackBubbles([box({ top: 40 }), box({ age: 5, top: 40 })])[1].y, 78, "room: it stacks");
 });
+
+test("stackBubbles: a shifted alert bubble keeps full opacity", () => {
+  const box = (o: Partial<BubbleBox>): BubbleBox => ({ x: 0, y: 100, w: 40, h: 20, prio: 2, age: 0, zone: "z", tool: false, ...o });
+  const r = stackBubbles([box({ prio: 3 }), box({ prio: 2.5 })]);
+  assert.equal(r[1].alpha, 1);
+});

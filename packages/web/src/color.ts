@@ -71,6 +71,14 @@ export function luma(hex: string): number {
   return (0.299 * r + 0.587 * g + 0.114 * b) / 255;
 }
 
+/** Regrade `hex` to luma `target` (0..1), keeping its hue and saturation: puts any sprite colour on a value band of the key. */
+export function toLuma(hex: string, target: number): string {
+  const c = hslOf(hex);
+  let lo = 0, hi = 1;
+  for (let i = 0; i < 24; i++) { const m = (lo + hi) / 2; if (luma(hsl(c.h, c.s, m)) < target) lo = m; else hi = m; }
+  return hsl(c.h, c.s, hi);
+}
+
 /** Blend toward a tint (cool shadow / warm light); same maths as `mix`. */
 export const shadeTo = mix;
 
