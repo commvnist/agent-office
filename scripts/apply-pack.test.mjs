@@ -28,3 +28,16 @@ test("planPack rejects traversal names and absolute or non-md sources", () => {
   assert.throws(mk({ ok: "a.txt" }), /bad agent source/);
   assert.doesNotThrow(mk({ ok: "../../agents/ok.md" }));
 });
+
+test("apply-pack refuses a pack whose merged roles are not a valid office.json (and writes nothing)", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const { mkdtempSync, writeFileSync, existsSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "ao-pack-")), home = mkdtempSync(join(tmpdir(), "ao-home-"));
+  writeFileSync(join(dir, "pack.json"), JSON.stringify({ name: "bad", roles: { qa: { agent: "qa-engineer", count: "lots" } }, agents: {} }));
+  const r = spawnSync(process.execPath, ["--experimental-strip-types", new URL("./apply-pack.mjs", import.meta.url).pathname, dir, "--agents-dir", join(dir, "agents")], { env: { ...process.env, AGENT_OFFICE_HOME: home }, encoding: "utf8" });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.match(r.stderr, /invalid/);
+  assert.equal(existsSync(join(home, "office.json")), false);
+});

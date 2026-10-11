@@ -119,3 +119,23 @@ Areas: core, daemon/CLI, canvas, panel UI, views and tools, accessibility/respon
 | Q2-3 | CLI falls back to port 4747 when `AGENT_OFFICE_PORT=0` | Not fixed: a test-only configuration, the default fallback is by design |
 | Q4-4 | White strip under dialogs | Headless-Chromium compositing artifact (see the header workaround) |
 | Q6-6 | GPU texture count grew in a 5 minute soak | Not a leak: in a 12 minute soak the live texture count was flat at 527 from minute 2 to 12 (0 deletions needed), heap 13-23 MB sawtooth, 0 page errors. The DOM node count rose only while the activity feed filled to its cap (807 after the first burst, then 807-815 through 840 more events). Headless software GL; GPU memory itself was not measured. |
+
+### Post-fix evidence (what re-ran, and against what)
+
+| Item | Evidence after the fix |
+|---|---|
+| Q5-1 overlay transparent | Browser check: `?preset=obs-720` gives html and body `rgba(0,0,0,0)` |
+| Q1-1, Q1-2, Q1-3, Q1-4, Q1-5/6 | Unit tests in `state.test.ts` / `fun.test.ts` (own pod after an earlier pod empties, retried seq, lead combos, stop-before-start, NaN sweep, negative duration) |
+| Q2-1, Q2-2, Q2-7 | `daemon.test.ts`: office.json edit visible on the next `/state`; 3 sessions survive a 5,200-event burst on boot; unknown session is 404 |
+| Q2-4 | `apply-pack.test.mjs`: invalid roles exit 1 and write nothing |
+| Q2-5, narration scope | `narration.test.ts` (cwd `/` and home refused) and a 5-check end-to-end run (history skipped, tool results and user text never surface, final message once) |
+| Q2-6 | `plugin-version.test.mjs` |
+| Q4-1, Q4-2, Q4-3, Q6-4/5 | 12-check browser run: Esc closes only the palette, rows not squashed, feed hydrates on reload, names carry the project, main landmark |
+| Q5-2 | The QA agent's own script `t13.mjs` against the fixed build: a 7 minute selection now shows exactly 06:52:29 to 07:00:13 (before: a 16 minute selection became a 38 minute view) |
+| Q5-4 | The QA agent's own script `t3.mjs`: after a failed load the replay controls are hidden |
+| Q6-1/2/3 | Browser: Present button reachable with the phone drawer open; status text `6 working · 0 need you` not truncated at 390 px |
+| Toast hover pause | Browser: a toast stays while hovered (still shown at 7.5 s of hover, timeout is 5 s) and is gone 6.5 s after the pointer leaves |
+| Float window | Browser: `documentPictureInPicture` opens a window with the wall grid, one tile and 2 copied style nodes |
+| Running daemon | Read-only page load of 127.0.0.1:4747: served bundle equals the one on disk, no Fun level, Theme, CRT or Auto-focus in Settings, no page errors |
+
+Not verified: the 120 ms glitch jitter on a newly blocked tag (it is unit-tested through `jitterX` but not distinguishable in screenshots), and any physical device or real GPU.

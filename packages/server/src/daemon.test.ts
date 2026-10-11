@@ -133,3 +133,30 @@ test("forwarder reply schema rejects extra keys and oversized text", async () =>
   assert.equal(checkReply(JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "allow" } })), undefined);
   assert.equal(checkReply("junk"), undefined);
 });
+
+test("an office.json edit reaches /state whichever request sees it first; unknown session is 404", async () => {
+  const d = await boot();
+  const get = async () => JSON.parse((await call(d.port, "/state", { headers: { "x-agent-office-token": d.token } })).body);
+  assert.equal((await get()).privacy, false);
+  writeFileSync(join(d.home, "office.json"), JSON.stringify({ privacy: true }));
+  await new Promise((r) => setTimeout(r, 50)); // mtime resolution
+  assert.equal((await get()).privacy, true, "the very next request sees the edit");
+  assert.equal((await get()).privacy, true);
+  const miss = await call(d.port, "/status?session=nope", { headers: { "x-agent-office-token": d.token } });
+  assert.equal(miss.status, 404);
+  assert.match(miss.body, /no such session/);
+});
+
+test("boot replays more than 5000 recent events: sessions older than a burst survive a restart", async () => {
+  const home = mkdtempSync(join(tmpdir(), "ao-d-"));
+  const now = Date.now();
+  const lines = [1, 2, 3].map((i) => JSON.stringify({ type: "session_start", session: `s${i}`, project: `p${i}`, t: now - 600_000 }));
+  for (let i = 0; i < 5200; i++) lines.push(JSON.stringify({ type: "tool", session: "s1", tool: "Bash", t: now - 300_000 + i }));
+  writeFileSync(join(home, "events.jsonl"), lines.join("\n") + "\n");
+  const p = spawn(process.execPath, [MAIN], { env: { ...process.env, AGENT_OFFICE_HOME: home, AGENT_OFFICE_PORT: "0" }, stdio: ["ignore", "pipe", "pipe"] });
+  procs.push(p);
+  const out: string = await new Promise((res) => p.stdout!.on("data", (x) => /listening on/.test(String(x)) && res(String(x))));
+  const port = Number(new URL(/http:\/\/\S+/.exec(out)![0]).port), token = readFileSync(join(home, "token"), "utf8").trim();
+  const st = JSON.parse((await call(port, "/status?format=json", { headers: { "x-agent-office-token": token } })).body);
+  assert.equal(st.sessions, 3);
+});

@@ -342,3 +342,13 @@ test("a stop that arrives before its start does not leave a ghost agent holding 
   assert.equal(live.agents.h, undefined);
   assert.equal(capacityFor(cfg, live).free, capacityFor(cfg, run(sstart)).free, "no desk is held");
 });
+
+test("a broken clock does not reap sessions and a backwards stop time never gives a negative duration", () => {
+  const s = run(sstart, start("a"));
+  const r = sweep(s, Number.NaN, 1000);
+  assert.deepEqual(r.removed.sessions, []);
+  assert.ok(r.state.sessions.s1);
+  const back = run(sstart, { ...start("b"), t: 100 } as OfficeEvent, { type: "agent_stop", session: "s1", agentId: "b", message: "DONE: x", t: 40 } as OfficeEvent);
+  const rep = back.log.find((i) => i.kind === "report");
+  assert.ok(rep && (rep.durationMs ?? 0) >= 0, String(rep?.durationMs));
+});
