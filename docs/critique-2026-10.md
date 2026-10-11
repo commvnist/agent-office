@@ -561,4 +561,15 @@ Every phase ran typecheck, `npm test`, `npm run check:compliance` and `npm run b
 | 4 | 1f4ce27, aa7b7b8 | 12 shots before/after R2, then 12 after the art pass | Wall, holo table and people crops. |
 | 5 | 26e1c5d | 16 shots + views, reviewed by 10 agents, then 16 again after the fixes | Perf soak 30 s; all CI jobs green on 26e1c5d. |
 
+Phase 0 re-check on the owner's live office (one page kept open across a real subagent run, after the finishing pass):
+
+| Check | Observed |
+|---|---|
+| Junction LEDs, desk activity | While the real helper worked: its screen lit, the desk glowed, its load rail showed, and its pod's junction light was on. |
+| Outcomes and wall ledger | When it handed back, the board's top line became "✓ agent-office: desk card probe …" and Recently done showed its report text as done. |
+| Desk cards | After it left, its empty desk showed the filed card in the done colour and a dark screen. A page opened after the run shows no card by design (cards are filed by the page that watched the helper). |
+| Mid-turn spend | Live session usage rose between hook events within one turn (about 1.1M output tokens, matching a full transcript read). |
+| Per-client level of detail | `GET /state?lod=summary` on the live daemon returned no agents and no log, plus `crew` counts (1 agent, 1 working). |
+| History default | The History view opens on "Since your last visit" (Phase 2 screenshots). |
+
 Not observable here: a real GPU, a physical phone, a real tool-permission prompt and an `idle_prompt` notification (none occurred in the owner's sessions; covered by adapter and reducer tests with the documented payloads), and the Agent tool's result shape.
