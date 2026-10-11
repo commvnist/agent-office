@@ -1,12 +1,13 @@
-// Wallboard kiosk: fullscreen, chrome hidden, rotates office -> wall -> timeline, pauses after interaction, holds a wake lock.
+// Wallboard kiosk: fullscreen, chrome hidden, rotates the live surfaces (office -> sessions wall), pauses after interaction,
+// holds a wake lock. Something that needs you breaks the rotation: the office (where the alert is drawn) stays up until it clears (X8).
 import { announce, btn } from "./dom.ts";
 import { group } from "./toolbar.ts";
 import { register } from "./palette.ts";
 import { F } from "./flags.ts";
 import { currentView, showView } from "./views.ts";
 
-const ROTATE_MS = 20_000, PAUSE_MS = 60_000, ORDER = ["", "wall", "timeline"] as const;
-let timer: ReturnType<typeof setInterval> | undefined, touched = 0, lock: { release(): Promise<void> } | null = null, fs = false;
+const ROTATE_MS = 20_000, PAUSE_MS = 60_000, ORDER = ["", "wall"] as const;
+let timer: ReturnType<typeof setInterval> | undefined, touched = 0, lock: { release(): Promise<void> } | null = null, fs = false, need = 0;
 export const kioskOn = () => document.body.classList.contains("kiosk");
 
 async function hold() { // feature-detected; the browser drops it when the tab hides, so ask again on return
@@ -23,8 +24,8 @@ export function startKiosk() {
   void enterFullscreen();
   void hold();
   timer = setInterval(() => {
-    if (Date.now() - touched < PAUSE_MS) return;
-    showView(ORDER[(ORDER.indexOf(currentView()) + 1) % ORDER.length]);
+    if (Date.now() - touched < PAUSE_MS || need) return;
+    showView(ORDER[(ORDER.indexOf(currentView() as (typeof ORDER)[number]) + 1) % ORDER.length]);
   }, ROTATE_MS);
   announce("Kiosk mode: the view rotates every 20 seconds; press Escape to leave");
 }
@@ -41,8 +42,13 @@ export function stopKiosk() {
 export const toggleKiosk = () => (kioskOn() ? stopKiosk() : startKiosk());
 
 export function bindKiosk(tools: HTMLElement) {
-  const b = btn("Kiosk", "Wallboard: fullscreen, rotates office / wall / timeline, Esc leaves (?kiosk in the URL)", toggleKiosk);
-  group(tools, "View").append(b);
+  const b = btn("Kiosk", "Wallboard: fullscreen, rotates office / sessions, holds the office while something needs you, Esc leaves (?kiosk in the URL)", toggleKiosk);
+  group(tools, "Display").append(b);
+  document.addEventListener("ao:radar", (e) => {
+    const was = need;
+    need = (e as CustomEvent<number>).detail;
+    if (kioskOn() && need && !was) showView(""); // an alert breaks the rotation
+  });
   register("View: Kiosk (wallboard, Esc leaves)", toggleKiosk);
   const poke = () => { touched = Date.now(); if (kioskOn() && !fs && !document.fullscreenElement) void enterFullscreen(); };
   for (const ev of ["pointerdown", "wheel", "keydown"]) addEventListener(ev, poke, { capture: true, passive: true });

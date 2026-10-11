@@ -160,3 +160,69 @@ test("boot replays more than 5000 recent events: sessions older than a burst sur
   const st = JSON.parse((await call(port, "/status?format=json", { headers: { "x-agent-office-token": token } })).body);
   assert.equal(st.sessions, 3);
 });
+
+const st = async (d: Awaited<ReturnType<typeof boot>>) => JSON.parse((await call(d.port, "/state", { headers: { "x-agent-office-token": d.token } })).body);
+const transcript = (dir: string, name: string, lines: object[]) => { const f = join(dir, name); writeFileSync(f, lines.map((l) => JSON.stringify(l)).join("\n") + "\n"); return f; };
+const said = (id: string, text: string, out: number) => ({ type: "assistant", message: { id, content: [{ type: "text", text }], usage: { input_tokens: 10, output_tokens: out, cache_creation_input_tokens: 0 } } });
+
+test("privacy: no free text reaches events.jsonl, and the transcript is never read (no narration, no usage)", async () => {
+  const d = await boot({ privacy: true });
+  const cwd = mkdtempSync(join(tmpdir(), "ao-cwd-"));
+  const tp = transcript(cwd, "t.jsonl", [said("m1", "TRANSCRIPT-SECRET", 5)]);
+  await post(d, { hook_event_name: "SessionStart", session_id: "p1", cwd });
+  await post(d, { hook_event_name: "UserPromptSubmit", session_id: "p1", prompt: "PROMPT-SECRET", transcript_path: tp, cwd });
+  await post(d, { hook_event_name: "PreToolUse", session_id: "p1", tool_name: "Bash", tool_input: { command: "echo CMD-SECRET" }, transcript_path: tp, cwd });
+  writeFileSync(tp, [said("m1", "TRANSCRIPT-SECRET", 5), said("m2", "MORE-SECRET", 7)].map((l) => JSON.stringify(l)).join("\n") + "\n");
+  await post(d, { hook_event_name: "Stop", session_id: "p1", transcript_path: tp, cwd, last_assistant_message: "FINAL-SECRET" });
+  const disk = readFileSync(join(d.home, "events.jsonl"), "utf8");
+  for (const x of ["PROMPT-SECRET", "CMD-SECRET", "FINAL-SECRET", "SECRET", cwd]) assert.ok(!disk.includes(x), x);
+  assert.match(disk, /"tool":"Bash"/);
+  const s = await st(d);
+  assert.equal(s.state.sessions.p1.usage, undefined, "usage is not read in privacy mode");
+  assert.ok(!s.state.log.some((i: { kind: string }) => i.kind === "message"), "no narration in privacy mode");
+  assert.ok(!JSON.stringify(s).includes("SECRET"));
+});
+
+test("spend: the session total includes subagent transcripts and refreshes during the turn", async () => {
+  const d = await boot();
+  const cwd = mkdtempSync(join(tmpdir(), "ao-cwd-"));
+  const lead = transcript(cwd, "lead.jsonl", [said("m1", "hi", 5)]);
+  await post(d, { hook_event_name: "SessionStart", session_id: "u1", cwd });
+  await post(d, { hook_event_name: "PostToolUse", session_id: "u1", tool_name: "Read", transcript_path: lead, cwd });
+  assert.equal((await st(d)).state.sessions.u1.usage.output, 5, "refreshed mid-turn");
+  await post(d, { hook_event_name: "SubagentStart", session_id: "u1", agent_id: "a1", agent_type: "qa-engineer" });
+  const sub = transcript(cwd, "agent-a1.jsonl", [said("s1", "x", 100)]);
+  await post(d, { hook_event_name: "SubagentStop", session_id: "u1", agent_id: "a1", transcript_path: lead, agent_transcript_path: sub, cwd, last_assistant_message: "DONE: ok" });
+  const s = await st(d);
+  assert.equal(s.state.sessions.u1.usage.output, 105);
+  assert.equal(s.state.outcomes[0].text, "DONE: ok");
+  await post(d, { hook_event_name: "Stop", session_id: "u1", transcript_path: lead, cwd });
+  assert.equal((await st(d)).state.sessions.u1.usage.output, 105, "Stop keeps the subagent share");
+});
+
+test("observe protocol injects no context and never denies a spawn; the envelope names the protocol", async () => {
+  const d = await boot({ roles: { qa: { agent: "qa-engineer", count: 1 } }, enforceSeats: true, protocol: "observe" });
+  assert.equal((await post(d, { hook_event_name: "SessionStart", session_id: "o" })).body, "");
+  for (let i = 0; i < 64; i++) await post(d, { hook_event_name: "SubagentStart", session_id: "o", agent_id: `a${i}`, agent_type: "qa-engineer" });
+  assert.equal((await post(d, { hook_event_name: "PreToolUse", session_id: "o", tool_name: "Agent", tool_input: { subagent_type: "qa-engineer", description: "y" } })).body, "");
+  assert.equal((await st(d)).protocol, "observe");
+  const d2 = await boot();
+  assert.equal((await st(d2)).protocol, "office");
+});
+
+test("a non-loopback AGENT_OFFICE_HOST is refused without AGENT_OFFICE_ALLOW_REMOTE=1", () => {
+  const r = spawnSync(process.execPath, [MAIN], { env: { ...process.env, AGENT_OFFICE_HOME: mkdtempSync(join(tmpdir(), "ao-d-")), AGENT_OFFICE_PORT: "0", AGENT_OFFICE_HOST: "0.0.0.0" }, encoding: "utf8", timeout: 10000 });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /refusing to bind 0\.0\.0\.0.*AGENT_OFFICE_ALLOW_REMOTE=1/);
+});
+
+test("retention: events older than historyHours are pruned at boot", async () => {
+  const home = mkdtempSync(join(tmpdir(), "ao-d-"));
+  writeFileSync(join(home, "office.json"), JSON.stringify({ historyHours: 1 }));
+  writeFileSync(join(home, "events.jsonl"), [Date.now() - 2 * 3600_000, Date.now()].map((t, i) => JSON.stringify({ type: "session_start", session: `r${i}`, project: "p", t })).join("\n") + "\n");
+  const p = spawn(process.execPath, [MAIN], { env: { ...process.env, AGENT_OFFICE_HOME: home, AGENT_OFFICE_PORT: "0" }, stdio: ["ignore", "pipe", "pipe"] });
+  procs.push(p);
+  await new Promise((res) => p.stdout!.on("data", (x) => /listening on/.test(String(x)) && res(x)));
+  const left = readFileSync(join(home, "events.jsonl"), "utf8");
+  assert.ok(!left.includes('"r0"') && left.includes('"r1"'));
+});

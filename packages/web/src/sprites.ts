@@ -1,7 +1,7 @@
 import type { Texture } from "pixi.js";
 import { Grid, hash, hsl, shade } from "./pixel.ts";
 import { contrast, luma, shadeTo } from "./color.ts";
-import { roleColor, theme } from "./theme.ts";
+import { roleColor, STATUS, theme } from "./theme.ts";
 import { settings } from "./settings.ts";
 import { Lru, lookKey } from "./lru.ts";
 import type { ToolIconName } from "./choreo.ts";
@@ -39,7 +39,8 @@ const LEG_L = [5, 5, 4, 5, 4, 5], LEG_R = [5, 4, 5, 5, 5, 4];
 const BOB = [0, 0, 1, 0, 0, 1], SWING = [-1, -1, 0, 1, 1, 0];
 const SIDE = [[-2, 2], [-1, 1], [0, 0], [2, -2], [1, -1], [0, 0]];
 
-// 3x4 role pictograms (index = GLYPHS slot), drawn white on a dark halo so they read on any shirt
+// 3x4 role pictograms (index = GLYPHS slot), drawn in GLYPH_INK on a dark halo so they read on any shirt
+export const GLYPH_INK = "#c4c8d6";
 const GLYPHS = [
   ["#.#", "###", "#.#", "###"], // ruler: architect
   ["###", "#.#", "###", ".#."], // monitor: frontend
@@ -140,7 +141,7 @@ export function person(look0: Look, dir: Dir, pose: Pose, frame: number, o: Pose
   g.rect(bx, Y(10), bw, 7 - bob, look.shirt);
   const team = look.team === undefined ? null : teamColor(look.team);
   g.rect(bx, Y(15) - bob, bw, 1, team ?? shade(look.shirt, -0.12)); // hem and badge halo: the team colour when the session has one
-  if (look.badge >= 0 && bd !== "up") stamp(g, look.acc === "tie" && bd === "down" ? 4 : 6, Y(10), GLYPHS[look.badge], "#ffffff", team ? shade(team, -0.3) : "#171421"); // badge halo carries the team hue
+  if (look.badge >= 0 && bd !== "up") stamp(g, look.acc === "tie" && bd === "down" ? 4 : 6, Y(10), GLYPHS[look.badge], GLYPH_INK, team ? shade(team, -0.3) : "#171421"); // soft grey, not white: the face stays the brightest part (critique R3) // badge halo carries the team hue
   const L = look.lead;
   if (L && bd === "down") { // portrait lead: open collar V over a dark shirt, lapel edges, optional gold chain + pendant
     const inner = "#1a1722";
@@ -550,11 +551,30 @@ const ICONS: Record<string, string[]> = {
   bulb: [".###.", "#####", "#####", ".###.", "..#..", "..#.."],
   heart: [".#.#.", "#####", "#####", ".###.", "..#.."],
   flag: ["##...", "####.", "##...", "#....", "#...."],
+  cross: ["#...#", ".#.#.", "..#..", ".#.#.", "#...#"],
 };
-export type Emote = "exclaim" | "check" | "question" | "bulb" | "heart" | "flag" | "dots0" | "dots1" | "dots2";
-const EMOTE_COLOR: Record<string, string> = { exclaim: "#ffd84a", check: "#5be37d", question: "#8fd0ff", bulb: "#ffe08a", heart: "#ff7a9a", flag: "#ff4a4a" };
+export type Emote = "exclaim" | "check" | "question" | "bulb" | "heart" | "flag" | "cross" | "dots0" | "dots1" | "dots2";
+const EMOTE_COLOR: Record<string, string> = { exclaim: STATUS.permission.color, check: "#5be37d", question: STATUS.turn.color, bulb: "#ffe08a", heart: "#ff7a9a", flag: "#ff4a4a", cross: STATUS.blocked.color };
 // 11x7 thought cloud: # outline, o fill; the dots are lit left to right
 const CLOUD = ["..###.###..", ".#ooo#ooo#.", "#ooooooooo#", "#ooooooooo#", ".#ooooooo#.", "..#######..", ".....#....."];
+/**
+ * Alert ring as a pixel sprite at art scale (it snaps with the 16px art instead of a smooth vector stroke).
+ * Shape carries the state as well as colour: permission = 4 solid arcs, turn = a dotted ring, blocked = 6 short arcs.
+ */
+export const ringTex = (kind: "permission" | "turn" | "blocked") =>
+  memo(`ring:${kind}`, () => {
+    const R = 12, C = 13, g = new Grid(27, 27), col = STATUS[kind].color;
+    for (let y = 0; y < 27; y++) for (let x = 0; x < 27; x++) {
+      const dx = x - C, dy = y - C, d = Math.hypot(dx, dy), a = (Math.atan2(dy, dx) + Math.PI * 2.25) % (Math.PI * 2);
+      if (Math.abs(d - R) < 0.6) {
+        const on = kind === "turn" ? Math.floor(a / (Math.PI / 16)) % 2 === 0
+          : (a % ((Math.PI * 2) / (kind === "permission" ? 4 : 6))) < ((Math.PI * 2) / (kind === "permission" ? 4 : 6)) * 0.62;
+        if (on) g.set(x, y, col);
+      } else if (kind !== "turn" && Math.abs(d - (R - 3)) < 0.5) g.set(x, y, col + "59"); // faint inner ring (35% alpha)
+    }
+    return g;
+  });
+
 export const emoteTex = (e: Emote) =>
   memo(`emote:${e}`, () => {
     if (e.startsWith("dots")) {

@@ -7,7 +7,8 @@ const cfg: OfficeConfig = { roles: { be: { agent: "backend-dev", count: 1, names
 
 test("leadRoster honors parallelism mode", () => {
   assert.doesNotMatch(leadRoster({ ...cfg, parallelism: "off" }), /Parallelism/);
-  assert.match(leadRoster(cfg), /Parallelism: auto.*Size gate/s);
+  assert.match(leadRoster(cfg), /Parallelism: your call/);
+  assert.doesNotMatch(leadRoster(cfg), /fan out|Split work|Delegate to/i, "the default never pushes fan-out");
   assert.match(leadRoster({ ...cfg, parallelism: "aggressive" }), /Parallelism: aggressive/);
   assert.match(leadRoster(cfg), /backend-dev: 1 on the core team \(Ann\)/);
 });

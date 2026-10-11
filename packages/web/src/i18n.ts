@@ -2,7 +2,7 @@
 // shortcut: only panel/modes/views use it and only English ships; move the remaining inline strings and add locales when a translation exists.
 const MSG: Record<string, Record<string, string>> = {
   en: {
-    panel: "Panel", hidePanel: "Hide panel", needYou: "{n} need you", stale: "Stale since {time}: the daemon stream is down.",
+    panel: "Panel", needYou: "{n} need you", stale: "Stale since {time}: the daemon stream is down.",
     session: "{n} session|{n} sessions", agent: "{n} agent|{n} agents", event: "{n} event|{n} events",
   },
 };

@@ -5,7 +5,7 @@ Watch your Claude Code agents work in a virtual office: each subagent gets a des
 > Demo GIF: _placeholder, add `docs/demo.gif` here._
 
 **It is** an observer: a Claude Code plugin forwards hook events to a local daemon (loopback only) that streams office state to a browser tab.
-**It is not** a controller or a proxy: it never reads `~/.claude` credentials, calls the Anthropic API/SDK, or runs `claude -p` (`npm run check:compliance` enforces this). It is observer-only: it watches, never types into a session.
+**It is not** a controller or a proxy: it never reads `~/.claude` credentials, calls the Anthropic API/SDK, or runs `claude -p` (`npm run check:compliance` enforces this). It never types into a session. By default it does add a little context to the model (the office protocol, below); `"protocol": "observe"` turns that off.
 
 ## Quickstart (from Claude Code)
 
@@ -31,7 +31,8 @@ daemon. It never prompts Claude. If `claude` is not on PATH it prints the two `/
 | Try without Claude Code | The page's **Sample** button (no daemon needed), or `npm run demo` (plays fake sessions into a throwaway daemon and prints its URL; `-- --live` posts to your real one) |
 | Start, restart or inspect the daemon | `node scripts/office.mjs start\|restart\|status` (`status` shows event age and per-session lines) |
 | Write a starter config, check it offline | `node scripts/office.mjs init`, `node scripts/office.mjs config --validate` |
-| Daily digest from stored events | `node scripts/digest.mjs --days 7 [--json]` |
+| Daily digest from stored events | `node scripts/digest.mjs --days 7 [--json]` (only as far back as `historyHours` keeps) |
+| See or delete the stored history | `node scripts/office.mjs history`, `node scripts/office.mjs history --purge` |
 | Try without installing | `claude --plugin-dir ./plugin` |
 
 The marketplace manifest is `.claude-plugin/marketplace.json` (plugin source `./plugin`).
@@ -45,9 +46,11 @@ Re-read on change, no restart needed. Without the file, the built-in roster (arc
   "roles": {
     "frontend": { "agent": "frontend-dev", "count": 2, "names": ["Maya", "Leo"], "overflow": { "max": 1, "names": ["Temp"] } }
   },
+  "protocol": "office",
   "parallelism": "auto",
   "enforceSeats": false,
-  "privacy": false
+  "privacy": false,
+  "historyHours": 168
 }
 ```
 
@@ -57,9 +60,11 @@ Re-read on change, no restart needed. Without the file, the built-in roster (arc
 | `roles.<key>.count` | Core-team slots (named); more workers of this role are temps. Does not reserve or limit desks |
 | `roles.<key>.names` | Display names for the core-team slots |
 | `roles.<key>.overflow` | `{ max, names }`: temp naming ("Temp 1") and a hint for the initial office size |
-| `parallelism` | `off`, `auto` (default), `aggressive`: how hard the lead is nudged to fan out |
-| `enforceSeats` | Deny spawns when every desk is taken (the office holds up to 64) instead of queueing visually |
-| `privacy` | Hide prompt/tool text; show tool names and structure only |
+| `protocol` | `office` (default) or `observe`: whether the office adds context to the model and may deny spawns (see "Office protocol") |
+| `parallelism` | `off`, `auto` (default, a neutral note: delegating is optional), `aggressive` (asks the lead to split work and fan out). Office protocol only |
+| `enforceSeats` | Deny spawns when every desk is taken (the office holds up to 64) instead of queueing visually. Office protocol only |
+| `privacy` | Hide prompt/tool text; show tool names and structure only. Also: free text is stripped before anything is written to disk, and transcripts are never opened (no narration, no token totals) |
+| `historyHours` | Hours of event history kept on disk (1-2160, default 168 = 7 days, matching the 7-day digest); older events are deleted at start and hourly |
 | `idleTtlMinutes` | Minutes of silence (1-1440, default 45) before an idle session is swept; unknown keys are ignored with a warning |
 | `spendAlarmTokens` | Integer 0-1000000000 (0 or absent = off): the client warns when a session's token total (input + output + cache creation) crosses it |
 | `theme` | Ignored: there is one built-in look. Still accepted so old files keep loading |
@@ -68,7 +73,24 @@ Hot files (observer-only, derived from hook tool events): `Edit`/`Write`/`MultiE
 
 Some of these options are defined in the types before every consumer ships; see `docs/improvements.md` for status. Ready-made rosters live in `plugin/packs` (`node scripts/apply-pack.mjs --list`, then `node scripts/apply-pack.mjs heist --dry-run`; agents go to `./.claude/agents` unless `--agents-dir` is given, `*.bak` backups are kept and `--undo` restores them).
 
-Environment: `AGENT_OFFICE_PORT` (default 4747), `AGENT_OFFICE_HOME` (default `~/.agent-office`), `AGENT_OFFICE_LOG=1` (append raw events to `events.log`), `AGENT_OFFICE_HOST` (bind address, default 127.0.0.1), `AGENT_OFFICE_DISABLED=1` (hooks do nothing). API: `docs/event-api.md`; CLI: `node scripts/office.mjs status|start|restart|stop|doctor|init|config --validate`. More in `docs/ENTERPRISE.md`.
+Environment: `AGENT_OFFICE_PORT` (default 4747), `AGENT_OFFICE_HOME` (default `~/.agent-office`), `AGENT_OFFICE_LOG=1` (append raw hook payloads to `events.log`; ignored in privacy mode), `AGENT_OFFICE_HOST` (bind address, default 127.0.0.1; a non-loopback address is refused unless `AGENT_OFFICE_ALLOW_REMOTE=1` is also set), `AGENT_OFFICE_DISABLED=1` (hooks do nothing). API: `docs/event-api.md`; CLI: `node scripts/office.mjs status|start|restart|stop|doctor|init|config --validate|history [--purge]`. More in `docs/ENTERPRISE.md`.
+
+### Office protocol: what the office tells the model
+
+With `"protocol": "office"` (the default) the daemon's hook replies add text to the model's context. Exactly this:
+
+- **SessionStart** (the lead): one line saying an office view is watching and delegating is optional; with `parallelism` `auto` a neutral note that independent subagents started in one message run in parallel (`aggressive` instead asks the lead to split work and fan out; `off` says nothing); the roster of subagent types with names and counts; a pointer to the `office-delegation` skill. Source: `leadRoster` in `packages/core/src/roster.ts`.
+- **SubagentStart** (each helper): its name and role, its task, what its seated peers are doing, and the report format (first line `DONE:`, `BLOCKED:` or `PARTIAL:`). Source: `introFor` in the same file.
+- **PreToolUse** of the Agent tool, only with `enforceSeats: true`: a deny when every desk is taken (at most 3 times in a row).
+
+The plugin also ships agent definitions and the `office-delegation` skill; Claude loads those only when it chooses to. With `"protocol": "observe"` nothing is added and nothing is denied: the office only watches (subagents then report in their own words, so outcomes show as unrecognized more often).
+
+### What is stored, where, for how long
+
+- **Event log**: `~/.agent-office/events.jsonl` (mode 0600, plus one backup `events.jsonl.1` after 5 MB). Every normalized event: tool names, clipped and redacted tool detail, prompts, working folder and branch, task and report text, token totals. It powers restart recovery, Replay, Recap and the digest. Kept for `historyHours` (default 168 h, 7 days). In privacy mode free text is stripped before it is written.
+- **Raw log** `events.log`: only when `AGENT_OFFICE_LOG` is set (never in privacy mode).
+- **Also in that folder**: `office.json`, `token`, `port`/`pid`, `daemon` (path of the daemon), `last-hook.json` (last hook name and session id) and `seq/` (per-session counters, no text).
+- **Delete**: `node scripts/office.mjs history --purge` (event and raw logs), or `node scripts/office.mjs uninstall --purge` (the whole folder). Nothing is stored anywhere else and nothing leaves the machine.
 
 ## Desks and pods
 
@@ -97,7 +119,8 @@ See `CONTRIBUTING.md` and `docs/ARCHITECTURE.md`. License: MIT.
 ## What it shows, and what it ignores
 
 - **Your prompts, not the harness's.** Claude Code injects machine messages into a session as "user" turns (background-task notifications, system reminders, subagent hand-backs). They are not what you typed: they are never shown as "You →", never become the session prompt, and a hand-back's first report line appears as a quiet note from the lead. See `packages/core/src/clean.ts`.
-- **The lead's own words.** What the lead says between tool calls is shown as a bubble at its desk and in the activity feed. It is read from the session's transcript file (only `assistant` `text` blocks; never tool inputs, tool results or your messages; only a `.jsonl` under `~/.claude/projects` or the session's cwd; history before the daemon first saw the session is skipped), redacted, clipped to 160 characters and blank in privacy mode. The turn's final message also comes from the Stop hook's `last_assistant_message`.
+- **The lead's own words.** What the lead says between tool calls is shown as a bubble at its desk and in the activity feed. It is read from the session's transcript file (only `assistant` `text` blocks; never tool inputs, tool results or your messages; only a `.jsonl` under `~/.claude/projects` or the session's cwd; history before the daemon first saw the session is skipped), redacted, clipped to 160 characters, and never read in privacy mode.
+- **Spend.** Token totals per session add up the lead's transcript and its subagents' transcripts (`agent_transcript_path`), reading only the assistant `usage` numbers, only bytes appended since the last read (at most 8 MB at a time), refreshed every few seconds while tools run and at every stop. Each message id counts once, so totals never shrink when a transcript grows. Same path rules as above; never read in privacy mode. The turn's final message also comes from the Stop hook's `last_assistant_message`.
 - **Leads** look like variations of one portrait: curly dark hair, aviators in a tint that varies per session, a light blazer, a beard, an open patterned collar and sometimes a gold chain. Crew members without a configured name get a person's name, seeded by project, role and slot, so the same project has the same people every run.
 - **Pod labels on hover.** A claimed pod's project name and last prompt appear while the pointer is over it (on touch: for the selected agent's pod). A click on the empty floor clears the selection.
 
@@ -111,4 +134,4 @@ There are no fun levels and no themes: one look, one set of behaviours. Day and 
 
 What you can set (Settings dialog): Reduce motion, Pause ambient motion, Sound (chimes, off by default, with volume and mute), text size, font, line height, letter spacing, alert sound and desktop notifications, stream-safe, spend alarm. Follow (Shift+F) is a manual toggle. The OS `prefers-reduced-motion`, `prefers-contrast: more` and forced-colors settings are honoured.
 
-No accounts, no progress, no persisted history: the office is generated live from the current events.
+No accounts and no progress. The office is generated live from the current events; the only history is the local event log described under "What is stored", kept for `historyHours` and deleted with `node scripts/office.mjs history --purge`.

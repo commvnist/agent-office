@@ -1,9 +1,9 @@
 import { Container, Graphics, Sprite, Text } from "pixi.js";
 import { TILE_PX, type Tile } from "@agent-office/core";
 import { dev } from "./snap.ts";
-import { personTex, emoteTex, toolIconTex, type Dir, type Emote, type Expr, type Look } from "./sprites.ts";
+import { personTex, emoteTex, ringTex, toolIconTex, type Dir, type Emote, type Expr, type Look } from "./sprites.ts";
 import { easeSpeed, fontPx, settings, stackBubbles, textZoom, type BubbleBox } from "./settings.ts";
-import { theme } from "./theme.ts";
+import { STATUS, theme } from "./theme.ts";
 import { HOP_MS, JITTER_MS, SQUASH_MS, cleanText, clampBox, hopPose, idleTier, jitterX, microPose, microSlot, sipState, popScale, quirkAt, squashY, stackLabels, statusOf, stepDrop, toolIcon, type Box, type Rect } from "./choreo.ts";
 import { hash } from "./color.ts";
 
@@ -24,6 +24,8 @@ export type BubbleKind = "say" | "tool" | "user" | "report" | "blocked";
 /** Hook event type a bubble was derived from; only real (hook-derived) bubbles carry one. */
 export type Badge = "prompt" | "delegate" | "report" | "tool" | "message" | "guess";
 export type Alert = "waiting" | "blocked";
+/** What a waiting lead waits for: a permission prompt (act now) or the end of its turn (your move). */
+export type WaitKind = "permission" | "turn";
 const BUBBLE_STYLE: Record<BubbleKind, { bg: number; fg: number; border: number }> = {
   say: { bg: 0xffffff, fg: 0x1d1b2b, border: 0x1d1b2b },
   report: { bg: 0xe6ffe9, fg: 0x143a1c, border: 0x1f6b33 },
@@ -126,7 +128,9 @@ export class Actor {
   private glanceFlip = false;
   private nudge = 0; // 1 -> 0 chair pull-out slide
   private wasSitting = false;
-  private ring = new Graphics(); // alert pulse, screen space (UI layer sits above the night overlay)
+  private ring = new Sprite(); // alert ring: a pixel sprite at art scale, screen space (UI layer sits above the night overlay)
+  waitKind: WaitKind = "permission";
+  private alertAt = 0; // this.t when the alert began: it pulses only for its first seconds
   tagAbove = false; // upper-row seat: the name tag goes above the head, since below the desk is the lower row's head
   private mark = new Graphics(); // hover / selection outline, screen space
   private glyph = new Sprite(); // enlarged alert emote, screen space
@@ -194,6 +198,7 @@ export class Actor {
     this.tag = new Text({ text: label, style: { fontFamily: MONO, fontSize: fontPx(11), fill: 0xffffff, stroke: { color: 0x0e0d16, width: 3 } } });
     this.tag.anchor.set(0.5, 0);
     this.glyph.anchor.set(0.5, 1);
+    this.ring.anchor.set(0.5);
     this.glyph.texture = emoteTex("exclaim");
     this.ring.visible = this.mark.visible = this.glyph.visible = false;
     this.pip.visible = false;
@@ -220,8 +225,9 @@ export class Actor {
   private refreshTag() {
     const lines = this.label.split("\n").map((l) => (l.length > 24 ? l.slice(0, 23) + "…" : l)); // labels are clipped so tags stay short (#F1)
     const q = this.queued && this.qpos ? ` #${this.qpos}` : "";
-    this.tag.text = `${this.alert === "blocked" ? "! " : ""}${lines.join("\n")}${q}${this.idle ? " (idle)" : this.staleMin ? ` idle ${this.staleMin}m` : ""}`;
-    this.tag.style.fill = this.alert === "blocked" ? 0xff8a80 : 0xffffff;
+    const st = this.alert === "blocked" ? STATUS.blocked : this.alert === "waiting" ? STATUS[this.waitKind] : null;
+    this.tag.text = `${st ? st.glyph + " " : ""}${lines.join("\n")}${q}${this.idle ? " (idle)" : this.staleMin ? ` idle ${this.staleMin}m` : ""}`;
+    this.tag.style.fill = st ? Number.parseInt(st.color.slice(1), 16) : 0xffffff;
   }
   /** "idle Nm" tag suffix once the agent is stale; 0 clears. */
   setStaleMin(n: number) {
@@ -245,18 +251,16 @@ export class Actor {
     if (this.toolBubble) { const o = this.toolBubble; o.node.destroy({ children: true }); o.node = makeBubble(o.text, "tool", "tool"); this.ui.addChild(o.node); }
   }
   /** Pulsing ring + large distinct glyph (waiting = "!", blocked = flag + red "! " tag). null clears. Persists while leaving. */
-  setAlert(a: Alert | null) {
-    if (this.alert === a) return;
+  setAlert(a: Alert | null, kind: WaitKind = "permission") {
+    if (this.alert === a && (a !== "waiting" || this.waitKind === kind)) return;
+    if (this.alert !== a) this.alertAt = this.t;
     this.alert = a;
-    this.ring.clear();
+    this.waitKind = kind;
     if (a) {
-      const col = Number.parseInt(theme().alert[a].slice(1), 16);
-      // shape, not just colour: waiting = 4 segments + gold "!", blocked = 6 segments + red flag; syncUi spins and pulses it
-      const r = 15, n = a === "blocked" ? 6 : 4, step = (Math.PI * 2) / n;
-      for (let k = 0; k < n; k++) { const a0 = 0.25 + k * step; this.ring.moveTo(Math.cos(a0) * r, Math.sin(a0) * r).arc(0, 0, r, a0, a0 + step * 0.6); }
-      this.ring.stroke({ width: 2.5, color: col });
-      this.ring.circle(0, 0, r - 4).stroke({ width: 1, color: col, alpha: 0.35 });
-      this.glyph.texture = emoteTex(a === "blocked" ? "flag" : "exclaim"); // gold "!" = waiting, red flag = blocked
+      // one status map (theme.STATUS), shape + glyph + colour: permission 4 arcs "!", your turn dotted "?", gave up 6 arcs "x"
+      const k = a === "blocked" ? "blocked" : kind;
+      this.ring.texture = ringTex(k);
+      this.glyph.texture = emoteTex(k === "blocked" ? "cross" : k === "turn" ? "question" : "exclaim");
     }
     this.ring.visible = this.glyph.visible = !!a;
     this.refreshTag();
@@ -360,13 +364,13 @@ export class Actor {
   }
   private drawPip(r: number) {
     const s = statusOf({ blocked: this.alert === "blocked", waiting: this.alert === "waiting", queued: this.queued, working: this.working, active: false });
-    const key = `${s}${r}`;
+    const key = `${s}${this.waitKind}${r}`;
     if (key === this.pipKey) return;
     this.pipKey = key;
     const g = this.pip.clear(), rim = { width: 1.5, color: 0x0e0d16 };
     if (s === "working") g.circle(0, 0, r).fill(0x4ade80).stroke(rim); // dot
-    else if (s === "waiting") g.circle(0, 0, r + 1).fill(0xffd84a).stroke(rim).rect(-0.8, -r * 0.7, 1.6, r * 0.8).fill(0x1d1b2b).rect(-0.8, r * 0.3, 1.6, 1.6).fill(0x1d1b2b); // "!"
-    else if (s === "blocked") g.circle(0, 0, r + 1).fill(0xff4a4a).stroke(rim).moveTo(-r * 0.5, -r * 0.5).lineTo(r * 0.5, r * 0.5).moveTo(r * 0.5, -r * 0.5).lineTo(-r * 0.5, r * 0.5).stroke({ width: 1.5, color: 0xffffff }); // x
+    else if (s === "waiting") g.circle(0, 0, r + 1).fill(Number.parseInt(STATUS[this.waitKind].color.slice(1), 16)).stroke(rim).rect(-0.8, -r * 0.7, 1.6, r * 0.8).fill(0x1d1b2b).rect(-0.8, r * 0.3, 1.6, 1.6).fill(0x1d1b2b); // "!"
+    else if (s === "blocked") g.circle(0, 0, r + 1).fill(Number.parseInt(STATUS.blocked.color.slice(1), 16)).stroke(rim).moveTo(-r * 0.5, -r * 0.5).lineTo(r * 0.5, r * 0.5).moveTo(r * 0.5, -r * 0.5).lineTo(-r * 0.5, r * 0.5).stroke({ width: 1.5, color: 0xffffff }); // x
     else if (s === "queued") g.rect(-r, -r, r * 2, r * 2).fill(0xffffff).stroke(rim); // square
     else g.circle(0, 0, r).stroke({ width: 2, color: 0xaab0c8 }); // ring
   }
@@ -505,7 +509,7 @@ export class Actor {
     if (e) {
       this.emoteSprite.texture = emoteTex(e);
       this.emoteSprite.visible = true;
-      this.emoteSprite.y = sit ? -17 : pc && pc.k >= 1 ? -21 : -25;
+      this.emoteSprite.y = sit ? -19 : pc && pc.k >= 1 ? -23 : -27; // 2px clear of the hair so the thought cloud never reads as a hat (critique R6)
       this.emoteSprite.scale.set(still ? 1 : popScale(now - this.emoteBorn));
     } else this.emoteSprite.visible = false;
     // --- bubbles
@@ -544,10 +548,11 @@ export class Actor {
       this.toolBubble.node.position.set(sx, toolY);
     }
     // rings + alert glyph live in screen space so the night overlay never dims them
-    const pulse = this.alert && !settings.reducedMotion ? 1 + 0.1 * Math.sin((this.t * Math.PI * 2) / (this.alert === "blocked" ? 900 : 1400)) : 1; // period 0.9s blocked, 1.4s waiting
+    // alerts move only for their first 4 s (then hold still); "your turn" never pulses: it is calm, not urgent
+    const fresh = this.alert && !settings.reducedMotion && !(this.alert === "waiting" && this.waitKind === "turn") && this.t - this.alertAt < 4000;
+    const pulse = fresh ? 1 + 0.08 * Math.sin((this.t * Math.PI * 2) / (this.alert === "blocked" ? 900 : 1400)) : 1;
     this.ring.position.set(sx, dev(sy - 12 * sc));
-    this.ring.scale.set(sc * pulse);
-    this.ring.rotation = settings.reducedMotion ? 0 : this.t / 1400;
+    this.ring.scale.set(Math.round(sc * pulse * 4) / 4); // quarter steps keep the pixel ring crisp
     this.mark.position.set(sx, dev(sy - (this.sitting ? 9 : 12) * sc));
     this.mark.scale.set(sc, sc * (this.sitting ? 0.82 : 1)); // a seated figure is shorter: keep the brackets hugging it
     const gs = Math.max(2, sc * 1.6);
@@ -556,14 +561,12 @@ export class Actor {
     // arc for a tool call that has been running a while: busy, not hung (#114)
     const el = this.toolSince ? this.t - this.toolSince : 0;
     if (this.progOn) { this.prog.clear(); this.progOn = false; }
-    if (el > 8000) {
+    if (el > 30_000) { // only a genuinely long call earns a mark, and only the arc: a full track circle on every busy worker read as noise (critique A4/T7)
       this.progOn = true;
       this.prog.position.set(sx, dev(sy - 12 * sc));
       const end = -Math.PI / 2 + Math.PI * 2 * Math.min(1, el / 300_000);
       const r = 17 * sc;
-      this.prog.circle(0, 0, r).stroke({ width: 1, color: 0x7fe3ff, alpha: 0.18 }); // track
-      this.prog.moveTo(0, -r).arc(0, 0, r, -Math.PI / 2, end).stroke({ width: 2, color: 0x7fe3ff }); // moveTo: the arc must not continue the circle's path (that drew a spoke)
-      this.prog.circle(Math.cos(end) * 17 * sc, Math.sin(end) * 17 * sc, 2).fill(0xffffff); // head
+      this.prog.moveTo(0, -r).arc(0, 0, r, -Math.PI / 2, end).stroke({ width: Math.max(1, Math.round(sc)), color: 0x7fe3ff, alpha: 0.7 }); // moveTo: the arc must not continue a previous path (that drew a spoke)
     }
     // off-screen alert: arrow on the nearest viewport edge in the alert colour (#104)
     if (this.edgeOn) { this.edge.clear(); this.edgeOn = false; }

@@ -381,3 +381,48 @@ test("idle notification also clears a subagent's stuck tool in that session, and
   assert.equal(doing("x1"), undefined);
   assert.equal(doing("y1"), "Bash");
 });
+
+const wait = (text: string, kind?: "permission" | "turn"): OfficeEvent => ({ type: "waiting", session: "s1", text, kind, t: 1 });
+const lead = (o: object) => ({ session: "s1", t: 2, ...o }) as OfficeEvent;
+
+test("Z4: the lead's tool_end, turn_end or prompt clears waiting and waitKind", () => {
+  for (const e of [lead({ type: "tool_end", tool: "Bash", ok: true }), lead({ type: "turn_end" }), lead({ type: "prompt", text: "go" }), lead({ type: "tool", tool: "Read" })]) {
+    const s = run(lead({ type: "session_start", project: "p" }), wait("Claude needs your permission to use Bash", "permission"), e);
+    assert.equal(s.sessions.s1.waiting, false, e.type);
+    assert.equal(s.sessions.s1.waitKind, undefined, e.type);
+  }
+});
+
+test("Z5: a subagent's tool or tool_end never clears the lead's waiting", () => {
+  const s = run(lead({ type: "session_start", project: "p" }), start("a"), wait("Claude needs your permission to use Bash", "permission"),
+    lead({ type: "tool", agentId: "a", tool: "Read" }), lead({ type: "tool_end", agentId: "a", tool: "Read", ok: true }), lead({ type: "tool_end", agentId: "ghost", tool: "Read", ok: true }));
+  assert.equal(s.sessions.s1.waiting, true);
+  assert.equal(s.sessions.s1.waitKind, "permission");
+});
+
+test("waitKind: explicit kind wins; without one, only text naming a permission is a permission", () => {
+  assert.equal(run(wait("x", "turn")).sessions.s1.waitKind, "turn");
+  assert.equal(run(wait("Claude needs your permission to use Edit")).sessions.s1.waitKind, "permission");
+  assert.equal(run(wait("Claude is waiting for your input")).sessions.s1.waitKind, "turn");
+});
+
+test("outcomes: newest first, one-line result plus task, bounded, kept after the session ends; agents carry lastAt", () => {
+  let s = run(lead({ type: "session_start", project: "p" }), lead({ type: "delegate", agentType: "qa-engineer", text: "test checkout" }), { ...start("a"), t: 5 });
+  assert.equal(s.agents.a.lastAt, 5);
+  s = reduce(cfg, s, lead({ type: "tool", agentId: "a", tool: "Bash", t: 9 }));
+  assert.equal(s.agents.a.lastAt, 9);
+  s = reduce(cfg, s, { type: "agent_stop", session: "s1", agentId: "a", message: "DONE: checkout passes", t: 65_000 });
+  assert.deepEqual(s.outcomes![0], { session: "s1", project: "p", agentId: "a", name: "Quinn", role: "qa", outcome: "done", text: "DONE: checkout passes", task: "test checkout", t: 65_000, durationMs: 64_995 });
+  s = reduce(cfg, s, { type: "session_end", session: "s1", t: 70_000 });
+  assert.equal(s.outcomes!.length, 1);
+  for (let i = 0; i < 40; i++) s = reduce(cfg, reduce(cfg, s, { ...start(`b${i}`), t: i }), { type: "agent_stop", session: "s1", agentId: `b${i}`, message: `PARTIAL: ${i}`, t: 100 + i });
+  assert.equal(s.outcomes!.length, LIMITS.outcomes);
+  assert.equal(s.outcomes![0].text, "PARTIAL: 39");
+});
+
+test("a usage event updates the session's running total, never lowering it", () => {
+  const u = { input: 1, output: 2, cacheRead: 3, cacheCreate: 4 };
+  assert.deepEqual(run(lead({ type: "usage", usage: u })).sessions.s1.usage, u);
+  const less = { input: 1, output: 0, cacheRead: 0, cacheCreate: 0 };
+  assert.deepEqual(run(lead({ type: "usage", usage: u }), lead({ type: "usage", usage: less }), lead({ type: "turn_end", usage: less })).sessions.s1.usage, u, "never shrinks");
+});

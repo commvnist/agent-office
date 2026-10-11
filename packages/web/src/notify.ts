@@ -1,10 +1,16 @@
 // Opt-in alerts (#88): Notification API (permission asked on a click), tab title + favicon badge, optional beep.
-// Never fires for sample/replay data, never while the tab is focused unless configured, once per episode.
+// Always about the LIVE envelope (Z6): ui.ts passes live radar items even during Replay or Sample, so nothing simulated
+// alerts and nothing live is hidden. Never while the tab is focused unless configured, once per episode.
 import { office } from "./api.ts";
 import { store } from "./dom.ts";
 import { F } from "./flags.ts";
 import { HOT_MS, LONG_TOOL_MS, spendCrossed, spendTokens, sustained, titleFor, type ChimeKind, type RadarItem } from "./logic.ts";
 import { chime, chimePrefs } from "./chime.ts";
+import { STATUS } from "./theme.ts";
+import { look, waitKindOf } from "./triage.ts";
+
+/** A radar item's STATUS key, read from the live state (waiting -> permission or your turn). */
+export const kindOf = (i: RadarItem) => i.kind === "waiting" ? waitKindOf((office.source.liveEnvelope() ?? office.getEnvelope())?.state.sessions[i.key.slice(8)]) : i.kind;
 
 const flag = (k: string) => ({ get: () => store.get(k) === "1", set: (b: boolean) => store.set(k, b ? "1" : "0") });
 export const prefs = { desktop: flag("alert.desktop"), sound: flag("alert.sound"), focused: flag("alert.focused") };
@@ -54,7 +60,6 @@ function fire(key: string, text: string, session?: string) {
   if (fired.has(key)) return;
   fired.add(key);
   if (fired.size > 200) fired.delete(fired.values().next().value!);
-  if (office.source.mode !== "live") return;
   if (session && mutes.active(session)) return;
   const ck = CHIME_OF[key.split(":")[0]];
   if (ck) chime(ck, key); // an explicit opt-in: sounds even while the tab is focused
@@ -78,17 +83,17 @@ function idleIcon() {
   g.fillStyle = "#e8e6f5"; g.fillRect(19, 14, 7, 4);
   return (idle = c.toDataURL());
 }
-/** Gold dot with the count; red when something is blocked. Redrawn only when the count or colour changes. Count 0 always restores the app icon. */
-function favicon(n: number, red = true) {
+/** A dot in the loudest item's STATUS colour with the count. Redrawn only when the count or colour changes. Count 0 always restores the app icon. */
+function favicon(n: number, col: string = STATUS.permission.color) {
   icon ??= document.querySelector<HTMLLinkElement>("link[rel~=icon]") ?? Object.assign(document.head.appendChild(document.createElement("link")), { rel: "icon" });
   if (!n) { drawn = ""; const own = idleIcon(); if (icon.href !== own) icon.href = own; return; }
-  const key = `${Math.min(n, 9)}${red}`;
+  const key = `${Math.min(n, 9)}${col}`;
   if (key === drawn) return;
   drawn = key;
   const c = canvas32(), g = c.getContext("2d")!;
-  g.fillStyle = red ? "#e0524a" : "#ffb86b";
+  g.fillStyle = col;
   g.beginPath(); g.arc(16, 16, 15, 0, 7); g.fill();
-  g.fillStyle = red ? "#fff" : "#14121f"; g.font = "bold 20px sans-serif"; g.textAlign = "center"; g.textBaseline = "middle";
+  g.fillStyle = "#14121f"; g.font = "bold 20px sans-serif"; g.textAlign = "center"; g.textBaseline = "middle";
   g.fillText(String(Math.min(n, 9)), 16, 17);
   icon.href = c.toDataURL();
 }
@@ -103,7 +108,8 @@ export const spendLimit = () => Number(store.get("spend")) || (office.getEnvelop
 /** Failure runs (#187) and "session finished" (#190) from the live state; call after the radar pass. */
 function watchState(now: number, hot: { id: string; project: string }[]) {
   const e = office.getEnvelope();
-  if (!e) return;
+  // shortcut: these secondary alerts read the displayed actors, so they pause during Replay/Sample; live NEEDS YOU alerts do not
+  if (!e || office.source.mode !== "live") return;
   const rows = [
     ...Object.values(e.state.sessions).map((x) => ({ k: x.id, session: x.id, who: x.project, n: x.errors ?? 0, last: x.lastError })),
     ...Object.values(e.state.agents).map((x) => ({ k: x.id, session: x.session, who: x.seat?.name ?? x.role, n: x.errors ?? 0, last: x.lastError })),
@@ -144,21 +150,22 @@ function watchState(now: number, hot: { id: string; project: string }[]) {
   }
 }
 
-/** Called with the current radar every refresh. */
+/** Called with the LIVE radar every refresh (sorted loudest first by ui.ts). */
 export function update(items: RadarItem[], hot: { id: string; project: string }[] = []) {
-  const live = office.source.mode === "live", now = Date.now();
+  const now = Date.now();
   const long = items.some((i) => i.kind !== "stuck" && now - i.since >= TIERS[1] * 60_000);
-  document.title = (office.connection.state === "retrying" ? "(offline) " : "") + (live ? (long ? "! " : "") + titleFor(items, base) : base);
-  favicon(live ? items.length : 0, items.some((i) => i.kind === "blocked"));
+  document.title = (office.connection.state === "retrying" ? "(offline) " : "") + (long ? "! " : "") + titleFor(items, base);
+  favicon(items.length, items[0] && look(kindOf(items[0])).color);
   const keys = new Set(items.map((i) => i.key));
   for (const k of fired) if (k.includes(":") && !keys.has(k.split("@")[0])) fired.delete(k); // episode over: may alert again
   const tiers = (i: RadarItem) => TIERS.filter((m) => now - i.since >= m * 60_000);
   if (!primed) { primed = true; for (const i of items) { fired.add(i.key); for (const m of tiers(i)) fired.add(`${i.key}@${m}`); } return; } // what was already waiting at load is not news
-  const sess = (i: RadarItem) => office.actors().find((a) => a.id === i.id)?.session;
+  const sess = (i: RadarItem) => (i.kind === "blocked" ? office.actors().find((a) => a.id === i.id)?.session : i.id.slice(5)); // lead:<session>
   for (const i of items) {
     if (i.kind === "stuck") continue;
-    fire(i.key, i.kind === "blocked" ? `${i.label} is blocked` : `${i.project} is waiting for you`, sess(i));
-    for (const m of tiers(i)) fire(`${i.key}@${m}`, `${i.label} is still ${i.kind === "blocked" ? "blocked" : "waiting"} after ${m} min`, sess(i));
+    const word = look(kindOf(i)).label;
+    fire(i.key, `${i.label}: ${word}`, sess(i));
+    for (const m of tiers(i)) fire(`${i.key}@${m}`, `${i.label}: still ${word} after ${m} min`, sess(i));
   }
   watchState(now, hot);
 }

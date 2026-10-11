@@ -10,12 +10,16 @@ export type RoleConfig = {
 
 export type OfficeConfig = {
   roles: Record<string, RoleConfig>;
-  /** How hard the lead is nudged to fan out: "off" = no nudge, "auto" = only when worthwhile (default). */
+  /** "office" (default): SessionStart/SubagentStart inject the roster, identity and report format, and enforceSeats may deny spawns. "observe": nothing is injected and nothing is denied. */
+  protocol?: "office" | "observe";
+  /** Parallelism wording in the lead's roster (office protocol only): "off" = none, "auto" = neutral note (default), "aggressive" = pushes fan-out. */
   parallelism?: "off" | "auto" | "aggressive";
   /** Deny Agent-tool spawns when no desk is free (office at MAX_DESKS) instead of queueing visually. */
   enforceSeats?: boolean;
-  /** Hide prompt/tool text in the stream (tool names and structure only). */
+  /** Hide prompt/tool text in the stream (tool names and structure only); also strips it before events.jsonl and skips transcript reads. */
   privacy?: boolean;
+  /** Hours of events.jsonl kept on disk (1-2160, default 24); older lines are pruned at boot and hourly. */
+  historyHours?: number;
   /** Ignored: there is one built-in look. Still parsed so old config files keep working. */
   theme?: string;
   /** Minutes of silence (1-1440, default 45) before an idle session is swept. */
@@ -55,7 +59,10 @@ export type OfficeEvent = Base &
     | { type: "message"; session: string; from?: string; to: string; text: string; id?: string; t: number }
     | { type: "prompt"; session: string; text: string; t: number }
     | { type: "turn_end"; session: string; usage?: Usage; t: number }
-    | { type: "waiting"; session: string; text?: string; idle?: boolean; t: number }
+    /** Running token total of the session (lead + subagent transcripts), refreshed during the turn. */
+    | { type: "usage"; session: string; usage: Usage; t: number }
+    /** kind: "permission" = a permission prompt (needs you now), "turn" = Claude is at the prompt (your turn). */
+    | { type: "waiting"; session: string; text?: string; idle?: boolean; kind?: "permission" | "turn"; t: number }
   );
 
 /** A source of events (Claude Code hooks today); must never throw, returns [] for input it cannot use. */
@@ -110,12 +117,15 @@ export type Agent = {
   errors?: number;
   lastError?: string;
   lastDurationMs?: number; // duration of the last finished tool
+  lastAt?: number; // time of this agent's last event (start, tool, tool_end); compare against siblings to spot a silent helper
 };
 
 export type Session = {
   id: string;
   project: string;
   waiting: boolean;
+  /** Why it waits (set with waiting, cleared with it): "permission" = a permission prompt, "turn" = your turn. */
+  waitKind?: "permission" | "turn";
   waitingText?: string;
   startedAt: number;
   doing?: string;
@@ -135,7 +145,7 @@ export type Session = {
   errors?: number;
   lastError?: string;
   lastDurationMs?: number;
-  /** Token usage of the lead's transcript as of the last turn end. */
+  /** Token usage of the session: lead + subagent transcripts, a running total (refreshed during the turn and at its end). */
   usage?: Usage;
   files?: Record<string, number>;
   toolCounts?: Record<string, number>;
@@ -153,6 +163,14 @@ export type Task = {
   endedAt?: number;
 };
 
+/** A finished delegation: one-line result and the task it answered. */
+export type Outcome = {
+  session: string; project?: string; agentId: string; name?: string; role?: string;
+  /** Same values as Interaction.outcome; absent when the report had no DONE:/BLOCKED:/PARTIAL: prefix. */
+  outcome?: "done" | "blocked" | "partial" | "empty";
+  text: string; task?: string; t: number; durationMs?: number;
+};
+
 export type Conflict = { file: string; a: string; b: string; t: number; kind: "possible" };
 
 export type OfficeState = {
@@ -166,6 +184,8 @@ export type OfficeState = {
   // Added later; optional so older literals (the web client's initial state) still type-check. reduce() fills them in.
   tasks?: Task[]; // last LIMITS.tasks
   conflicts?: Conflict[];
+  /** Last LIMITS.outcomes finished delegations, newest first. Kept after their session ends. */
+  outcomes?: Outcome[];
   nextTask?: number;
   /** Reducer bookkeeping (dedupe ring, tool start times, last write per file); not for display. */
   track?: { seen: string[]; starts: Record<string, number>; touched: Record<string, { by: string; t: number }> };

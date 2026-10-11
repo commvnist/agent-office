@@ -4,7 +4,7 @@ import type { FunEvent } from "@agent-office/core";
 import { office } from "./api.ts";
 import { $, announce, el } from "./dom.ts";
 import { settings } from "./settings.ts";
-import { usageTotal } from "./logic.ts";
+import { fmtAge, usageTotal } from "./logic.ts";
 import { deltaBuckets, OUTCOME_GLYPH, parseHighlight, ringMath, sparkBuckets, sparkPoints, toastGate, toastKind, toastModel } from "./funlogic.ts";
 
 const TOAST_MS = 5000, HL_MS = 6000, TICK_MS = 6000;
@@ -123,8 +123,11 @@ function sparks() {
   const host = $("spark"), now = Date.now();
   if (!sp) { sp = { e: spark("events/min"), t: spark("tokens/min") }; host.append(sp.e.row, sp.t.row); }
   const ev = sparkBuckets(evTimes, now), tk = deltaBuckets(tokSamples, now);
-  sp.e.set(ev, `${ev.slice(-1)[0]}/min`);
-  sp.t.set(tk, `~${kfmt(tk.slice(-5).reduce((a, c) => a + c, 0) / 5)}/min`);
+  // J2: an empty meter reads as broken, so say what the quiet means instead
+  const lastEv = evTimes.at(-1), ago = lastEv ? fmtAge(now - lastEv) : "";
+  sp.e.set(ev, !lastEv ? "idle: no events yet" : ev.slice(-1)[0] ? `${ev.slice(-1)[0]}/min` : `idle, last event ${ago === "just now" ? ago : `${ago} ago`}`);
+  const hasUsage = office.sessions().some((x) => x.usage);
+  sp.t.set(tk, !hasUsage ? "no token data yet" : `~${kfmt(tk.slice(-5).reduce((a, c) => a + c, 0) / 5)}/min`);
 }
 function sampleSignals() {
   const now = Date.now(), total = office.sessions().reduce((n, s) => n + usageTotal(s.usage), 0);

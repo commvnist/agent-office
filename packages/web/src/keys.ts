@@ -5,32 +5,52 @@ import { $, announce, btn, el } from "./dom.ts";
 import { modal } from "./dialog.ts";
 import { group } from "./toolbar.ts";
 import { cycleFollow, jumpLatest } from "./actions.ts";
-import { register } from "./palette.ts";
+import { openPalette, register } from "./palette.ts";
+import { STATUS, STATUS_ORDER } from "./theme.ts";
+import { statusWord } from "./triage.ts";
 
-const SHORTCUTS: [string, string][] = [
-  ["n / N", "Next / previous session or agent that needs you"],
-  ["[ / ]", "Previous / next agent"],
-  ["g", "Jump to next pod row (wing)"],
-  ["/", "Focus the session filter (opens the panel)"],
-  ["?", "This help"],
-  ["P", "Presenter mode"],
-  ["+ / -", "Zoom in / out (= and _ work too)"],
-  ["Arrows", "Pan the camera"],
-  ["f", "Zoom to and follow the selected agent"],
-  ["Shift+F", "Follow the busiest agent on / off"],
-  ["u", "Jump to the agent that changed most recently"],
-  ["Esc", "Close the top dialog, view or presenter; then clear the selection"],
-  ["0, drag, wheel", "Camera reset, pan, zoom"],
-  [".", "Freeze / resume the live view (new activity waits; the chip shows how many). Starting Replay or Sample resumes it: they show their own data"],
-  ["Ctrl/Cmd+K or :", "Command palette: jump to an agent or session, switch view, open Settings"],
-  ["j / k", "Next / previous ACTIVITY item (Enter selects its agent)"],
-  ["+ / - / 0 / arrows", "In the Timeline: zoom, reset, pan; drag selects a range, double-click zooms to it"],
+// X7: the key map grouped by the loop it serves; the long tail lives in the command palette
+const KEYMAP: [string, [string, string][]][] = [
+  ["Triage", [
+    ["n / N", "Next / previous agent or session that needs you"],
+    ["f", "Zoom to and follow the selected agent"],
+    ["Esc", "Close the top dialog or view; then clear the selection; then the session scope"],
+  ]],
+  ["Navigate", [
+    ["[ / ]", "Previous / next agent"],
+    ["u", "Jump to the agent that changed most recently"],
+    ["g", "Jump to next pod row (wing)"],
+    ["j / k", "Next / previous Activity item (Enter selects its agent)"],
+    ["/", "Focus the session filter (opens the panel)"],
+    ["+ / - / 0 / arrows", "Zoom, reset, pan (in History: the timeline)"],
+    ["Shift+F", "Follow the busiest agent on / off"],
+  ]],
+  ["Views", [
+    ["1 / 2 / 3", "Office / Sessions / History"],
+    ["P", "Present (big captions, panel hidden)"],
+    [".", "Freeze / resume the live view (the chip counts what is waiting)"],
+    ["Ctrl/Cmd+K or :", "Command palette: every action, agent and session"],
+    ["?", "This help"],
+  ]],
 ];
 const STREAM: [string, string][] = [
-  ["?overlay or ?preset=obs-1080 / obs-720", "Transparent page for an OBS Browser Source: panel and toolbar hidden, stage fixed at 1920x1080 or 1280x720, sound and text toasts off, Private on"],
-  ["?kiosk", "Wallboard: fullscreen, rotates office / wall / timeline every 20 s, pauses 60 s after you interact, keeps the screen awake; Esc leaves"],
-  ["?streamsafe=0|1", "Override Stream-safe (Settings): hide prompt, path and tool text in overlay, presenter, wall and kiosk"],
-  ["Copy link", "Copies a URL with the selection, scope, view and filters in the #fragment; nothing is sent anywhere"],
+  ["?overlay or ?preset=obs-1080 / obs-720", "Transparent page for an OBS Browser Source: panel and toolbar hidden, sound and toasts off, text hidden"],
+  ["?kiosk", "Wallboard: fullscreen, rotates office / sessions, holds the office while something needs you; Esc leaves"],
+  ["?streamsafe=0|1", "Override Stream-safe (Settings > Privacy)"],
+];
+/** The one legend (A1/A2): every status is a colour, a glyph and a word. */
+const legend = (): [string, string][] => [
+  ...STATUS_ORDER.map((k): [string, string] => [statusWord(k), {
+    permission: "Claude is asking to run something: approve or deny it in that terminal.",
+    turn: "Claude finished its turn and waits for your reply.",
+    blocked: "A helper gave up and reported back; its lead often handles it.",
+    working: "Busy: shown quietly on purpose.",
+    idle: "Nothing running.",
+  }[k]]),
+  ["… no activity", "A session mid-turn with no events for a while (NEEDS YOU, Stuck after)."],
+  ["? on a bubble", "Attribution is a guess: several or no matching delegations."],
+  ["thin line", "Lead to active helper; highlighted for the selected agent's chain."],
+  ["spark", "Two agents edited the same file: a possible conflict."],
 ];
 const DOCS = ["README.md", "docs/ARCHITECTURE.md", "docs/event-api.md", "docs/data-model.md"];
 
@@ -47,11 +67,13 @@ export function bindKeys(tools: HTMLElement) {
   dlg.id = "help";
   dlg.hidden = true;
   dlg.setAttribute("role", "dialog");
-  dlg.setAttribute("aria-label", "Help");
+  dlg.setAttribute("aria-labelledby", "help-h");
   document.body.append(dlg);
-  const open = btn("Help", "Shortcuts, daemon address, config location (?)", () => m.toggle());
+  const open = btn("?", "Help: what the office shows, the legend, keys, daemon address (?)", () => m.toggle());
   open.setAttribute("aria-haspopup", "dialog");
+  open.setAttribute("aria-label", "Help");
   group(tools, "Setup").append(open);
+  const kv = (k: string, v: string, key = false, col = "") => { const r = el("div", "kv"); const a = el(key ? "kbd" : "span", key ? "" : "k", k); if (col) a.style.color = col; r.append(a, el("span", "", v)); return r; };
   const m = modal(dlg, open, () => {
     const e = office.source.liveEnvelope() ?? office.getEnvelope();
     const facts: [string, string][] = [
@@ -61,13 +83,19 @@ export function bindKeys(tools: HTMLElement) {
       ["Motion", "Settings: Reduce motion and Pause ambient motion. Effects are never tied to what you do or when you look."],
       ["Docs", DOCS.join(", ") + " (in the repository)"],
     ];
-    dlg.replaceChildren(el("b", "", "Help"),
-      ...facts.map(([k, v]) => { const r = el("div", "srow"); r.append(el("span", "k", k), el("span", "", v)); return r; }),
-      el("b", "", "Streaming and sharing"),
-      ...STREAM.map(([k, v]) => { const r = el("div", "srow"); r.append(el("kbd", "", k), el("span", "", v)); return r; }),
-      el("b", "", "Shortcuts"),
-      ...SHORTCUTS.map(([k, v]) => { const r = el("div", "srow"); r.append(el("kbd", "", k), el("span", "", v)); return r; }),
-      btn("Close", "Close help", () => m.close()));
+    const head = el("div", "dhead"), h = el("h2", "", "Help");
+    h.id = "help-h";
+    const x = btn("×", "Close help (Esc)", () => m.close(), "b sm");
+    x.setAttribute("aria-label", "Close help");
+    head.append(h, x);
+    const sec = (t: string) => el("h3", "", t);
+    dlg.replaceChildren(head,
+      el("p", "", "Each Claude Code session is a lead at the door; the helpers it delegates to sit at desks. NEEDS YOU lists what waits on you, the card says why and what to do, Recently done lists what came back."),
+      btn("Command palette (Ctrl+K)", "Every action, agent and session by name", () => { m.close(); openPalette(); }),
+      sec("Legend"), ...legend().map(([k, v], i) => kv(k, v, false, i < STATUS_ORDER.length ? STATUS[STATUS_ORDER[i]].color : "")),
+      ...KEYMAP.flatMap(([g, rows]) => [sec(`Keys: ${g}`), ...rows.map(([k, v]) => kv(k, v, true))]),
+      sec("Streaming and wall displays"), ...STREAM.map(([k, v]) => kv(k, v, true)),
+      sec("About"), ...facts.map(([k, v]) => kv(k, v)));
   });
   register("Open Help", () => m.open());
   register("Jump to the latest agent (u)", jumpLatest);

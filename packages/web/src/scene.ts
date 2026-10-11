@@ -7,15 +7,18 @@ import { bake, Grid, hash, hsl, mix } from "./pixel.ts";
 import { shadeTo } from "./color.ts";
 import { roleColor, theme } from "./theme.ts";
 import { office } from "./api.ts";
-import { boardModel, COLS, SUMMARY_MS, type Board, type Col, type Memo } from "./board.ts";
+import { boardModel, COLS, ledgerLines, SUMMARY_MS, type Board, type Col, type Memo } from "./board.ts";
 import { podOwners, projectHue } from "./logic.ts";
 import { ambientOn, burstAllowed, fontPx, settings } from "./settings.ts";
 import type { Weather } from "./flair.ts";
 import { cleanText, couchSeats, skyAt, toolKind } from "./choreo.ts";
 import { promptCaption } from "./pod.ts";
+import { hideText } from "./stream.ts";
 import { activity, armchairTex, stoolTex, benchTex, boothTex, CHAIR_STYLES, catTex, chairTex, chipStack, coffeeTex, coolerTex, couchTex, deskTex, drawPx, floorLampTex, fridgeTex, huddleTex, junctionTex, laptopTex, ledNoise, plantTex, pxTextW, rackTex, sconceTex, shadowTex, shelfTex, staleK, tableTex, wallTex, whiteTex } from "./sprites.ts";
 
 const MAX_LIGHTS = 30;
+const FILED_MS = 30 * 60_000; // how long a finished helper's filed card stays on its empty desk
+const FILED: Record<string, string> = { done: "#3ddc97", partial: "#ffb020", blocked: "#ff5c6c", empty: "#8b93ad" };
 const DAY_LIFT = 0.1; // peak add-blend alpha of the daylight grade (~10% lift of the deck at noon)
 const CHAIR_LINGER_MS = 20_000; // how long a vacated chair stays out
 /** Zone (pod row) a seat id `d<N>` belongs to; anything else (lobby) belongs to none. */
@@ -112,6 +115,7 @@ export class Scene {
   private fixtures = new Container(); // ceiling fixtures: bar + soft pool each; day 40%, night 100%
   private fixA = -1;
   private jLeds: Sprite[] = []; // junction status LED per pod
+  private filed = new Map<string, { kind: string; t: number }>(); // seat id -> outcome of the helper that just left it
   private geo: SceneGeometry; // every rect and line below comes from here (geometry.ts <- core placements()/lines())
   private bot: Sprite | null = null;
   private botLamp: Sprite | null = null;
@@ -125,7 +129,6 @@ export class Scene {
   private ledStep = -1;
   private act = 0; private actTo = 0; private techAt = 0; // smoothed office activity (0..1), its target, last tech tick
   private podWork: number[] = []; // working seats per pod
-  private pads: Graphics[] = []; // pod pad bracket glow, one per pod, drawn once and only re-alpha'd
   private memo: Memo = { counts: null, at: 0 };
   private lastTasks: readonly Task[] | null = null;
   private board: Board | null = null;
@@ -266,8 +269,9 @@ export class Scene {
     gr.addColorStop(0, "#ffffff"); gr.addColorStop(1, "#8a93b8");
     c.fillStyle = gr; c.fillRect(0, 0, w, h);
     c.globalCompositeOperation = "source-over";
-    for (let x = 0; x <= l.cols; x++) { c.fillStyle = `rgba(127,227,255,${x % 4 === 0 ? 0.06 : 0.03})`; c.fillRect(x * T, 0, 1, h); }
-    for (let y = 0; y <= l.rows - l.wallRows; y++) { c.fillStyle = `rgba(127,227,255,${y % 4 === 0 ? 0.06 : 0.03})`; c.fillRect(0, y * T, w, 1); }
+    // deck plates, not an editor grid: a dark seam every 2 tiles with a faint lit lip beside it (critique R4)
+    for (let x = 0; x <= l.cols; x += 2) { c.fillStyle = "rgba(8,10,20,0.32)"; c.fillRect(x * T, 0, 1, h); c.fillStyle = "rgba(200,215,255,0.035)"; c.fillRect(x * T + 1, 0, 1, h); }
+    for (let y = 0; y <= l.rows - l.wallRows; y += 2) { c.fillStyle = "rgba(8,10,20,0.32)"; c.fillRect(0, y * T, w, 1); c.fillStyle = "rgba(200,215,255,0.035)"; c.fillRect(0, y * T + 1, w, 1); }
     // spine: door -> lobby, a cyan strip with chevrons pointing in
     const [s0, s1] = g.line.get("spine")!.pts, sx = s0.x, sTop = s0.y - oy, sBot = s1.y - oy;
     // sx is a pixel BOUNDARY (the tile centre), so everything is even-width and mirrored about it: 8px strip, 2px apex
@@ -285,6 +289,11 @@ export class Scene {
     // charging dock where the cleaning bot parks (start of its first rail)
     const d = g.dock;
     if (d) { c.fillStyle = rgba("#10131f", 0.9); c.fillRect(d.x, d.y - oy, d.w, d.h); c.fillStyle = "#7fe3ff"; c.fillRect(d.x + 1, d.y + 1 - oy, 2, 1); }
+  }
+
+  /** A helper reported and left its desk: leave its result there as a filed card (critique R7, world memory). */
+  fileOutcome(seat: string, kind: string) {
+    if (this.desks.has(seat)) this.filed.set(seat, { kind, t: Date.now() });
   }
 
   /** The walkable floor in art px (below the back wall): name tags and bubbles belong inside it. */
@@ -438,7 +447,7 @@ export class Scene {
     if (lvl !== this.gaugeLvl) { this.gaugeLvl = lvl; this.drawGauge(lvl); }
     const nm = theme().nightMax, fa = 0.4 + 0.6 * (nm > 0 ? Math.min(1, night / nm) : 0);
     if (fa !== this.fixA) { this.fixA = fa; this.fixtures.alpha = fa; }
-    this.tickPads(on, a, now);
+    this.tickPads(on, now);
     this.tickRack(on, a, now);
   }
 
@@ -450,24 +459,11 @@ export class Scene {
     if (this.gaugeSpill) this.gaugeSpill.alpha = 0.04 * lvl;
   }
 
-  /** Pod pad brackets: dim while a pod is empty (hidden), faint when seated, bright and breathing when its agents work. */
-  private tickPads(on: boolean, a: number, now: number) {
-    while (this.pads.length < this.pods.length) {
-      const p = this.pods[this.pads.length], w = p.w, h = p.h, g = new Graphics();
-      for (const [cx, cy, dx, dy] of [[0, 0, 1, 1], [w - 1, 0, -1, 1], [0, h - 1, 1, -1], [w - 1, h - 1, -1, -1]])
-        g.rect(dx > 0 ? cx : cx - 4, cy, 5, 1).rect(cx, dy > 0 ? cy : cy - 4, 1, 5).fill(0x7fe3ff);
-      g.position.set(p.x, p.y); g.blendMode = "add"; g.eventMode = "none"; g.visible = false;
-      this.glow.addChild(g); this.pads.push(g);
-    }
-    this.jLeds.forEach((led, i) => { // junction LED: blinks only while that pod has working agents; steady dim green otherwise
+  /** Junction LEDs: blink while that pod has working agents. Pods carry no corner brackets: brackets mean "selected" (critique R5). */
+  private tickPads(on: boolean, now: number) {
+    this.jLeds.forEach((led, i) => {
       const blink = on && (this.podWork[i] ?? 0) > 0 && Math.floor(now / 500 + i) % 2 === 0;
       led.tint = blink ? 0x5be37d : 0x2c5a3a;
-    });
-    this.pads.forEach((g, i) => {
-      const p = this.pods[i], seated = !!p && p.owner !== "\0" && p.owner !== "" && !this.born.has(i), w = this.podWork[i] ?? 0;
-      const vis = on && seated;
-      if (g.visible !== vis) g.visible = vis;
-      if (vis) g.alpha = w > 0 ? 0.55 + 0.25 * a + 0.2 * Math.sin(now / 400 + i) : 0.18;
     });
   }
 
@@ -574,9 +570,10 @@ export class Scene {
   }
 
   /** Monitor glyph by tool kind (#102), lamp shade, role item and drawn over the desk sprite. */
-  private drawDeco(g: Graphics, o: { working: boolean; tool?: string; count: number; role?: string; v: number; waiting: boolean; flash: boolean; used: boolean; load: number; depth: number; mug: boolean }) {
+  private drawDeco(g: Graphics, o: { working: boolean; tool?: string; count: number; role?: string; v: number; waiting: boolean; flash: boolean; used: boolean; load: number; depth: number; mug: boolean; filed?: string }) {
     g.clear();
     const px = (x: number, y: number, col: string) => g.rect(x, y, 1, 1).fill(col);
+    if (o.filed) { g.rect(1, 3, 4, 3).fill("#e8e4d6").rect(1, 3, 4, 1).fill(FILED[o.filed] ?? "#8b93ad"); return; } // a filed result left on the empty desk
     if (o.v === 0) g.rect(3, 0, 3, 1).fill(o.working ? "#ffd27a" : o.waiting ? "#ffd84a" : "#4a4f69");
     const r = o.role ?? "";
     if (/qa|test/.test(r)) { g.rect(6, 0, 2, 3).fill("#2a2d3b").rect(6, 1, 2, 1).fill("#4a5068"); px(7, 0, "#5be37d"); }
@@ -671,8 +668,11 @@ export class Scene {
         const el = st?.flash ? now - st.flash - d.idx * 60 : -1; // ship-it wave: 120ms green blink per desk, staggered
         const flash = !settings.reducedMotion && el >= 0 && el < 120 && now - st!.flash! < 1200;
         const o = { working, tool: working ? st?.tool : undefined, count: used ? st?.count ?? 0 : 0, role: used ? st?.role : undefined, v: d.v, waiting: used && !working && !!st?.waiting, flash, used, load: used ? st?.load ?? 0 : 0, mug: used && !!st?.mug, depth: used ? st?.queueDepth ?? 0 : 0 };
-        const key = `${o.tool ?? ""}|${o.count}|${o.role ?? ""}|${+working}${+o.waiting}${+flash}|${+used}${o.load}.${o.depth}${+o.mug}`;
-        if (key !== d.decoKey) { d.decoKey = key; this.drawDeco(d.deco, o); }
+        const f = this.filed.get(id);
+        if (f && (used || now - f.t > FILED_MS)) this.filed.delete(id); // tidied once someone sits down or after a while
+        const filed = !used ? this.filed.get(id)?.kind : undefined;
+        const key = `${o.tool ?? ""}|${o.count}|${o.role ?? ""}|${+working}${+o.waiting}${+flash}|${+used}${o.load}.${o.depth}${+o.mug}|${filed ?? ""}`;
+        if (key !== d.decoKey) { d.decoKey = key; this.drawDeco(d.deco, { ...o, filed }); }
       }
     }
     // overflow desks ease in
@@ -711,11 +711,11 @@ export class Scene {
       if (!q) return;
       q.visible = !!p.owner && sc >= 1.2 && !this.born.has(i) && i === this.hoverPod; // hover-only: no permanent labels over every pod
       if (!q.visible) { if (p.cap) p.cap.visible = false; return; }
-      const key = `${i}|${p.owner}|${pfs}|${chars}`;
+      const key = `${i}|${p.owner}|${pfs}|${chars}|${+hideText()}`;
       if (key !== p.key) {
         p.key = key;
         q.style.fontSize = pfs;
-        const t = `P${i + 1} · ${cleanText(p.owner, 40)}`; // pod identity is attached to the pod, not painted on the floor
+        const t = hideText() ? `P${i + 1}` : `P${i + 1} · ${cleanText(p.owner, 40)}`; // pod identity is attached to the pod; text hidden (stream-safe, private) drops the project name (critique I2)
         q.text = t.length > chars ? t.slice(0, chars - 1) + "…" : t;
       }
       const priv = office.privacy || office.source.private, capOn = sc >= 2 && !!p.prompt && !priv && !this.born.has(i);
@@ -928,10 +928,13 @@ export class Scene {
       });
       this.colKey = "";
     }
-    const bd = this.board!, any = tasks.length > 0;
+    // the board is the outcomes ledger once anything has finished (critique V1); the task columns show only before that
+    const outs = office.getEnvelope()?.state.outcomes ?? [], ledger = outs.length > 0;
+    const bd = this.board!, any = tasks.length > 0 && !ledger;
+    if (ledger) for (const c of this.cards) if (c.visible) c.visible = false;
     const fs = Math.max(8, Math.floor(sc * 5)); // no upper cap: the board text keeps its size relative to the board, so zooming in makes it larger
     const colW = (b.w * T - 6) / 4, chars = Math.floor((colW * sc) / (fs * 0.72)); // 0.72: headroom so a header never runs into the next column's text
-    const key = `${fs}|${chars}|${any}`;
+    const key = `${fs}|${chars}|${any}|${ledger ? `${outs[0].t}.${outs.length}` : ""}`;
     if (key !== this.colKey) {
       this.colKey = key;
       COLS.forEach((c, i) => {
@@ -943,11 +946,12 @@ export class Scene {
         tx.style.fill = c === "blocked" && n ? 0xff7a6a : 0xbfeaff;
       });
       this.boardText.style.fontSize = fs;
-      this.boardText.text = bd.summary || "No tasks yet";
+      const rows = Math.max(1, Math.min(4, Math.floor((20 * sc) / (fs * 1.25)))), wide = Math.floor(((b.w * T - 8) * sc) / (fs * 0.62));
+      this.boardText.text = ledger ? ledgerLines(outs, rows, wide).join("\n") : bd.summary || "Finished work is posted here";
     }
     this.boardText.visible = !any;
     this.colText.forEach((t, i) => { t.visible = any; t.position.set(dev(ox + (b.x * T + 3 + i * colW + 1) * sc), dev(oy + 4 * sc)); });
-    this.boardText.position.set(dev(ox + (b.x * T + 5) * sc), dev(oy + 8 * sc));
+    this.boardText.position.set(dev(ox + (b.x * T + 5) * sc), dev(oy + (ledger ? 5 : 8) * sc));
     this.boardMask.clear().rect(dev(ox + (b.x * T + 2) * sc), dev(oy + 3 * sc), dev((b.w * T - 4) * sc), dev(24 * sc)).fill(0xffffff);
   }
 

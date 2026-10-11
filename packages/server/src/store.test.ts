@@ -46,9 +46,11 @@ test("validateConfig accepts good, rejects bad, strips control chars", () => {
   const ok = validateConfig({ roles: { qa: { agent: "qa", count: 2, names: ["A\x1b[31mb"], overflow: { max: 1 } } }, parallelism: "off", privacy: true, theme: "dark" });
   assert.deepEqual(ok.roles.qa.names, ["A[31mb"]);
   for (const bad of [null, { roles: [] }, { roles: { a: { agent: "x", count: 21 } } }, { roles: { a: { agent: "x y", count: 1 } } },
-    { roles: { a: { agent: "x", count: 1, overflow: { max: 11 } } } }, { roles: {}, parallelism: "x" }, { roles: {}, privacy: "yes" }, { roles: {}, theme: "../x" }, { roles: { a: { agent: "x", count: 1, names: [1] } } }])
+    { roles: { a: { agent: "x", count: 1, overflow: { max: 11 } } } }, { roles: {}, parallelism: "x" }, { roles: {}, privacy: "yes" }, { roles: {}, theme: "../x" }, { roles: { a: { agent: "x", count: 1, names: [1] } } },
+    { roles: {}, protocol: "silent" }, { roles: {}, historyHours: 0 }, { roles: {}, historyHours: 1.5 }])
     assert.throws(() => validateConfig(bad));
   assert.ok(validateConfig(JSON.parse('{"roles":{"__proto__":{"agent":"x","count":1}}}')));
+  assert.deepEqual([validateConfig({ roles: {}, protocol: "observe", historyHours: 2160 })].map((c) => [c.protocol, c.historyHours]), [["observe", 2160]]);
 });
 
 test("readUsage sums the last line per message id and respects path limits", () => {
@@ -93,6 +95,8 @@ test("digest counts outcomes, tokens, errors per day", () => {
     { type: "agent_start", session: "s", agentId: "a", agentType: "agent-office:qa-engineer", t: t + 1 },
     { type: "tool_end", session: "s", agentId: "a", tool: "Bash", ok: false, t: t + 2 },
     { type: "agent_stop", session: "s", agentId: "a", message: "PARTIAL: half", usage: { input: 5, output: 3, cacheRead: 100, cacheCreate: 2 }, t: t + 3 },
+    { type: "usage", session: "s", usage: { input: 4, output: 3, cacheRead: 100, cacheCreate: 1 }, t: t + 4 },
+    { type: "turn_end", session: "s", usage: { input: 5, output: 3, cacheRead: 100, cacheCreate: 2 }, t: t + 5 }, // running total: counted once (max)
   ]);
   assert.deepEqual(rows.map((r) => [r.sessions, r.agents["qa-engineer"], r.outcomes.partial, r.tokens, r.errors, r.hours]), [[1, 1, 1, 10, 1, 1]]);
   assert.match(toMarkdown(rows), /2026-01-05 \| 1 \| 1 \| 0 \| 0 \| 1 \| 10 \| 1 \| 1/);
@@ -102,4 +106,43 @@ test("unknownKeys flags typos at top, role and overflow level", () => {
   assert.deepEqual(unknownKeys({ paralelism: "auto", roles: { qa: { agent: "q", count: 1, nmes: [], overflow: { max: 1, nam: [] } } } }),
     ["paralelism", "roles.qa.nmes", "roles.qa.overflow.nam"]);
   assert.deepEqual(unknownKeys({ roles: {}, theme: "x" }), []);
+});
+
+import { pruneEvents } from "./store.ts";
+import { fitEnvelope } from "./snapshot.ts";
+test("pruneEvents drops lines older than the cutoff in the log and its backup", () => {
+  const f = join(tmp(), "events.jsonl");
+  writeFileSync(f + ".1", [JSON.stringify({ type: "prompt", t: 1 }), "junk"].join("\n") + "\n");
+  writeFileSync(f, [JSON.stringify({ type: "prompt", t: 5 }), JSON.stringify({ type: "prompt", t: 50 })].join("\n") + "\n");
+  assert.equal(pruneEvents(f, 10), 3);
+  assert.deepEqual(loadEvents(f).map((e) => e.t), [50]);
+  assert.equal(existsSync(f + ".1"), false);
+  assert.equal(pruneEvents(f, 10), 0);
+});
+
+test("fitEnvelope keeps the update when too big: trims log/outcomes and marks it degraded", () => {
+  let s = emptyState();
+  s = reduce(cfg, s, { type: "session_start", session: "s", project: "p", t: 1 });
+  for (let i = 0; i < 30; i++) s = reduce(cfg, s, { type: "message", session: "s", to: "user", text: "x".repeat(200), t: 2 + i });
+  const st = publicState(s, false);
+  const ok = JSON.parse(fitEnvelope({ rev: 1 }, st, 1e6));
+  assert.equal(ok.degraded, undefined);
+  const small = fitEnvelope({ rev: 2 }, st, 3000);
+  const d = JSON.parse(small);
+  assert.equal(d.degraded, true);
+  assert.match(d.degradedReason, /trimmed/);
+  assert.equal(d.rev, 2);
+  assert.ok(d.state.sessions.s, "structure survives");
+  assert.ok(d.state.log.length < 30);
+});
+
+test("publicState blanks outcome text and task in private mode", () => {
+  let s = emptyState();
+  s = reduce(cfg, s, { type: "delegate", session: "s", agentType: "qa-engineer", text: "TASK-SECRET", t: 1 });
+  s = reduce(cfg, s, { type: "agent_start", session: "s", agentId: "a", agentType: "qa-engineer", t: 2 });
+  s = reduce(cfg, s, { type: "agent_stop", session: "s", agentId: "a", message: "DONE: RESULT-SECRET", t: 3 });
+  assert.equal(publicState(s, false).outcomes![0].task, "TASK-SECRET");
+  const p = publicState(s, true);
+  assert.ok(!JSON.stringify(p).includes("SECRET"));
+  assert.equal(p.outcomes![0].outcome, "done");
 });

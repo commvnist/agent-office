@@ -33,7 +33,7 @@ export function gantt(events: OfficeEvent[]): { t0: number; t1: number; rows: Ro
 }
 
 // ---- waterfall timeline (#194): one row per session and per agent, plus the pure view/range maths the canvas uses ----
-export type WRow = { session: string; label: string; kind: "session" | "agent"; role: string; s: number; e: number; open: boolean; outcome?: "done" | "blocked" | "partial" };
+export type WRow = { session: string; id?: string; label: string; kind: "session" | "agent"; role: string; s: number; e: number; open: boolean; outcome?: "done" | "blocked" | "partial" };
 const OUTCOME = /^\s*(done|blocked|partial)\b/i;
 /** Session row first, then its agents by start time. Agents stopped with a DONE/BLOCKED/PARTIAL prefix carry the outcome; unstopped bars are `open`. */
 export function waterfall(events: OfficeEvent[]): { t0: number; t1: number; rows: WRow[]; times: number[] } {
@@ -49,7 +49,7 @@ export function waterfall(events: OfficeEvent[]): { t0: number; t1: number; rows
     else if (e.type === "session_end") { const g = get(e.session, e.t); g.head.e = e.t; g.head.open = false; }
     else if (e.type === "agent_start") {
       const g = get(e.session, e.t);
-      g.kids.set(e.agentId, { session: e.session, label: `${e.agentType.replace(/^.*:/, "")} ${e.agentId.slice(0, 6)}`, kind: "agent", role: e.agentType, s: e.t, e: t1, open: true });
+      g.kids.set(e.agentId, { session: e.session, id: e.agentId, label: `${e.agentType.replace(/^.*:/, "")} ${e.agentId.slice(0, 6)}`, kind: "agent", role: e.agentType, s: e.t, e: t1, open: true });
     } else if (e.type === "agent_stop") {
       const k = get(e.session, e.t).kids.get(e.agentId);
       if (k) { k.e = e.t; k.open = false; const o = OUTCOME.exec(e.message ?? "")?.[1].toLowerCase(); if (o) k.outcome = o as WRow["outcome"]; }

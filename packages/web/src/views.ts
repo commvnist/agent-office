@@ -4,6 +4,9 @@ import { office } from "./api.ts";
 import { btn, el, renderIf } from "./dom.ts";
 import { MIN_SPAN, fetchHistory, pickRange, panView, rangeStats, waterfall, zoomView, type View as Span } from "./history.ts";
 import { roleColor } from "./theme.ts";
+import { look, statusKey, statusWord } from "./triage.ts";
+import { replayRange, toggleReplay } from "./modes.ts";
+import { store } from "./dom.ts";
 import { ignoreKey } from "./camera.ts";
 import { fmtAge, fmtTokens } from "./logic.ts";
 import { t } from "./i18n.ts";
@@ -33,20 +36,21 @@ function renderWall0(box: HTMLElement) {
   const acts = office.actors();
   const tiles = office.sessions().map((s) => {
     const mine = acts.filter((a) => a.session === s.id);
-    const state = mine.some((a) => a.status === "blocked") ? "blocked" : s.waiting ? "waiting"
+    const state = mine.some((a) => a.status === "blocked") ? "blocked" : s.waiting ? statusKey("waiting", e.state.sessions[s.id])
       : mine.some((a) => a.status === "working" || a.status === "thinking") ? "working" : "idle";
     const errors = e.state.sessions[s.id]?.errors ?? 0;
     return { s, state, age: fmtAge(now - s.startedAt), tok: fmtTokens(s.usage), errors };
   });
   renderIf(box, JSON.stringify(tiles.map((x) => [x.s.id, x.s.project, x.state, x.age, x.tok, x.errors, x.s.agents])), () =>
     tiles.length ? tiles.map((x) => {
-      const b = el("button", `tile ${x.state}`);
+      const b = el("button", "tile");
       b.type = "button";
-      b.append(el("b", "", x.s.project), el("span", "", x.state), el("span", "k", `${x.age} · ${t("agent", { n: x.s.agents })}`),
+      b.style.setProperty("--st", look(x.state).color);
+      b.append(el("b", "", x.s.project), el("span", "", statusWord(x.state)), el("span", "k", `${x.age} · ${t("agent", { n: x.s.agents })}`),
         el("span", "k", x.tok || "no tokens yet"), el("span", x.errors ? "er" : "k", `${x.errors} errors`));
       b.addEventListener("click", () => { office.select(x.s.lead); setView(""); });
       return b;
-    }) : [el("div", "k pad", "No sessions yet. Start Claude Code with the plugin, or press Sample in the panel.")]);
+    }) : [el("div", "k pad", "No sessions yet. Start Claude Code with the plugin; they appear here.")]);
 }
 
 // ---- waterfall timeline: canvas 2D, only the visible rows are drawn ----
@@ -54,6 +58,11 @@ const RH = 20, AXIS = 22, STEPS = [1, 5, 10, 30, 60, 300, 600, 1800, 3600, 3 * 3
 const OUT_GLYPH = { done: "✓", blocked: "✕", partial: "~" } as const;
 type TL = { w: ReturnType<typeof waterfall>; full: Span; view: Span; sel: Span | null; limited: boolean; fit: boolean };
 let tl: TL | null = null, tlToken = 0;
+/** "since you were last here" (X3): the time this page was last visible, from the previous visit. */
+const lastSeen = Number(store.get("lastSeen")) || 0;
+const seen = () => { if (!document.hidden) store.set("lastSeen", String(Date.now())); };
+setInterval(seen, 60_000);
+document.addEventListener("visibilitychange", seen);
 const hm = (ms: number, sec = false) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", ...(sec ? { second: "2-digit" } : {}) });
 
 async function loadTimeline(msg: HTMLElement, redraw: () => void) {
@@ -63,7 +72,8 @@ async function loadTimeline(msg: HTMLElement, redraw: () => void) {
     if (my !== tlToken) return;
     const w = waterfall(events), full = { t0: w.t0, t1: Math.max(w.t1, w.t0 + MIN_SPAN) };
     // keep a zoomed range across the 30 s refresh; a fitted view follows the data
-    tl = { w, full, limited, view: tl && !tl.fit ? tl.view : full, sel: tl?.sel ?? null, fit: !tl || tl.fit };
+    const since = !tl && lastSeen > full.t0 && lastSeen < full.t1 ? { t0: lastSeen, t1: full.t1 } : null; // first load: pre-select what happened while away
+    tl = { w, full, limited, view: tl && !tl.fit ? tl.view : full, sel: tl ? tl.sel : since, fit: !tl || tl.fit };
     msg.hidden = true;
     if (!w.rows.length) { msg.hidden = false; msg.textContent = "No stored events in the last 24 hours. Run a Claude Code session; the daemon keeps its history."; }
     redraw();
@@ -83,13 +93,30 @@ function buildTimeline(root: HTMLElement) {
   const plot = () => ({ l: left(), w: Math.max(10, wrap.clientWidth - left() - 10) });
   const timeAt = (x: number) => { const p = plot(), v = tl!.view; return v.t0 + (Math.max(0, Math.min(p.w, x - p.l)) / p.w) * (v.t1 - v.t0); };
   const priv = hideText;
+  const names = () => {
+    const st = office.getEnvelope()?.state, m = new Map<string, string>();
+    for (const o of (st as { outcomes?: { agentId: string; name?: string }[] } | undefined)?.outcomes ?? []) if (o.name) m.set(o.agentId, o.name);
+    for (const a of Object.values(st?.agents ?? {})) if (a.seat?.name) m.set(a.id, a.seat.name);
+    for (const a of office.actors()) m.set(a.id, a.label);
+    return m;
+  };
+  const rowAt = (y: number) => tl?.w.rows[Math.floor((y - AXIS + wrap.scrollTop) / RH)];
+  /** Row click (X3): select that agent (or the session's lead) on the floor and go back to the office. */
+  const pickRow = (y: number, go: boolean) => {
+    const r = rowAt(y), id = r && (r.kind === "agent" ? r.id : `lead:${r.session}`);
+    if (!id) return;
+    if (!office.actors().some((a) => a.id === id)) { info.textContent = "That agent is no longer on the floor; select its range and Replay it."; return; }
+    office.select(id); // the panel card shows it beside the timeline
+    if (go) { setView(""); office.focus(id); }
+  };
 
   function infoText() {
     if (!tl || !tl.w.rows.length) return "";
     const r = tl.sel ?? tl.view, st = rangeStats(tl.w, r);
     const dur = st.ms < 60_000 ? `${(st.ms / 1000).toFixed(st.ms < 10_000 ? 1 : 0)}s` : fmtAge(st.ms);
     const what = `${hm(r.t0, true)} to ${hm(r.t1, true)} · ${dur} · ${t("event", { n: st.events })} · ${t("agent", { n: st.agents })}`;
-    return (tl.sel ? `Selected ${what} (double-click to zoom)` : `Showing ${what}`) + (tl.limited ? " · limit reached: older events are not shown" : "");
+    const away = tl.sel && tl.sel.t0 === lastSeen ? "Since you were last here: " : "Selected ";
+    return (tl.sel ? `${away}${what} (double-click to zoom, or Replay this range)` : `Showing ${what}`) + (tl.limited ? " · limit reached: older events are not shown" : "");
   }
   function draw() {
     if (!tl || !tl.w.rows.length) { info.textContent = ""; cv.width = cv.height = 0; return; }
@@ -116,13 +143,14 @@ function buildTimeline(root: HTMLElement) {
     const top = wrap.scrollTop, i0 = Math.max(0, Math.floor(top / RH)), i1 = Math.min(tl.w.rows.length, Math.ceil((top + H - AXIS) / RH));
     const clipL = (txt: string, maxW: number) => { while (txt.length > 1 && g.measureText(txt).width > maxW) txt = txt.slice(0, -2) + "…"; return txt; };
     let sess = 0;
+    const nm = names();
     for (let i = 0; i < i1; i++) {
       const r = tl.w.rows[i];
       if (r.kind === "session") sess++;
       if (i < i0) continue;
       const y = AXIS + i * RH - top, mid = y + RH / 2;
       g.textAlign = "start"; g.fillStyle = r.kind === "session" ? fg : mute;
-      g.fillText(clipL(priv() ? (r.kind === "session" ? `session ${sess}` : r.role) : r.label, l - 12 - (r.kind === "agent" ? 10 : 0)), (r.kind === "agent" ? 14 : 4), mid);
+      g.fillText(clipL(priv() ? (r.kind === "session" ? `session ${sess}` : r.role) : r.kind === "agent" && r.id && nm.has(r.id) ? `${nm.get(r.id)} · ${r.role.replace(/^.*:/, "")}` : r.label, l - 12 - (r.kind === "agent" ? 10 : 0)), (r.kind === "agent" ? 14 : 4), mid);
       if (r.e < v.t0 || r.s > v.t1) continue;
       const a = Math.max(l, x(r.s)), b = Math.min(l + pw, x(r.e)), bw = Math.max(2, b - a);
       if (r.kind === "session") { g.fillStyle = line; g.fillRect(a, y + 7, bw, RH - 14); continue; }
@@ -144,6 +172,7 @@ function buildTimeline(root: HTMLElement) {
       g.strokeStyle = acc; g.strokeRect(a + 0.5, 0.5, Math.max(1, b - a), H - 1);
     }
     info.textContent = infoText();
+    rp.disabled = !tl.sel;
   }
   const set = (v: Span, sel: Span | null = tl!.sel) => { tl!.view = v; tl!.sel = sel; tl!.fit = v.t0 === tl!.full.t0 && v.t1 === tl!.full.t1; draw(); };
   const reset = () => tl && set(tl.full, null);
@@ -160,7 +189,8 @@ function buildTimeline(root: HTMLElement) {
   cv.style.touchAction = "none";
   cv.addEventListener("pointerdown", (e) => {
     const x = e.clientX - cv.getBoundingClientRect().left;
-    if (!tl || x < plot().l) return;
+    if (!tl) return;
+    if (x < plot().l) { pickRow(e.clientY - cv.getBoundingClientRect().top, true); return; }
     cv.setPointerCapture(e.pointerId);
     ptrs.set(e.pointerId, x);
     if (ptrs.size === 2) {
@@ -186,6 +216,7 @@ function buildTimeline(root: HTMLElement) {
     ptrs.delete(e.pointerId);
     if (ptrs.size < 2) pinch = null;
     if (drag !== null && !moved && tl?.sel) { cleared = { sel: tl.sel, at: Date.now() }; tl.sel = null; draw(); } // a plain click clears the selection
+    else if (drag !== null && !moved) pickRow(e.clientY - cv.getBoundingClientRect().top, false);
     if (!ptrs.size) drag = null;
   };
   cv.addEventListener("pointerup", up);
@@ -223,7 +254,10 @@ function buildTimeline(root: HTMLElement) {
   }, true);
 
   const bar = el("div", "pad tlbar");
-  bar.append(el("b", "", "Timeline, last 24 hours"),
+  const rp = btn("Replay this range", "Play the selected range back through the office (drag on the timeline to select)", () => { if (tl?.sel) { replayRange(tl.sel.t0, tl.sel.t1); setView(""); } });
+  rp.disabled = true;
+  bar.append(el("b", "", "History, last 24 hours"), rp,
+    btn("Replay…", "Pick a replay range by time (opens the replay controls in the panel)", () => { toggleReplay(true); setView(""); }),
     btn("Fit", "Fit the whole range to the screen", () => tl && set(tl.full)),
     btn("Reset", "Fit and clear the selection (0)", reset),
     btn("−", "Zoom out (-)", () => zoom(1 / 1.5)), btn("+", "Zoom in (+)", () => zoom(1.5)),
@@ -233,7 +267,7 @@ function buildTimeline(root: HTMLElement) {
     const roles = [...new Set((tl?.w.rows ?? []).filter((r) => r.kind === "agent").map((r) => r.role))].slice(0, 10);
     legend.replaceChildren(...roles.map((r) => { const i = el("span", "lgi"); const sw = el("i", "sw"); sw.style.background = roleColor(r); i.append(sw, el("span", "", priv() ? "role" : r)); return i; }),
       el("span", "lgi", "✓ done"), el("span", "lgi", "✕ blocked"), el("span", "lgi", "~ partial"), el("span", "lgi", "dashed = still running"), el("span", "lgi", "grey bar = session"),
-      el("span", "lgi k", "Drag to select, double-click to zoom, wheel/pinch zoom, +/-/0 keys. Times are local."));
+      el("span", "lgi k", "Click a row to find that agent. Drag to select a range, double-click to zoom, wheel/pinch zoom, +/-/0 keys. Times are local."));
   };
   return { load: async () => { await loadTimeline(msg, () => { legendFill(); draw(); }); }, draw };
 }
@@ -252,9 +286,10 @@ export function bindViews(tools: HTMLElement) {
   wall.append(grid);
   document.body.append(wall, tlRoot);
   const timeline = buildTimeline(tlRoot);
-  const bw = btn("Wall", "Compact wall of session tiles, no office drawing (#wall in the URL)", () => setView(cur === "wall" ? "" : "wall"));
-  const bt = btn("Timeline", "Waterfall of the last 24 hours of stored sessions and agents", () => setView(cur === "timeline" ? "" : "timeline"));
-  bw.setAttribute("aria-pressed", "false"); bt.setAttribute("aria-pressed", "false");
+  const bo = btn("Office", "The live office (1)", () => setView(""));
+  const bw = btn("Sessions", "One tile per session, no office drawing (2; #wall in the URL)", () => setView("wall"));
+  const bt = btn("History", "The last 24 hours: timeline, and replay a range through the office (3)", () => setView("timeline"));
+  bo.setAttribute("aria-pressed", "true"); bw.setAttribute("aria-pressed", "false"); bt.setAttribute("aria-pressed", "false");
   // freeze: hold incoming snapshots and show the last applied state; the chip counts what is waiting
   const bf = btn("Freeze", "Hold the view on what it shows now; new activity waits until you resume (.)", () => office.freeze.toggle());
   bf.setAttribute("aria-pressed", "false");
@@ -270,16 +305,17 @@ export function bindViews(tools: HTMLElement) {
     chip.hidden = !on;
     chipText.textContent = `Frozen · ${office.freeze.held} new`;
   });
-  const g = group(tools, "View");
+  group(tools, "Views").append(bo, bw, bt);
+  const g = group(tools, "Display");
   const bfo = btn("Follow", "Camera follows the busiest agent (Shift+F)", cycleFollow);
   const syncFollow = () => bfo.setAttribute("aria-pressed", String(following()));
   syncFollow();
   document.addEventListener("ao:follow", syncFollow);
   office.subscribe(syncFollow);
-  g.append(bw, bt, bf, bfo);
-  register("View: Office", () => setView(""));
-  register("View: Wall", () => setView(cur === "wall" ? "" : "wall"));
-  register("View: Timeline", () => setView(cur === "timeline" ? "" : "timeline"));
+  g.append(bf, bfo);
+  register("View: Office (1)", () => setView(""));
+  register("View: Sessions wall (2)", () => setView("wall"));
+  register("View: History timeline (3)", () => setView("timeline"));
   register("View: Freeze", () => office.freeze.toggle());
   register("View: Follow busiest (Shift+F)", cycleFollow);
   // floating compact window: Document Picture-in-Picture (Chromium); feature-detected, absent elsewhere
@@ -311,7 +347,7 @@ export function bindViews(tools: HTMLElement) {
   setView = (v) => {
     cur = shown = v;
     wall.hidden = v !== "wall"; tlRoot.hidden = v !== "timeline";
-    bw.setAttribute("aria-pressed", String(v === "wall")); bt.setAttribute("aria-pressed", String(v === "timeline"));
+    bo.setAttribute("aria-pressed", String(!v)); bw.setAttribute("aria-pressed", String(v === "wall")); bt.setAttribute("aria-pressed", String(v === "timeline"));
     if (v !== "timeline") tlToken++; // drop a fetch still in flight
     setViewToken(v);
     if (v === "wall") renderWall(grid);
@@ -320,7 +356,11 @@ export function bindViews(tools: HTMLElement) {
   office.subscribe(() => { if (cur === "wall" || pipGrid) renderWall(grid); });
   setInterval(() => { if (cur === "wall" || pipGrid) renderWall(grid); }, 1000); // ages tick between snapshots
   setInterval(() => { if (cur === "timeline") void timeline.load(); }, REFRESH_MS);
-  addEventListener("keydown", (e) => { if (e.key === "." && !ignoreKey(e)) office.freeze.toggle(); });
+  addEventListener("keydown", (e) => {
+    if (ignoreKey(e)) return;
+    if (e.key === ".") office.freeze.toggle();
+    else if (e.key === "1" || e.key === "2" || e.key === "3") setView((["", "wall", "timeline"] as const)[Number(e.key) - 1]);
+  });
   addEventListener("hashchange", () => { const v = parseLink(location.hash).v; if (v !== cur) setView(v); });
   const v0 = parseLink(location.hash).v;
   if (v0) setView(v0);

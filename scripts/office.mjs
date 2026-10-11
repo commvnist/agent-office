@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// agent-office CLI: status | start | restart | stop | doctor | init | config --validate | uninstall [--purge]. Usage: node scripts/office.mjs <cmd>
+// agent-office CLI: status | start | restart | stop | doctor | init | config --validate | history [--purge] | uninstall [--purge]. Usage: node scripts/office.mjs <cmd>
 import { readFileSync, existsSync, statSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { spawnSync, spawn } from "node:child_process";
 import { homedir } from "node:os";
@@ -127,6 +127,20 @@ const cmds = {
     } else row(true, "office.json absent (built-in roster)");
     return bad ? 1 : 0;
   },
+  async history() {
+    // The on-disk history: the event log (and its backup) plus the opt-in raw log (AGENT_OFFICE_LOG).
+    const files = ["events.jsonl", "events.jsonl.1", "events.log", "events.log.1"].map((f) => join(HOME, f)).filter((f) => existsSync(f));
+    if (process.argv.includes("--purge")) {
+      for (const f of files) rmSync(f, { force: true });
+      console.log(files.length ? `deleted ${files.join(", ")}` : "no stored history");
+      if (await health()) console.log("the running daemon still holds today's office in memory: node scripts/office.mjs restart clears it");
+      return 0;
+    }
+    if (!files.length) return console.log(`no stored history in ${HOME}`), 0;
+    for (const f of files) console.log(`${f}  ${Math.round(statSync(f).size / 1024)} KB`);
+    console.log("kept for office.json historyHours (default 168); delete now with: node scripts/office.mjs history --purge");
+    return 0;
+  },
   async uninstall() {
     if (process.argv.includes("--purge")) { rmSync(HOME, { recursive: true, force: true }); console.log(`deleted ${HOME}`); return 0; }
     console.log(`To uninstall:
@@ -138,5 +152,5 @@ const cmds = {
 };
 
 const fn = cmds[process.argv[2]];
-if (!fn) { console.error("usage: node scripts/office.mjs status|start|restart|stop|doctor|init [--force]|config --validate [file]|uninstall [--purge]"); process.exit(2); }
+if (!fn) { console.error("usage: node scripts/office.mjs status|start|restart|stop|doctor|init [--force]|config --validate [file]|history [--purge]|uninstall [--purge]"); process.exit(2); }
 process.exitCode = (await fn()) ?? 0;

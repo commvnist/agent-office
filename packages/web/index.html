@@ -11,7 +11,7 @@ if(!off&&q.get("private")!=="1"){q.set("private","1");ch=true}
 if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
 </script>
 <style>
-  :root{--bg:#14121f;--panel:#1d1a2e;--line:#322d4d;--fg:#e8e6f5;--mute:#aaa6c6;--acc:#7fe3ff;--glow:#7fe3ff;--ease:cubic-bezier(0.16,1,0.3,1);--glow2:#ff3ea5;--warn:#ffb86b;--warn-ink:color-mix(in srgb,var(--warn) 35%,var(--fg));--bad:#ff8a80;--bad-ink:color-mix(in srgb,var(--bad) 45%,var(--fg));--good-ink:color-mix(in srgb,var(--good) 45%,var(--fg));--good:#5be37d;--raise:#2a2645;--soft:#cfcde6;--off:#e0524a;--prompt:#ffd84a;--msg:#d58cff;--dir:1}
+  :root{--bg:#14121f;--panel:#1d1a2e;--line:#322d4d;--fg:#e8e6f5;--mute:#aaa6c6;--acc:#7fe3ff;--glow:#7fe3ff;--ease:cubic-bezier(0.16,1,0.3,1);--glow2:#ff3ea5;--warn:#ffb86b;--warn-ink:color-mix(in srgb,var(--warn) 35%,var(--fg));--bad:#ff8a80;--bad-ink:color-mix(in srgb,var(--bad) 45%,var(--fg));--good-ink:color-mix(in srgb,var(--good) 45%,var(--fg));--good:#5be37d;--raise:#2a2645;--soft:#cfcde6;--off:#e0524a;--prompt:#ffd84a;--msg:#d58cff;--dir:1;--pad:16px;color-scheme:dark;accent-color:var(--acc)}
   :root[dir=rtl]{--dir:-1}
   body{--sw:var(--swx,340px)}
   html,body{margin:0;height:100%;height:100dvh;background:var(--bg);color:var(--fg);font-family:var(--font,ui-monospace,Menlo,Consolas,monospace);font-size:calc(13px * var(--ts,1));line-height:var(--lh,normal);letter-spacing:var(--ls,normal);overflow:hidden}
@@ -21,17 +21,26 @@ if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
   [hidden]{display:none!important}
   #stage{position:absolute;inset-block:0;inset-inline:0 var(--sw)}
   #stage canvas{display:block}
-  #top{position:absolute;inset-inline:0 var(--sw);top:0;min-height:40px;display:flex;align-items:center;gap:16px;padding:env(safe-area-inset-top) 16px 0;padding-inline-end:max(16px,env(safe-area-inset-right));padding-inline-start:max(16px,env(safe-area-inset-left));box-sizing:border-box}
+  #top{position:absolute;inset-inline:0 var(--sw);top:0;min-height:40px;display:flex;align-items:center;gap:8px;padding:env(safe-area-inset-top) 16px 0;padding-inline-end:max(16px,env(safe-area-inset-right));padding-inline-start:max(16px,env(safe-area-inset-left));box-sizing:border-box}
   /* flat and sleek with one cyan detail: solid bar, hairline, a short lit segment; :root:root keeps this ahead of later chrome.css rules */
   /* not fully opaque: an opaque header over the canvas makes Chromium drop the canvas' bottom header-height rows from screenshots */
-  :root:root #top{background:color-mix(in srgb,var(--panel) 99%,transparent) linear-gradient(90deg,var(--glow),var(--glow)) left bottom/56px 1px no-repeat;border-bottom:1px solid var(--line);font-size:calc(11px * var(--ts,1));text-transform:uppercase;letter-spacing:.08em}
+  :root:root #top{background:color-mix(in srgb,var(--panel) 99%,transparent);border-bottom:1px solid var(--line);font-size:calc(11px * var(--ts,1));text-transform:uppercase;letter-spacing:.08em}
+  #top .chip{text-transform:none;letter-spacing:.02em}
   #top .wm{display:inline-flex;align-items:center;gap:8px;font-size:calc(12px * var(--ts,1));font-weight:600;letter-spacing:.16em;white-space:nowrap}
-  #top .live{width:6px;height:6px;border-radius:50%;background:var(--good);box-shadow:0 0 6px var(--good);flex:none}
+  #top .live{width:6px;height:6px;border-radius:50%;background:var(--good);flex:none}
+  #top .live:not(.off){display:none} /* B9: connected is the normal state, so only "offline" is drawn */
   #top .live.off{background:var(--off);width:auto;height:auto;padding:0 8px;color:#14121f;font-size:calc(11px * var(--ts,1))}
   #top .live.off::after{content:"offline"}
-  #stats{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--mute);font-variant-numeric:tabular-nums;letter-spacing:.06em}
+  #stats{flex:0 100 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--mute);font-variant-numeric:tabular-nums;letter-spacing:.06em}
   #stats:empty{display:none}
-  #badge{background:var(--warn);color:#14121f;font-weight:700;padding:4px 8px;border-radius:3px;letter-spacing:.06em;white-space:nowrap}
+  #badge{color:var(--fg);border-color:var(--acc);font-weight:700}
+  .chip{display:inline-flex;align-items:center;min-block-size:24px;box-sizing:border-box;border:1px solid var(--line);border-radius:12px;padding:0 8px;background:none;color:var(--mute);white-space:nowrap;font-size:calc(11px * var(--ts,1));letter-spacing:.06em}
+  button.chip{cursor:pointer} button.chip:hover{border-color:var(--glow);color:var(--fg)}
+  .chip:empty{display:none}
+  .grow{flex:1 1 0;min-width:0}
+  /* the one NEEDS YOU signal (A3/B6): a pill in the loudest status colour, glyph + word + name; LIVE chip during replay (Z6) */
+  #need{--st:var(--warn);flex:0 1 auto;min-width:18ch;max-width:40ch;min-block-size:24px;border:0;border-radius:12px;padding:0 12px;background:var(--st);color:#14121f;font-weight:700;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+  #need.live-chip{background:none;color:var(--fg);border:1px solid var(--acc)}
   #empty{display:none;position:absolute;inset-inline:0 var(--sw);top:36%;text-align:center;pointer-events:none}
   #empty .card{display:inline-block;max-width:min(420px,86%);box-sizing:border-box;padding:16px 20px;background:var(--panel);border:1px solid var(--line);border-radius:8px;color:var(--soft);line-height:1.6;pointer-events:auto}
   #empty h2{margin:0 0 8px;font-size:calc(15px * var(--ts,1));color:var(--fg)}
@@ -47,35 +56,44 @@ if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
   #handle::after{content:"";position:absolute;inset-block:0;inset-inline:11px;background:transparent}
   #handle:hover::after,#handle:focus-visible::after{background:var(--acc)}
   #pbody{flex:1;overflow-y:auto;min-width:0}
-  #tools{display:flex;flex-wrap:wrap;gap:4px;padding:8px 12px;border-bottom:1px solid var(--line)}
-  .b{background:color-mix(in srgb,var(--raise) 55%,transparent);border:1px solid var(--line);border-radius:2px;padding:4px 8px;cursor:pointer;transition:border-color .15s var(--ease),background-color .15s var(--ease),box-shadow .15s var(--ease)}
-  .b:hover,.b:focus-visible{border-color:var(--glow);box-shadow:0 0 0 1px color-mix(in srgb,var(--glow) 35%,transparent)} .b[aria-pressed=true]{background:var(--acc);color:var(--bg)}
+  .b{background:color-mix(in srgb,var(--raise) 55%,transparent);border:1px solid var(--line);border-radius:2px;padding:4px 8px;cursor:pointer;white-space:nowrap;transition:border-color .15s var(--ease),background-color .15s var(--ease),box-shadow .15s var(--ease)}
+  .b:hover,.b:focus-visible{border-color:var(--glow);box-shadow:0 0 0 1px color-mix(in srgb,var(--glow) 35%,transparent)} .b[aria-pressed=true]{background:var(--acc);color:var(--bg)} .b[aria-pressed=true]::before{content:"✓\a0"} /* B2: filled plus a non-colour mark */
   .b.sm{padding:0 8px;font-size:calc(11px * var(--ts,1));min-block-size:24px;min-inline-size:24px}
-  #tg{position:absolute;inset-inline-end:8px;top:6px;z-index:5}
-  body:not(.collapsed) #tg{inset-inline-end:calc(var(--swx,340px) + 8px)}
-  .note{padding:4px 12px;color:var(--mute);font-size:calc(11px * var(--ts,1));text-wrap:balance}
+  #tg{flex:none} #tg .cnt{display:inline-block;min-width:16px;padding:0 4px;border-radius:8px;background:var(--st-permission,var(--warn));color:#14121f;font-weight:700}
+  .note{padding:4px var(--pad);color:var(--mute);font-size:calc(11px * var(--ts,1));text-wrap:balance}
   .cnt{font-weight:400;font-variant-numeric:tabular-nums}
-  section h2,.sec>summary,#legend summary{margin:0;padding:12px 16px;font-size:calc(12px * var(--ts,1));letter-spacing:.1em;color:var(--mute);border-bottom:1px solid var(--line)}
-  .sec>summary,#legend summary{cursor:pointer}
-  #need{position:sticky;top:0;z-index:2;display:block;inline-size:100%;box-sizing:border-box;text-align:start;background:var(--warn);color:#14121f;border:0;padding:8px 16px;font-weight:700;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  #need.blocked{background:var(--bad)}
-  #radar.hot h2{color:var(--warn-ink)}
-  .rdw{display:flex;border-inline-start:3px solid var(--warn)}
-  .rdw.blocked{border-color:var(--bad)} .rdw.stuck{border-color:var(--mute)}
-  .rdw.t1{background:#ffb86b14} .rdw.t2{background:#ffb86b2e}
-  .rd{display:block;flex:1;min-width:0;text-align:start;background:none;border:0;padding:7px 16px;cursor:pointer}
-  .rd .why{display:block;color:var(--soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .rd:hover{background:var(--raise)}
-  .rdw .b{align-self:center;margin-inline-end:8px}
-  .k{color:var(--mute)} .pad{padding:8px 16px}
-  #banner .warn,#intro{padding:8px 16px;border-bottom:1px solid var(--line);color:var(--warn-ink);line-height:1.5}
-  #intro{color:var(--mute);font-size:calc(12px * var(--ts,1))}
-  #card{padding:12px 16px;border-bottom:1px solid var(--line);line-height:1.5}
+  /* B4: one heading token for every panel section */
+  section h2,.sec>summary{margin:0;padding:12px var(--pad);font-size:calc(12px * var(--ts,1));font-weight:600;letter-spacing:.1em;color:var(--mute);border-bottom:1px solid var(--line)}
+  .sec>summary{cursor:pointer}
+  #lists .sec>summary{padding-inline-start:calc(var(--pad) + 8px)}
+  #radar.hot h2{color:var(--fg)}
+  .stc{color:var(--st);font-weight:700;white-space:nowrap}
+  .rdw{display:flex;align-items:flex-start;border-inline-start:3px solid var(--st,var(--warn))}
+  .rdw.t1{background:color-mix(in srgb,var(--st) 8%,transparent)} .rdw.t2{background:color-mix(in srgb,var(--st) 16%,transparent)}
+  .rd,.dn{display:block;flex:1;min-width:0;text-align:start;background:none;border:0;padding:8px var(--pad);cursor:pointer;line-height:1.45}
+  .rd .why,.dn .why{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;color:var(--soft);word-break:break-word} /* A9: wraps to two lines; the full text is the row title */
+  .rd:hover,.dn:hover{background:var(--raise)}
+  .ra{display:flex;flex-direction:column;gap:4px;padding:8px 8px 8px 0}
+  .b.pri{border-color:var(--st,var(--acc));color:var(--fg)}
+  .dn{display:block;width:100%;border-inline-start:3px solid var(--st)}
+  .k{color:var(--mute)} .pad{padding:8px var(--pad)}
+  #banner .warn,#intro{padding:8px var(--pad);border-bottom:1px solid var(--line);color:var(--warn-ink);line-height:1.5}
+  #intro{color:var(--soft);font-size:calc(12px * var(--ts,1))}
+  .row{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}
+  #crumb{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:center;padding:8px var(--pad) 0;color:var(--mute)}
+  .crumb{background:none;border:0;padding:0;min-block-size:24px;color:var(--acc);text-decoration:underline;cursor:pointer}
+  #crumb b{color:var(--fg)}
+  #card{padding:8px var(--pad) 12px;border-bottom:1px solid var(--line);line-height:1.5}
+  #card:empty{display:none}
+  .chead{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline}
   #card .n{font-size:calc(15px * var(--ts,1));font-weight:700}
-  #card .al{margin:8px 0;padding:8px 8px;border-inline-start:3px solid var(--warn);background:#ffffff0d;font-weight:600} #card .al.blocked{border-color:var(--bad)}
+  #card .al{margin:8px 0;padding:8px;border-inline-start:3px solid var(--st);background:#ffffff0d;font-weight:600}
+  .kvs{display:grid;grid-template-columns:90px minmax(0,1fr);gap:4px 8px;margin:8px 0} .kvs .tx{word-break:break-word} /* B5: values never wrap under the key */
+  .tree{list-style:none;margin:8px 0;padding:8px;border:1px solid var(--line);border-radius:4px}
+  .tree li{padding-inline-start:calc(var(--d) * 16px);line-height:1.8} .tree li:not(:first-child)::before{content:"└\a0";color:var(--mute)}
   #card .full{margin-top:8px} #card .tx{white-space:pre-wrap;word-break:break-word;max-height:9em;overflow:auto;color:var(--soft)}
   #card summary{cursor:pointer;color:var(--mute)}
-  .sess{padding:8px 16px;border-bottom:1px solid var(--line);line-height:1.5}
+  .sess{padding:8px var(--pad);border-bottom:1px solid var(--line);line-height:1.5}
   .sess .pr{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--soft)}
   .sess .burn.hot{color:var(--warn-ink);font-weight:700}
   .sname{display:inline-flex;align-items:center;min-block-size:24px;background:none;border:0;padding:0;font-weight:700;cursor:pointer;text-decoration:underline;color:var(--acc)}
@@ -88,15 +106,13 @@ if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
   #files{padding:4px 0} .hf{display:flex;gap:8px;align-items:baseline;width:100%;text-align:start;background:none;border:0;border-inline-start:3px solid var(--pc,transparent);padding:4px 16px;cursor:pointer;min-width:0}
   .hf:hover{background:var(--raise)} .hf .dir{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap} .hf .n{color:var(--soft)}
   #roster .h{padding:8px 16px 4px;font-size:calc(12px * var(--ts,1));color:var(--mute);letter-spacing:.1em;text-transform:uppercase}
-  .r{display:block;width:100%;text-align:start;background:none;border:0;border-inline-start:3px solid transparent;padding:4px 16px;cursor:pointer}
+  .r{display:block;width:100%;text-align:start;background:none;border:0;border-inline-start:3px solid transparent;padding:4px var(--pad);cursor:pointer;min-block-size:24px}
   .r .sub{display:block;font-size:calc(11px * var(--ts,1));color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .r::before{content:"";display:inline-block;width:6px;height:6px;margin-inline-end:8px;border-radius:50%;background:var(--mute);vertical-align:middle}
-  .r.working::before{background:var(--good);box-shadow:0 0 6px var(--good);animation:led 2s ease-in-out infinite}
-  .r.waiting::before{background:var(--warn);box-shadow:0 0 6px var(--warn)} .r.blocked::before{background:var(--bad);box-shadow:0 0 6px var(--bad)}
-  @keyframes led{50%{opacity:.45}}
+  /* K3 + T7: an 8px dot in the shared status colour, no glow or pulse; the word in the row carries the state */
+  .r::before{content:"";display:inline-block;width:8px;height:8px;margin-inline-end:8px;border-radius:50%;background:var(--st,var(--mute));box-shadow:0 0 0 1px #0006;vertical-align:middle}
   .r:hover,.r.hov,.it.hov{background:var(--raise)} .r[aria-pressed=true]{border-color:var(--acc);background:var(--raise)}
-  .r.waiting{color:var(--warn-ink)} .r.blocked{color:var(--bad-ink)} .r.queued,.r.idle{color:var(--mute)}
-  #filters{display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line)}
+  .r.waiting,.r.blocked{color:color-mix(in srgb,var(--st) 45%,var(--fg))} .r.queued,.r.idle{color:var(--mute)}
+  #filters{display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding:8px var(--pad);border-bottom:1px solid var(--line)}
   #filters select{background:var(--raise);border:1px solid var(--line);border-radius:4px;max-width:120px;min-block-size:24px}
   #feed{max-height:45vh;overflow:auto;padding:4px 0}
   #feed h3{margin:8px 16px 4px;font-size:calc(12px * var(--ts,1));color:var(--mute);letter-spacing:.1em;text-transform:uppercase}
@@ -112,24 +128,24 @@ if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
   .it .mute{opacity:.75}
   .it.delegate{border-color:var(--acc)} .it.report{border-color:var(--good)} .it.prompt{border-color:var(--prompt)} .it.message{border-color:var(--msg)} .it.done{border-color:var(--good);color:var(--mute)}
   @keyframes in{from{opacity:0;transform:translateX(calc(10px * var(--dir)))}to{opacity:1;transform:none}}
-  .lg{padding:4px 16px;line-height:1.4} .lg b{display:block;color:var(--fg)} .lg span{color:var(--mute)}
-  #settings{position:absolute;inset-inline-end:calc(var(--swx,340px) + 8px);top:40px;z-index:6;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px;width:240px;display:flex;flex-direction:column;gap:8px}
-  .srow{display:flex;justify-content:space-between;align-items:center;gap:8px}
-  #modebar .rp{padding:8px 12px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;border-bottom:1px solid var(--line)}
+  #settings{position:absolute;inset-inline-end:calc(var(--sw) + 8px);top:calc(var(--top-h,40px) + 8px);z-index:6;border:1px solid var(--line);border-radius:6px;padding:12px;width:min(340px,92vw);display:flex;flex-direction:column;gap:8px}
+  /* C6/M3: one label column and one control column */
+  .srow{display:grid;grid-template-columns:minmax(0,1fr) 132px;align-items:center;gap:8px;cursor:pointer}
+  .srow>input,.srow>select{justify-self:stretch} .srow>input[type=checkbox]{justify-self:start;inline-size:18px;block-size:18px;margin:3px}
+  #modebar .rp{padding:8px var(--pad);display:flex;flex-wrap:wrap;gap:4px;align-items:center;border-bottom:1px solid var(--line)}
   .rp-ctl{display:flex;flex-wrap:wrap;gap:4px;align-items:center;width:100%} .rp-ctl input{flex:1;min-width:100px}
   select{background:var(--raise);border:1px solid var(--line);border-radius:4px;min-block-size:24px}
   input[type=range]{block-size:24px;margin:0}
-  input[type=checkbox]{margin:4px}
+  input[type=checkbox]{margin:4px;inline-size:16px;block-size:16px}
   summary{min-block-size:24px}
   /* privacy: blur free text in the DOM too (the canvas is blanked by ?private=1) */
-  body.priv #card .tx,body.priv #card .k+*,body.priv .it .tx,body.priv .cwd .k,body.priv #sessions .k,body.priv .rd .why,body.priv .sess .pr,body.priv .r .sub,body.priv .trow .tl,body.priv .tile,body.priv #files .hf{filter:blur(5px)}
+  body.priv #card .tx,body.priv #card .k+*,body.priv .dn .why,body.priv .it .tx,body.priv .cwd .k,body.priv #sessions .k,body.priv .rd .why,body.priv .sess .pr,body.priv .r .sub,body.priv .trow .tl,body.priv .tile,body.priv #files .hf{filter:blur(5px)}
   body.collapsed{--sw:0px} body.collapsed #side{visibility:hidden;border-inline-start:0} /* no transform: it would become the containing block of the pinned #spark strip */
-  body.presenter #side,body.presenter #tools,body.presenter #top,body.overlay #side,body.overlay #top,body.overlay #empty,body.overlay #tg{display:none}
+  body.presenter #side,body.presenter #top,body.overlay #side,body.overlay #top,body.overlay #empty{display:none}
   body.presenter,body.overlay,body.kiosk{--sw:0px}
-  body.kiosk #side,body.kiosk #top,body.kiosk #tg,body.kiosk #colony{display:none}
+  body.kiosk #side,body.kiosk #top,body.kiosk #colony{display:none}
   body.obs #ticker{display:none}
   body.obs-fixed #stage{inset:0 auto auto 0;width:var(--ow);height:var(--oh)}
-  body.presenter #tg{display:none}
   #px{position:fixed;top:10px;inset-inline-end:10px;z-index:30;opacity:.55}
   #px:hover,#px:focus-visible{opacity:1}
   body.presenter #px{display:block}
@@ -139,16 +155,17 @@ if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
   @media (max-width:800px){
     body,body.collapsed{--sw:0px}
     #side{width:min(var(--swx,340px),92vw);box-shadow:-8px 0 24px #0008}
-    body:not(.collapsed) #tg{inset-inline-end:8px} /* open drawer: the toggle sits in the drawer's own top row, not over the canvas header */
-    #tg{white-space:nowrap}
     #settings{inset-inline-end:8px}
-    #top{padding-inline-end:170px;gap:8px}
+    #top{flex-wrap:wrap;gap:4px 8px;padding-bottom:4px}
+    #need{order:9;flex:1 1 100%;max-width:none;min-block-size:32px} /* H2: its own row, name + state, tap to open */
     #top b{flex:none;overflow:visible}
     .wm2{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
     #top .wm{font-size:calc(14px * var(--ts,1))}
   }
+  @media (max-width:1500px){#top .wm{display:none}} /* a crowded header drops the wordmark first; the wall sign carries the name */
+  @media (max-width:800px){#nudge,.pl,.grow{display:none}}
   @media (pointer:coarse){
-    .b,.b.sm,#filters select,.r,.rd,.sname{min-block-size:44px;min-inline-size:44px}
+    .b,.b.sm,#filters select,.r,.rd,.dn,.sname,.crumb,.chip,#need{min-block-size:44px;min-inline-size:44px}
     #handle{width:24px;margin-inline-start:-12px}
   }
   @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important} .it,.hl,.toast{animation:fade .15s ease-out!important}} /* no movement, keep a fade (A16) */
@@ -157,19 +174,18 @@ if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
     .b[aria-pressed=true],.r[aria-pressed=true]{outline:2px solid Highlight}
     .rdw,.it,.r{border-inline-start-color:CanvasText}
     #top .live{forced-color-adjust:none}
-    #need{border:1px solid CanvasText}
+    #need,.chip{border:1px solid CanvasText}
   }
 </style></head>
 <body>
 <div id="stage" role="main" aria-label="Agent Office"></div>
-<div id="top"><span class="live" id="live" role="img" aria-label="connected" title="connected"></span><b class="wm">AGENT<span class="wm2"> OFFICE</span></b><span id="stats" role="img"></span><span id="badge" hidden></span><button id="stop-sample" class="b sm" type="button" hidden>Stop sample</button></div>
-<button id="tg" class="b" type="button" aria-controls="side" aria-expanded="true">Hide panel</button>
+<div id="top"><span class="live" id="live" role="img" aria-label="connected" title="connected"></span><b class="wm">AGENT<span class="wm2"> OFFICE</span></b><button id="need" type="button" hidden></button><span id="stats" role="img"></span><span id="badge" class="chip" hidden></span><button id="stop-sample" class="b sm" type="button" hidden>Stop sample</button><span class="grow"></span><button id="privchip" class="chip" type="button" aria-pressed="false"></button><span id="nudge" class="chip" hidden title="Office protocol: sessions get a short roster and report-format note when they start. Settings > Office protocol.">nudged</span><span id="top-tools"><div id="tools" role="toolbar" aria-label="Views and menus"></div></span><button id="tg" class="b" type="button" aria-controls="side" aria-expanded="true">Panel</button></div>
 <button id="fit" class="b sm" type="button" hidden>Fit all</button>
 <button id="px" class="b" type="button" hidden>Exit presenter (Esc / P)</button>
 <div id="empty"><div class="card" role="region" aria-label="Getting started"><h2>The office is empty</h2>
   Agent Office shows your Claude Code sessions as a small office: each session is a lead at the door, subagents sit at desks.<br>
   Run <code>npm run setup</code> once, then start Claude Code.<br>
-  <button id="empty-sample" class="b" type="button">Sample</button></div></div>
+  <button id="empty-sample" class="b" type="button">Play a sample</button> <span class="k">(fake data, to see how it looks)</span></div></div>
 <div id="colony" hidden role="group" aria-label="Agents"></div>
 <div id="hl"></div>
 <div id="fxbl"><div id="toasts" aria-live="polite"></div></div>
@@ -181,18 +197,20 @@ if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
 <aside id="side" aria-label="Agent Office panel">
   <div id="handle" role="separator" aria-orientation="vertical" aria-label="Resize panel (arrow keys)" tabindex="0"></div>
   <div id="pbody">
-    <button id="need" type="button" hidden></button>
-    <div id="tools" role="toolbar" aria-label="Tools"></div>
     <div id="modebar"></div>
     <div id="banner" role="status" hidden></div>
-    <section id="radar" aria-label="Needs you"><h2>NEEDS YOU <span class="cnt" id="n-radar"></span></h2><div id="radar-opts" class="note"></div><div id="radar-list" role="list"></div></section>
-    <div id="intro" hidden>Each Claude Code session is a lead at the door; subagents sit at desks. Speech bubbles are prompts, delegations and reports. Gold ring = waiting for you, red = blocked. Click anyone to inspect them. NEEDS YOU lists blocked agents, sessions waiting on a permission or input, and sessions silent too long.</div>
-    <section id="card-sec" aria-label="Selected" hidden><h2>SELECTED</h2><div id="card" aria-live="off"></div></section>
-    <div id="spark"></div><details class="sec" id="sec-sessions" open><summary>SESSIONS <span class="cnt" id="n-sess"></span></summary><div id="sessions"></div></details>
-    <details class="sec" id="sec-agents" open><summary>AGENTS <span class="cnt" id="n-agents"></span></summary><ul id="roster" role="list" aria-label="Agents"></ul></details>
-    <details class="sec" id="sec-files" open><summary>HOT FILES <span class="cnt" id="n-files"></span></summary><div id="files"></div></details>
+    <section id="radar" aria-label="Needs you"><h2>NEEDS YOU <span class="cnt" id="n-radar"></span></h2><div id="radar-list" role="list"></div><div id="radar-opts" class="note"></div></section>
+    <div id="intro" hidden>Each Claude Code session is a lead at the door; the helpers it delegates to sit at desks. NEEDS YOU lists what waits on you: click a row to see why and what to do. Help (?) explains the rest.</div>
+    <section id="card-sec" aria-label="Selected" hidden><nav id="crumb" aria-label="Scope"></nav><div id="card" aria-live="off"></div></section>
+    <section id="done-sec" aria-label="Recently done"><h2>RECENTLY DONE <span class="cnt" id="n-done"></span></h2><div id="done"></div></section>
     <details class="sec" id="sec-feed" open><summary>ACTIVITY <span class="cnt" id="n-feed"></span></summary><div id="filters"></div><div id="feed" role="list" aria-label="Activity feed"></div></details>
-    <details id="legend"></details>
+    <details class="sec" id="lists"><summary>LISTS: AGENTS, SESSIONS, FILES</summary>
+      <details class="sec" id="sec-agents" open><summary>AGENTS <span class="cnt" id="n-agents"></span></summary><ul id="roster" role="list" aria-label="Agents"></ul></details>
+      <details class="sec" id="sec-sessions" open><summary>SESSIONS <span class="cnt" id="n-sess"></span></summary><div id="sessions"></div></details>
+      <details class="sec" id="sec-files" open><summary>HOT FILES <span class="cnt" id="n-files"></span></summary><div id="files"></div></details>
+    </details>
+    <details class="sec" id="more"><summary>MORE: VIEWS, DISPLAY, EXPORT, SETTINGS</summary><div id="more-body"></div></details>
+    <div id="spark"></div>
   </div>
 </aside>
 <script type="module" src="./src/main.ts"></script>

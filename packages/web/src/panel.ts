@@ -32,9 +32,12 @@ function bindPanel() {
   let width = clamp(Number(store.get("panel.w")) || 340, PANEL_W.min, PANEL_W.max);
   // F16: the closed toggle carries the needs-you count so a phone user sees why to open it
   let n = 0; // the radar count ui.ts shows under NEEDS YOU, so the two cannot differ
+  // B8: one control, one name; a chevron for the direction and the needs-you count as a badge while closed
   const label = () => {
-    $("tg").textContent = isOpen ? t("hidePanel") : n ? `${t("panel")} (${t("needYou", { n })})` : t("panel");
-    $("tg").classList.toggle("hot", !isOpen && n > 0);
+    const tg = $("tg"), c = el("span", "cnt", String(n));
+    tg.replaceChildren(`${t("panel")} ${isOpen ? "▸" : "◂"}`, ...(!isOpen && n ? [" ", c] : []));
+    tg.setAttribute("aria-label", !isOpen && n ? `${t("panel")}, ${t("needYou", { n })}` : t("panel"));
+    tg.classList.toggle("hot", !isOpen && n > 0);
   };
   const apply = () => {
     body.classList.toggle("collapsed", !isOpen);
@@ -121,14 +124,38 @@ function applyType() {
   r.setProperty("--lh", String(clamp(Number(store.get("lh")) || 1.5, 1.2, 2)));
   r.setProperty("--ls", `${clamp(Number(store.get("ls")) || 0, 0, 0.12)}em`);
 }
+/** V2: what the office injects into Claude sessions, in one line per protocol (read-only; office.json decides). */
+export const PROTOCOL: Record<string, string> = {
+  office: "Sessions get a short roster, identity and report-format note when they start, and a spawn may be refused when no desk is free (enforceSeats).",
+  observe: "Nothing is injected and nothing is refused: the office only watches.",
+};
+export const protocolOf = () => office.source.liveEnvelope()?.config.protocol ?? office.getEnvelope()?.config.protocol ?? "office";
 function bindSettings(tools: HTMLElement) {
   const pop = $("settings");
-  const row = (label: string, ...c: Node[]) => { const d = el("label", "srow"); d.append(el("span", "", label), ...c); pop.append(d); };
+  pop.setAttribute("aria-labelledby", "set-h");
+  let box: HTMLElement = pop;
+  const sec = (name: string, line?: string) => { box = el("fieldset", "sgrp"); box.append(el("legend", "", name)); if (line) box.append(el("p", "k", line)); pop.append(box); return box; };
+  const row = (label: string, c: HTMLElement, hint = "") => {
+    const d = el("label", "srow");
+    d.append(el("span", "", label), c);
+    if (hint) { d.title = hint; c.title ||= hint; }
+    box.append(d);
+    return d;
+  };
   const range = (min: number, max: number, step: number, v: number, fn: (v: number) => void) => {
     const i = el("input"); i.type = "range"; i.min = String(min); i.max = String(max); i.step = String(step); i.value = String(v);
     i.addEventListener("input", () => fn(+i.value));
     return i;
   };
+  const check = (init: boolean, fn: (b: boolean) => void) => { const c = el("input"); c.type = "checkbox"; c.checked = init; c.addEventListener("change", () => fn(c.checked)); return c; };
+  const head = el("div", "dhead"), h = el("h2", "", "Settings");
+  h.id = "set-h";
+  const x = btn("×", "Close settings (Esc)", () => m.close(), "b sm");
+  x.setAttribute("aria-label", "Close settings");
+  head.append(h, x);
+  pop.append(head);
+
+  sec("Display");
   row("Text size", range(0.8, 2, 0.1, savedScale(), (v) => { store.set("scale", String(v)); applyScale(body.classList.contains("presenter") ? Math.max(1.5, v) : v); }));
   const font = el("select");
   for (const f of Object.keys(FONTS)) { const o = el("option", "", f); o.value = f; font.append(o); }
@@ -137,82 +164,92 @@ function bindSettings(tools: HTMLElement) {
   row("Font", font);
   row("Line height", range(1.2, 2, 0.1, clamp(Number(store.get("lh")) || 1.5, 1.2, 2), (v) => { store.set("lh", String(v)); applyType(); }));
   row("Letter spacing", range(0, 0.12, 0.01, clamp(Number(store.get("ls")) || 0, 0, 0.12), (v) => { store.set("ls", String(v)); applyType(); }));
-  const check = (init: boolean, fn: (b: boolean) => void) => { const c = el("input"); c.type = "checkbox"; c.checked = init; c.addEventListener("change", () => fn(c.checked)); return c; };
+
+  sec("Motion");
   const rm = store.get("motion");
-  row("Reduce motion", check(rm === "1" || (rm === null && matchMedia("(prefers-reduced-motion: reduce)").matches), (b) => { store.set("motion", b ? "1" : "0"); office.setReducedMotion(b); }));
-  row("Alert sound", check(prefs.sound.get(), prefs.sound.set));
-  row("Alert when focused", check(prefs.focused.get(), prefs.focused.set));
-  const ss = check(streamSafe(), setStreamSafe);
-  ss.disabled = F.streamSafe !== null; // ?streamsafe=0|1 in the URL decides
-  ss.title = "Names stay; prompts, paths and tool details are blurred or dropped. The canvas bubbles are blanked by Private (reload).";
-  row("Stream-safe (hide text in overlay, presenter, wall, kiosk)", ss);
-  row("Pause ambient motion", check(settings.ambientPaused, setAmbientPaused));
-  row("Sound (off by default)", check(chimePrefs.on.get(), chimePrefs.on.set));
+  row("Reduce motion", check(rm === "1" || (rm === null && matchMedia("(prefers-reduced-motion: reduce)").matches), (b) => { store.set("motion", b ? "1" : "0"); office.setReducedMotion(b); }), "Follows the system setting until you change it here");
+  row("Pause ambient motion", check(settings.ambientPaused, setAmbientPaused), "Stops dust, steam, strolls and other loops; real activity still moves");
+
+  sec("Sound", "Off by default. Needs one click on the page first (browser rule).");
+  row("Chimes", check(chimePrefs.on.get(), chimePrefs.on.set), "A short tone when something needs you, gives up or finishes");
   row("Chime volume", range(0, 100, 5, chimePrefs.volume, (v) => { chimePrefs.volume = v; }));
-  row("Mute chimes", check(chimePrefs.mute.get(), chimePrefs.mute.set));
-  pop.append(btn("Test chime", "Plays one short tone (needs a click first: browser autoplay rule)", testChime));
+  row("Silence chimes for now", check(chimePrefs.mute.get(), chimePrefs.mute.set), "Keeps your chime choice but plays nothing until you untick this");
+  row("Beep when chimes are off", check(prefs.sound.get(), prefs.sound.set), "One plain beep per alert, for when chimes are off");
+  box.append(btn("Test chime", "Plays one short tone", testChime));
+
+  sec("Notifications");
+  const dn = btn("Enable desktop notifications", "Asks the browser for permission", async (b) => { b.textContent = `Notifications: ${await enableDesktop()}`; });
+  if (prefs.desktop.get()) dn.textContent = "Notifications: on";
+  box.append(dn);
+  row("Alert while this tab is focused", check(prefs.focused.get(), prefs.focused.set));
   const sp = el("input");
   sp.type = "number"; sp.min = "0"; sp.step = "10000"; sp.placeholder = String(spendLimit() || "off");
   sp.value = store.get("spend") ?? "";
-  sp.title = "Notify once per session when new input + output tokens (cache excluded) pass this. 0 or empty uses office.json spendAlarmTokens.";
   sp.addEventListener("change", () => store.set("spend", String(Math.max(0, Math.floor(Number(sp.value)) || 0))));
-  row("Spend alarm (tokens)", sp);
-  const dn = btn("Enable desktop notifications", "Asks the browser for permission", async (b) => { b.textContent = `Notifications: ${await enableDesktop()}`; });
-  if (prefs.desktop.get()) dn.textContent = "Notifications: on";
-  pop.append(dn);
+  row("Spend alarm (tokens)", sp, "Notify once per session when new input + output tokens (cache excluded) pass this. 0 or empty uses office.json spendAlarmTokens.");
   // #188: per-session mute / 30 min snooze, rebuilt each time the dialog opens
-  const mu = el("div");
-  pop.append(mu);
+  const mu = el("div", "mutes");
+  box.append(mu);
   const fillMutes = () => {
     mu.replaceChildren(...(office.sessions().length ? [] : [el("div", "k", "No sessions to mute yet: they appear here once Claude Code is running.")]), ...office.sessions().map((s) => {
       const r = el("div", "srow"), on = mutes.active(s.id);
       const set = (until: number) => () => { mutes.set(s.id, until); fillMutes(); };
-      r.append(el("span", "", s.project));
+      const name = el("span", "", s.project);
+      name.title = s.project;
+      r.append(name);
+      const ctl = el("span", "sctl");
       // the visible label repeats per session, so the accessible name carries the project
       const named = (b: HTMLButtonElement) => (b.setAttribute("aria-label", `${b.textContent} ${s.project}`), b);
-      if (on) r.append(named(btn("Unmute", "Alert for this session again", set(0), "b sm")));
-      else r.append(named(btn("Snooze 30m", "No alerts from this session for 30 minutes", set(Date.now() + 30 * 60_000), "b sm")),
+      if (on) ctl.append(named(btn("Unmute", "Alert for this session again", set(0), "b sm")));
+      else ctl.append(named(btn("Snooze 30m", "No alerts from this session for 30 minutes", set(Date.now() + 30 * 60_000), "b sm")),
         named(btn("Mute", "No alerts from this session", set(Number.MAX_SAFE_INTEGER), "b sm")));
+      r.append(ctl);
       return r;
     }));
   };
+
+  // I1-I3: two switches that differ in scope, one line each
+  sec("Privacy");
+  row("Private, everywhere", check(office.source.private, (b) => office.source.setPrivate(b)), "Reloads the page");
+  box.append(el("p", "k", "Hides prompts, commands, paths and narration on every surface, the canvas included. Reloads the page."));
+  const ss = check(streamSafe(), setStreamSafe);
+  ss.disabled = F.streamSafe !== null; // ?streamsafe=0|1 in the URL decides
+  row("Stream-safe", ss);
+  box.append(el("p", "k", "Hides the same text only while showing others: Present, Kiosk, the Sessions and History views and the stream overlay."));
+  const dp = el("p", "k");
+  box.append(dp);
+
+  const proto = sec("Office protocol");
+  const pl = el("p", "");
+  proto.append(pl, el("p", "k", "Read-only here: set \"protocol\": \"office\" or \"observe\" in office.json."));
+  const fillInfo = () => {
+    const p = protocolOf();
+    pl.replaceChildren(el("b", "", p === "observe" ? "observe" : "office (nudged)"), document.createTextNode(`: ${PROTOCOL[p] ?? PROTOCOL.office}`));
+    dp.textContent = office.privacy ? "The daemon is blanking text for everyone (office.json privacy)." : "";
+  };
+
   pop.hidden = true;
-  const open = btn("Settings", "Text size, font, motion, alerts, sound, mute sessions", () => m.toggle());
-  open.setAttribute("aria-haspopup", "dialog");
-  group(tools, "Setup").append(open);
-  const m = modal(pop, open, fillMutes);
+  const openBtn = btn("⚙", "Settings: display, motion, sound, notifications, privacy, office protocol", () => m.toggle());
+  openBtn.setAttribute("aria-haspopup", "dialog");
+  openBtn.setAttribute("aria-label", "Settings");
+  group(tools, "Setup").append(openBtn);
+  const m = modal(pop, openBtn, () => { fillMutes(); fillInfo(); });
   register("Open Settings", () => m.open());
-  bindPalette(tools);
+  bindPalette();
   // apply persisted choices
   if (rm !== null) office.setReducedMotion(rm === "1");
   applyType();
   applyScale(OVERLAY ? Math.max(1.6, savedScale()) : savedScale());
 }
 
-// ---- legend + first-run intro ----
-const LEGEND: [string, string][] = [
-  ["green / red dot", "Top bar: connected to the daemon / not connected."],
-  ["gold ring + !", "A session is waiting for you (permission or input)."],
-  ["red ring, flag, ! tag", "An agent reported BLOCKED; its desk is held until you look."],
-  ["? on a bubble", "Attribution is a guess: several or no matching delegations."],
-  ["? over a queued agent", "Waiting in line for a free seat."],
-  ["...", "Thinking: seated, between tools."],
-  ["bubble badges", "Chip on a bubble: prompt, delegate, report, tool, message."],
-  ["gold name", "Session lead; \"waiting on\" lists its active helpers."],
-  ["board on the wall", "Tasks: pending, running, done, blocked."],
-  ["thin line", "Lead to active helper; highlighted for the selected agent's chain."],
-  ["Frozen · N new", "The view is held on purpose (key .); Resume applies the newest state."],
-  ["spark", "Two agents edited the same file: a possible conflict."],
-];
-function bindLegend() {
-  const d = $("legend");
-  d.append(el("summary", "", "LEGEND"));
-  for (const [k, v] of LEGEND) { const r = el("div", "lg"); r.append(el("b", "", k), el("span", "", v)); d.append(r); }
-  // one intro paragraph: shown on first run with "Got it" (persisted), then only via the Intro button
+// ---- first-run intro (B3): one short paragraph and its own "Got it" row; Help keeps the full explainer and the legend ----
+function bindIntro() {
   const intro = $("intro");
   if (store.get("seen") === "1") return;
   intro.hidden = false;
-  intro.append(btn("Got it", "Hide the intro; the Intro button brings it back", () => { intro.hidden = true; store.set("seen", "1"); }));
+  const r = el("div", "row");
+  r.append(btn("Got it", "Hide this; Help (?) explains everything again", () => { intro.hidden = true; store.set("seen", "1"); }, "b sm"));
+  intro.append(r);
 }
 
 // ---- connection banner ----
@@ -235,6 +272,9 @@ function banner() {
   if (cfgErr) msgs.push(`office.json is invalid, using the last good config: ${cfgErr.message}`);
   const cfgWarn = office.source.liveEnvelope()?.configWarning;
   if (cfgWarn) msgs.push(cfgWarn);
+  // Z7 (Agent A): the daemon marks an envelope degraded instead of dropping it silently
+  const deg = (office.source.liveEnvelope() as { degraded?: boolean | string } | null)?.degraded;
+  if (deg) msgs.push(typeof deg === "string" ? deg : "The office is too large to stream in full: some detail is missing from this view.");
   if (s === "retrying") {
     if (!probing) { probing = true; void probe().then((m) => { probed = m; probing = false; banner(); }); }
     staleSince ||= Date.now();
@@ -243,7 +283,7 @@ function banner() {
   staleEl.hidden = !staleSince;
   if (staleSince) staleEl.textContent = t("stale", { time: new Date(staleSince).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) });
   if (s === "connecting") msgs.push("Connecting to the daemon…");
-  if (!sim && s === "live" && e && !Object.keys(e.state.sessions).length) msgs.push("No sessions yet. Start Claude Code with --plugin-dir plugin and send a prompt; hooks load at startup, so restart any claude that was already running.");
+
   const sig = `${demo}\n${msgs.join("\n")}`;
   if (b.dataset.sig === sig) return;
   b.dataset.sig = sig;
@@ -271,14 +311,16 @@ export function bindPanelChrome(tools: HTMLElement) {
   const pr = btn("Present", "Presenter mode (P): big captions, panel hidden", () => {});
   pr.id = "pr";
   pr.setAttribute("aria-pressed", "false");
-  group(tools, "View").append(pr);
+  const overlay = () => open(`${location.pathname}?overlay=1`, "_blank", "noopener");
+  group(tools, "Display").append(pr, btn("Stream overlay", "Open the transparent stream overlay (OBS browser source) in a new window; text is hidden there unless ?streamsafe=0", overlay));
+  register("Display: Stream overlay (new window)", overlay);
   bindPresenter();
-  register("View: Present", () => setPresenter(!body.classList.contains("presenter")));
+  register("Display: Present (P)", () => setPresenter(!body.classList.contains("presenter")));
   bindViews(tools);
   bindKiosk(tools);
   bindSettings(tools);
   bindKeys(tools);
-  bindLegend();
+  bindIntro();
   office.connection.onChange(() => { $("live").classList.toggle("off", office.connection.state !== "live"); banner(); });
   office.subscribe(banner);
   office.source.onMode(banner);

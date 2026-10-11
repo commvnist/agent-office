@@ -23,3 +23,14 @@ test("shadeTo blends toward the tint", () => {
   assert.equal(shadeTo("#ffffff", "#000000", 0.5), "#808080");
   assert.equal(shadeTo("#102030", "#abcdef", 0), "#102030");
 });
+
+test("ledger: newest first, mark by outcome, clipped, privacy-blank falls back to the task then the outcome", async () => {
+  const { ledgerLines } = await import("./board.ts");
+  const o = (outcome: "done" | "blocked" | "partial", text: string, task = "", project = "web") => ({ session: "s1", project, agentId: "a", outcome, text, task, t: 1 });
+  assert.deepEqual(ledgerLines([o("done", "shipped cart"), o("blocked", "")], 5, 40), ["✓ web: shipped cart", "x web: blocked"]);
+  assert.deepEqual(ledgerLines([o("partial", "", "write tests")], 5, 40), ["~ web: write tests"]);
+  assert.equal(ledgerLines([o("done", "a very long result that will not fit")], 5, 14)[0], "✓ web: a very…");
+  assert.equal(ledgerLines([o("done", "x"), o("done", "y")], 1, 40).length, 1);
+  assert.deepEqual(ledgerLines(undefined, 3, 40), []);
+  assert.deepEqual(ledgerLines([o("done", "DONE: invoices migrated"), o("blocked", "blocked:  needs a key")], 5, 40), ["✓ web: invoices migrated", "x web: needs a key"]); // the mark already says it
+});

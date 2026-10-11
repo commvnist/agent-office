@@ -41,12 +41,23 @@ function stop() {
   if (!office.source.liveEnvelope()) office.source.push(simEnvelope(emptyState(), FALLBACK_CFG, `sim-${Date.now()}`, 0));
 }
 
+/** "back to live" (the LIVE chip during replay/sample, a NEEDS YOU row): stop the simulation and stay live. */
+export function backToLive() {
+  if (office.source.mode === "live") return;
+  manual = true;
+  stop();
+}
+
 // ---- sample data ----
 /** The banner's Stop and the Sample toggle: stop and do not restart it by itself. */
 export function stopSample() {
   if (office.source.mode !== "demo") return;
   manual = true;
   stop();
+}
+/** Sample on / off: the empty-state card and the palette (it is not in the toolbar: it only makes sense in an empty office). */
+export function toggleSample() {
+  if (office.source.mode === "demo") stopSample(); else { manual = false; startDemo(); }
 }
 function startDemo() {
   begin("demo", new Playback(cfgNow(), demoScript()));
@@ -103,30 +114,30 @@ async function startReplay(since: number, until: number, status: HTMLElement, on
   }
 }
 
+let statusEl: HTMLElement | null = null, onLoadedFn = () => {};
+/** History view's "Replay…" (open the range picker) and "Replay this range" (X3). */
+export function toggleReplay(open?: boolean) { const box = $("rp-box"); box.hidden = open === undefined ? !box.hidden : !open; if (!box.hidden) box.scrollIntoView({ block: "nearest" }); }
+export function replayRange(since: number, until: number) {
+  toggleReplay(true);
+  if (statusEl) void startReplay(Math.floor(since), Math.ceil(until), statusEl, onLoadedFn);
+}
+
 export function bindModes(tools: HTMLElement, bar: HTMLElement) {
   const badge = $("badge");
   $("stop-sample").addEventListener("click", stopSample);
   let ctl: HTMLElement | null = null;
-  let sampleBtn: HTMLElement | null = null;
   office.source.onMode((m) => {
     badge.hidden = m === "live";
     badge.textContent = m === "demo" ? "SAMPLE DATA" : "REPLAY";
     $("stop-sample").hidden = m !== "demo"; // keyboard users reach Stop here even while the panel is closed
     if (ctl) ctl.hidden = m !== "replay";
-    sampleBtn?.setAttribute("aria-pressed", String(m === "demo"));
+    if (m === "replay") $("rp-box").hidden = false;
   });
 
-  const data = group(tools, "Data"), out = group(tools, "Output"), setup = group(tools, "Setup");
-  sampleBtn = btn("Sample", "Play a built-in scenario with fake data", () => {
-    if (office.source.mode === "demo") stopSample(); else { manual = false; startDemo(); }
-  });
-  sampleBtn.id = "sample"; // the empty-state card's Sample button clicks this
-  sampleBtn.setAttribute("aria-pressed", "false");
-  const toggleReplay = () => { const box = $("rp-box"); box.hidden = !box.hidden; };
-  data.append(sampleBtn, btn("Replay", "Replay stored history through the office: pick a time range, then scrub", toggleReplay));
-  register("View: Replay", toggleReplay);
-  register("Data: Sample data on / off", () => sampleBtn!.click());
-  setup.append(btn(office.source.private ? "Private: on" : "Private", "Hide free text (prompts, tool details, paths). Reloads the page.", () => office.source.setPrivate(!office.source.private)));
+  const out = group(tools, "Export");
+  register("History: Replay a time range", () => toggleReplay(true));
+  register("Data: Sample data on / off", toggleSample);
+  register("Privacy: Private on / off (reloads)", () => office.source.setPrivate(!office.source.private));
   const note = (s: string) => { $("rec-note").textContent = s; };
   const recBtn = btn("Record", "Record the office canvas to a .webm file", (b) => {
     const s = toggleRecording();
@@ -154,22 +165,25 @@ export function bindModes(tools: HTMLElement, bar: HTMLElement) {
   const linkBtn = btn("Copy link", "Copy a URL that restores the selection, scope, view and filters. Nothing is sent anywhere.", async () => note(await copyLink()));
   out.append(recBtn, gifBtn, linkBtn, btn("Share", "Download a PNG poster: office snapshot, counts and names (speech bubbles in the snapshot can show text; Private blanks them)", sharePoster),
     btn("Recap", "Download a \"Today in the office\" PNG: sessions, busiest hour, longest tool, top files (names only when Private)", (b) => void recap(b)));
-  register("Output: Copy link", () => linkBtn.click());
-  register("Output: Record GIF (arm, then run again to save)", () => gifBtn.click());
-  register("Output: Cancel GIF buffer", () => { cancelGif(); gifBtn.textContent = "Record GIF"; gifBtn.setAttribute("aria-pressed", "false"); note("GIF buffer cleared"); });
-  register("Output: Record video (.webm)", () => recBtn.click());
-  register("Output: Share poster (PNG)", () => void sharePoster());
-  register("Output: Recap (PNG)", () => void recap());
+  register("Export: Copy link", () => linkBtn.click());
+  register("Export: Record GIF (arm, then run again to save)", () => gifBtn.click());
+  register("Export: Cancel GIF buffer", () => { cancelGif(); gifBtn.textContent = "Record GIF"; gifBtn.setAttribute("aria-pressed", "false"); note("GIF buffer cleared"); });
+  register("Export: Record video (.webm)", () => recBtn.click());
+  register("Export: Share poster (PNG)", () => void sharePoster());
+  register("Export: Recap (PNG)", () => void recap());
   register("Setup: Private on / off", () => office.source.setPrivate(!office.source.private));
   document.addEventListener("ao-rec-stop", () => { recBtn.textContent = "Record"; $("rec-note").textContent = "saved"; });
-  const noteEl = el("div", "note");
+  const noteEl = el("span", "note chip");
   noteEl.id = "rec-note";
+  noteEl.setAttribute("role", "status");
   noteEl.title = "Recordings include speech bubbles, which can contain prompts. Turn Private on to hide them.";
-  tools.after(noteEl);
+  badge.after(noteEl); // a header chip: the Export menu closes on click, so its result shows here
 
   // replay bar
   const box = el("div", "rp");
   box.id = "rp-box";
+  box.setAttribute("role", "region");
+  box.setAttribute("aria-label", "Replay");
   box.hidden = true;
   const status = el("span", "k");
   const when = (label: string) => {
@@ -233,14 +247,18 @@ export function bindModes(tools: HTMLElement, bar: HTMLElement) {
     push();
   });
   c.append(play, ...speeds, next, end, mark, pos, slider, marksList, what,
-    btn("Exit", "Back to live", () => { manual = true; stop(); }));
+    btn("Back to live", "Stop the replay and show the live office", backToLive));
   const save = (name: string, fmt: () => string, type: string) => btn(name, "Download the loaded events as served (free text already removed when Private is on)", () => {
     if (loaded.length) download(new Blob([fmt()], { type }), `agent-office-history-${Date.now()}.${name === "CSV" ? "csv" : "jsonl"}`);
   });
   const exp = [save("JSONL", () => toJsonl(loaded), "application/x-ndjson"), save("CSV", () => toCsv(loaded), "text/csv")];
   exp.forEach((b) => { b.disabled = true; });
   const ms = (i: HTMLInputElement) => (i.value ? new Date(i.value).getTime() : 0);
-  box.append(sel, fromW, toW, btn("Load", "Load stored events for the range", () =>
+  statusEl = status;
+  onLoadedFn = () => exp.forEach((b) => { b.disabled = !loaded.length; });
+  const closeBox = btn("×", "Close the replay picker", () => { box.hidden = true; }, "b sm");
+  closeBox.setAttribute("aria-label", "Close the replay picker");
+  box.append(el("b", "", "Replay"), closeBox, sel, fromW, toW, btn("Load", "Load stored events for the range", () =>
     void startReplay(ms(from) || Date.now() - Number(sel.value), ms(to), status, () => exp.forEach((b) => { b.disabled = !loaded.length; }))), ...exp, status, c);
   bar.append(box);
 

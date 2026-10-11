@@ -113,7 +113,11 @@ function events(p: Record<string, unknown>, session: string, agentId: string | u
     case "Stop":
       return [{ type: "turn_end", session, t }];
     case "Notification":
-      return [{ type: "waiting", session, text: clip(p.message, 80) || undefined, ...(p.notification_type === "idle_prompt" ? { idle: true } : {}), t }];
+    {
+      // Known notification types decide the kind; otherwise the reducer reads it from the text.
+      const kind = p.notification_type === "permission_prompt" ? "permission" : p.notification_type === "idle_prompt" ? "turn" : undefined;
+      return [{ type: "waiting", session, text: clip(p.message, 80) || undefined, ...(kind === "turn" ? { idle: true } : {}), kind, t }];
+    }
     case "PostToolUse": {
       const r = isObj(p.tool_response) ? p.tool_response : {};
       if (r.success === false || r.is_error === true)

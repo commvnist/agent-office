@@ -2,6 +2,7 @@ import { Application, Container, Graphics, Sprite, Text } from "pixi.js";
 import { buildLayout, deskCount, emptyFun, findPath, seatTile, standNear, stepFun, leadId, childrenOf, parentChain, type FunEvent, type FunMemory, type Layout, type OfficeConfig, type OfficeState, type Tile } from "@agent-office/core";
 import { Actor, T, feet, layoutBubbles, layoutTags, setBubbleBlank, setFloorBounds } from "./actor.ts";
 import { hideText } from "./stream.ts";
+import { dropOutcome } from "./triage.ts";
 import { Scene, type SeatState } from "./scene.ts";
 import { courierTex, lookFor, whiteTex } from "./sprites.ts";
 import { setRoles } from "./theme.ts";
@@ -32,8 +33,7 @@ const IDLE_FPS = 15;
 const ACTIVE_HOLD_MS = 1000; // a frame with motion or a bubble keeps the full frame rate this long
 const HUDDLE_RADIUS = 10; // tiles: seated burst members this close to the board join the huddle
 const TICKET_HOLD_MS = 600, DOT_HOLD_MS = 1000; // a landed ticket rests on the desk; reduced motion shows a still dot instead of the flight
-const MAX_MOVERS = 3, MAX_RINGS = 6, MAX_RIPPLES = 4; // overlays: <=3 tickets in flight, <=6 rings (<=4 of them desk ripples)
-const RIPPLE_GAP_MS = 3000, RIPPLE_MS = 1200;
+const MAX_MOVERS = 3, MAX_RINGS = 6; // overlays: <=3 tickets in flight, <=6 rings
 const GATHER_MS = 400; // arrival / leaving beat at the door
 const DOOR_R = T * 1.5, LINE_SHOWN = 6;
 const FRESH_QUIET_MS = 1500; // after a first snapshot the existing crowd is history, not news: no juice
@@ -132,7 +132,7 @@ type Mover = { s: Sprite; kind: Ticket["kind"] | "spark"; a: Actor; b: Actor; li
 const movers: Mover[] = [];
 const courier = { s: null as Sprite | null, path: [] as Tile[], x: 0, y: 0, wait: 0, back: false, last: Date.now() };
 const moverPool: Sprite[] = [];
-type Ring = { g: Graphics; x: number; y: number; life: number; delay: number; ms: number; rip: boolean };
+type Ring = { g: Graphics; x: number; y: number; life: number; delay: number; ms: number };
 const rings: Ring[] = [];
 const ringPool: Graphics[] = [];
 const GOLD = 0xffe08a;
@@ -172,7 +172,19 @@ const fxb = new FxBudget();
 const fxk = (cls: FxClass, key: string) => fxb.take(cls, key, Date.now());
 const nextSlot = (id: string) => { const n = visitors.get(id) ?? 0; visitors.set(id, n + 1); return n; };
 const nameOf = (id: string) => meta.get(id)?.name ?? actors.get(id)?.label ?? id.replace(/^lead:/, "");
-const gold = (a: Actor) => { if (a.lead && a.alert !== "blocked") a.tag.style.fill = GOLD; };
+const lastSeat = new Map<string, string>(); // agent id -> its last desk; dropped once its outcome is filed
+let outT = 0; // newest outcome already filed
+/** New outcomes since the last snapshot leave a filed card on the reporting helper's desk (history on load is not news). */
+function fileOutcomes(outs: readonly { agentId: string; outcome?: string; t: number }[], fresh: boolean) {
+  if (!fresh) for (const o of outs) {
+    if (o.t <= outT) break; // newest first
+    const seat = lastSeat.get(o.agentId);
+    if (seat) { scene.fileOutcome(seat, o.outcome ?? "done"); lastSeat.delete(o.agentId); }
+  }
+  if (outs[0]) outT = Math.max(outT, outs[0].t);
+  if (lastSeat.size > 512) lastSeat.clear(); // shortcut: bounded by wiping; agents re-register on the next snapshot
+}
+const gold = (a: Actor) => { if (a.lead && !a.alert) a.tag.style.fill = GOLD; }; // a lead in an alert keeps its status colour (theme.STATUS)
 const nearOf = (t: Actor) => standNear(layout, t.home ?? t.tile(), nextSlot(t.id));
 
 const LEGIBLE = 2; // screen px per art px kept while the office grows; below that the world overflows and is panned instead
@@ -274,26 +286,18 @@ const puff = (x: number, y: number, tint = 0xe8ecff) => {
 
 /** One-shot expanding ring (0.5 -> 2.2 scale over `ms`), pooled; `delay` staggers a double pulse. */
 function pulse(x: number, y: number, tint: number, delay = 0, ms = 450) {
-  if (burstAllowed()) addRing(x, y, tint, delay, ms, false);
+  if (burstAllowed()) addRing(x, y, tint, delay, ms);
 }
 /** Desk ripple on a real tool start: one per desk per 3 s, <= 4 live; reduced motion shows a single static half-strength frame. */
-const ripAt = new Map<string, number>();
-function ripple(a: Actor, now: number) {
-  if (now - (ripAt.get(a.id) ?? -1e9) < RIPPLE_GAP_MS) return;
-  let n = 0;
-  for (const r of rings) if (r.rip) n++;
-  if (n >= MAX_RIPPLES) return;
-  ripAt.set(a.id, now);
-  addRing(a.pos.x, a.pos.y - 4, 0x7fe3ff, 0, settings.reducedMotion ? 160 : RIPPLE_MS, true);
-}
-function addRing(x: number, y: number, tint: number, delay: number, ms: number, rip: boolean) {
+// no per-tool ripples: 'working' is shown by the lit screen at the desk, not by a mark on the floor (critique A4/T7)
+function addRing(x: number, y: number, tint: number, delay: number, ms: number) {
   if (rings.length >= MAX_RINGS) return;
   let g = ringPool.pop();
   if (!g) { g = new Graphics().circle(0, 0, 8).stroke({ width: 1, color: 0xffffff }).circle(0, 0, 6).stroke({ width: 1, color: 0xffffff, alpha: 0.35 }); fx.addChild(g); }
   g.tint = tint;
   g.visible = delay === 0;
   g.position.set(x, y);
-  rings.push({ g, x, y, life: 0, delay, ms, rip });
+  rings.push({ g, x, y, life: 0, delay, ms });
 }
 
 /** Send a paper ticket (or conflict spark) from a's current spot to b; reduced motion lands at once and shows a still dot. */
@@ -434,7 +438,7 @@ function syncActors() {
     if (s.busyAt && lastBusy.get(id) !== s.busyAt) {
       lastBusy.set(id, s.busyAt);
       a.hit(s.busyAt);
-      if (s.doing) { a.tool(clip(`${s.doing}${s.detail ? " " + s.detail : ""}`, 44)); if (!quiet) ripple(a, Date.now()); }
+      if (s.doing) a.tool(clip(`${s.doing}${s.detail ? " " + s.detail : ""}`, 44));
     }
     if (s.waiting && a.emote?.e !== "question") a.showEmote("question", 3000);
     if (s.waiting && s.waitingText && !a.speech) a.speak(s.waitingText, "say", 5000);
@@ -444,6 +448,7 @@ function syncActors() {
   for (const ag of Object.values(state.agents)) {
     live.add(ag.id);
     blocked.delete(ag.id);
+    if (ag.seat) lastSeat.set(ag.id, ag.seat.id); // remembered past the agent's stop, so its result can be filed on that desk
     const name = uniq.get(ag.id) ?? baseName(ag);
     setRoles([ag.role]); // first-seen order keeps role colours and badges palette-stable
     meta.set(ag.id, { role: ag.role, type: ag.agentType, name, session: ag.session });
@@ -466,14 +471,15 @@ function syncActors() {
     if (ag.busyAt && lastBusy.get(ag.id) !== ag.busyAt) {
       lastBusy.set(ag.id, ag.busyAt);
       a.hit(ag.busyAt);
-      if (ag.doing) { a.tool(clip(`${ag.doing}${ag.detail ? " " + ag.detail : ""}`, 44)); if (Date.now() >= freshUntil) ripple(a, Date.now()); }
+      if (ag.doing) a.tool(clip(`${ag.doing}${ag.detail ? " " + ag.detail : ""}`, 44));
     }
   }
   // lead "waiting on <names>" (#85)
   for (const s of sessions) {
     const id = leadId(s.id), n = kids.get(id), a = actors.get(id)!;
     // lead desks are two tiles apart: with several leads the second line would collide, so it shows for a lone lead only (the detail lives in NEEDS YOU and on selection)
-    const want = n && sessions.length < 2 ? `${clip(meta.get(id)?.name ?? s.project, 10)}\n> ${clip(n[0], 6)}${n.length > 1 ? ` +${n.length - 1}` : ""}` : meta.get(id)?.name ?? s.project;
+    const nm = hideText() ? `session ${sessions.indexOf(s) + 1}` : meta.get(id)?.name ?? s.project; // text hidden (stream-safe, private): no project names on screen (critique I2)
+    const want = n && sessions.length < 2 ? `${clip(nm, 10)}\n> ${clip(n[0], 6)}${n.length > 1 ? ` +${n.length - 1}` : ""}` : nm;
     if (a.label !== want) { a.setLabel(want); gold(a); }
   }
   liveIds = live;
@@ -582,7 +588,7 @@ function exec(a: Action, now: number) {
         t.glance(f.pos.x); // the lead looks up as the report comes in
         const near = nearOf(t);
         f.queue({ k: "walk", to: near }, { k: "face", toward: t.pos });
-        f.queue({ k: "say", text: a.partial ? `PARTIAL: ${a.text}` : a.text, kind: a.partial ? "blocked" : "report", badge: "report", emote: a.partial ? "exclaim" : "check", ms: Math.min(4500, 1400 + a.text.length * 35) });
+        f.queue({ k: "say", text: dropOutcome(a.text), kind: "report", badge: "report", emote: a.partial ? "question" : "check", ms: Math.min(4500, 1400 + a.text.length * 35) }); // the emote says done vs partly done; a partial result is not a failure, so no red bubble
         t.showEmote(a.partial ? "exclaim" : "check", 2500);
         const k = a.partial ? 0 : fxk("routine", "report");
         if (k) burst(feet(near).x, feet(near).y - 14, scaled(10, k), [0x5be37d, 0xffe08a, 0x8fd0ff]);
@@ -716,17 +722,18 @@ function stepCourier(dt: number, now: number) {
   sp.zIndex = courier.y;
 }
 
-/** Labeled idle ambient: one quiet seated agent at a time, never during alerts or reduced motion (#83). */
+/** Labeled idle ambient: one idle lead at a time (turn over), never during alerts or reduced motion (#83). */
 function maybeStroll(now: number) {
   if (document.hidden || !layout || office.getEnvelope() === null || actors.size === 0) return;
   for (const a of actors.values()) if (a.alert) return;
   if (!ambientOn()) return;
   for (const [id] of couchHolds) if (!actors.get(id)?.perching) couchHolds.delete(id);
   const cands: StrollCand[] = [];
-  for (const [id, a] of actors) {
-    const ag = state.agents[id];
-    if (!ag || !ag.seat || a.leaving || !a.sitting || a.steps.length || running.has(id)) continue;
-    cands.push({ id, lastActive: Math.max(a.busyAt, ag.seatedAt ?? 0, ag.startedAt ?? 0), strolledAt: strolled.get(id) ?? 0, session: ag.session });
+  // only a lead whose turn is over may wander: a helper between tool calls is still generating, so it stays at its desk (critique V5)
+  for (const sess of Object.values(state.sessions)) {
+    const id = leadId(sess.id), a = actors.get(id);
+    if (!a || sess.prompt || sess.waiting || sess.doing || a.leaving || !a.sitting || a.steps.length || running.has(id)) continue;
+    cands.push({ id, lastActive: Math.max(a.busyAt, sess.lastAt ?? 0), strolledAt: strolled.get(id) ?? 0, session: sess.id });
   }
   const p = pickStroller(cands, now);
   if (p) exec({ k: "stroll", ...p, ...(p.where === "coffee" ? { with: pickPartner(cands, p.id, now) ?? undefined } : {}) }, now);
@@ -807,10 +814,12 @@ function onEnvelope(env: Envelope) {
 
   departing();
   releaseBlocked(now);
+  fileOutcomes(state.outcomes ?? [], r.fresh);
   const al = alertsFor(state, blocked.keys(), leadId);
   for (const a of actors.values()) {
     const before = a.alert;
-    a.setAlert(al.get(a.id) ?? null);
+    const wk = (state.sessions[meta.get(a.id)?.session ?? ""] as { waitKind?: string } | undefined)?.waitKind; // set by the daemon from notification_type
+    a.setAlert(al.get(a.id) ?? null, wk === "turn" ? "turn" : "permission");
     if (a.alert !== before) {
       gold(a);
       if (a.alert === "blocked" && !r.fresh && !settings.reducedMotion) a.glitch();
@@ -821,7 +830,7 @@ function onEnvelope(env: Envelope) {
   const lines = boardLines(state.tasks);
   if (lines.join("\n") !== boardText.join("\n")) boardText = lines;
   // prune per-actor maps of everything that left (#40)
-  for (const m of [meta, lastBusy, lastErr, visitors, huddling, strolled, tray, ripAt] as Map<string, unknown>[])
+  for (const m of [meta, lastBusy, lastErr, visitors, huddling, strolled, tray] as Map<string, unknown>[])
     for (const id of m.keys()) if (!actors.has(id) && !liveIds.has(id)) m.delete(id);
   publish(env);
 }
@@ -966,7 +975,7 @@ app.ticker.add((tk) => {
     scene.tick(frozen.since, ui.ox, ui.oy, ui.sc, boardText, skyT || frozen.since);
     if (viewDirty || v.sc !== lastV.sc || v.ox !== lastV.ox || v.oy !== lastV.oy) activeUntil = now + ACTIVE_HOLD_MS;
     lastV = v;
-    app.ticker.maxFPS = document.hidden ? 4 : now < activeUntil ? 60 : IDLE_FPS;
+    app.ticker.maxFPS = document.hidden || document.querySelector(".view:not([hidden])") ? 4 : now < activeUntil ? 60 : IDLE_FPS;
     return;
   }
   minimap.draw(camera.still, W, TOP, H, now, overlay || isPresenter());
@@ -1033,7 +1042,7 @@ app.ticker.add((tk) => {
   scene.tick(now, ui.ox, ui.oy, ui.sc, boardText, skyT || now);
   // idle or hidden: drop the frame rate (#167); anything moving gets a second of full rate
   if (active) activeUntil = now + ACTIVE_HOLD_MS;
-  app.ticker.maxFPS = document.hidden ? 4 : now < activeUntil ? 60 : IDLE_FPS;
+  app.ticker.maxFPS = document.hidden || document.querySelector(".view:not([hidden])") ? 4 : now < activeUntil ? 60 : IDLE_FPS; // a list view covering the canvas: no need to draw the hidden scene at full rate (critique P3)
 
   // tethers exist only while a real delegation/report ticket is in flight (+600 ms fade); a hover/select chain is a faint static line
   tether.clear();
@@ -1111,8 +1120,7 @@ app.ticker.add((tk) => {
     if (u >= 1) { r.g.visible = false; ringPool.push(r.g); rings.splice(i, 1); continue; }
     r.g.visible = u >= 0;
     if (u >= 0) {
-      if (r.rip) { r.g.scale.set(settings.reducedMotion ? 1.2 : 0.5 + 2.3 * u); r.g.alpha = settings.reducedMotion ? 0.5 : 0.6 * (1 - u); }
-      else { r.g.scale.set(0.5 + 1.7 * u); r.g.alpha = 1 - u; }
+      r.g.scale.set(0.5 + 1.7 * u); r.g.alpha = 1 - u;
     }
   }
 });

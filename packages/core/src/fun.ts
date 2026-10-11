@@ -133,7 +133,7 @@ export function stepFun(mem: FunMemory, prev: OfficeState | null, next: OfficeSt
     if (i.kind !== "report" || (i.outcome !== "done" && i.outcome !== "blocked" && i.outcome !== "partial")) continue;
     const a = prev.agents[i.from];
     const who = a ? nameOf(a) : i.from;
-    const task = clip((a?.task ?? i.text ?? "").trim() || "a task", 80);
+    const task = clip((a?.task ?? i.text ?? "").replace(/^\s*(?:DONE|BLOCKED|PARTIAL)\s*:\s*/i, "").trim() || "a task", 80); // the outcome word is already in the line
     push("highlight", `${i.session}:${i.id}`, `${who} ${i.outcome}: ${task}${i.durationMs !== undefined ? ` (${dur(i.durationMs)})` : ""}`, { actorId: i.from, session: i.session });
     if (i.outcome !== "done") continue;
     const seed = `${i.session}|${i.from}|${i.stoppedAt ?? i.t}`;

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { person, lookFor, teamColor, type Look } from "./sprites.ts";
+import { GLYPH_INK, person, lookFor, teamColor, type Look } from "./sprites.ts";
 import { DEFAULT_THEME } from "./theme.ts";
 import { shade } from "./color.ts";
 
@@ -55,7 +55,7 @@ const OKABE = DEFAULT_THEME.roleColors;
 const nb = (g: { w: number; get(x: number, y: number): string | null }, x: number, y: number) => [g.get(x - 1, y), g.get(x + 1, y), g.get(x, y - 1), g.get(x, y + 1)];
 
 test("C4/C9 grayscale audit: skin never blends into the shirt, sleeve or hair next to it (luma delta >= 0.12)", () => {
-  const FEATURE = new Set(["#1e1a28", "#8fe0ff", "#7fe3ff", "#ffffff", "#171421"]); // eyes, sweat, phone glow, glyph + halo
+  const FEATURE = new Set(["#1e1a28", "#8fe0ff", "#7fe3ff", "#ffffff", GLYPH_INK, "#171421"]); // eyes, sweat, phone glow, glyph + halo
   let n = 0;
   for (const shirt of OKABE) for (const skin of DEFAULT_THEME.skins) for (const hair of DEFAULT_THEME.hairs)
     for (const style of [0, 1, 2, 3, 4, 5] as const) for (const dir of ["down", "up", "side"] as const) {
@@ -76,7 +76,7 @@ test("C4/C9 grayscale audit: skin never blends into the shirt, sleeve or hair ne
 });
 
 test("C6 no isolated single pixels inside hair or shirt clusters (deliberate features excepted)", () => {
-  const FEATURE = new Set(["#1e1a28", "#8fe0ff", "#7fe3ff", "#ffffff", "#171421", "#f2c14e", "#c23b4a", "#f2f2f2"]);
+  const FEATURE = new Set(["#1e1a28", "#8fe0ff", "#7fe3ff", "#ffffff", GLYPH_INK, "#171421", "#f2c14e", "#c23b4a", "#f2f2f2"]);
   for (const style of [0, 1, 2, 3, 4, 5] as const) for (const build of [0, 1] as const) for (const dir of ["down", "up", "side"] as const)
     for (const pose of ["walk", "sit", "sit-think"] as const) for (const frame of [0, 1, 2, 3, 4, 5])
       for (const acc of ["none", "glasses", "headphones", "cap", "suit"] as const) {

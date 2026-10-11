@@ -5,6 +5,7 @@ import { $, el, sync } from "./dom.ts";
 import { RANK } from "./logic.ts";
 import { lookKey } from "./lru.ts";
 import { lookFor, type Look } from "./sprites.ts";
+import { look as stLook, statusKey, statusWord } from "./triage.ts";
 
 const MIN_AGENTS = 7, SLOT = 28;
 const heads = new Map<string, ImageData>();
@@ -35,9 +36,20 @@ const eff = (a: ActorInfo) => (a.lead && a.status !== "blocked" && office.getEnv
 
 export function bindColonists() {
   const bar = $("colony"), cache = new Map<string, HTMLButtonElement>();
-  const more = el("span", "cb more");
+  // B7: "+N · 2 need you" opens the panel's agent list
+  const more = el("button", "cb more");
+  more.type = "button";
+  more.addEventListener("click", () => {
+    if (document.body.classList.contains("collapsed")) $("tg").click();
+    const l = $("lists") as HTMLDetailsElement, ag = $("sec-agents") as HTMLDetailsElement;
+    l.open = ag.open = true;
+    ag.scrollIntoView({ block: "nearest" });
+  });
   const render = () => {
-    const acts = [...office.actors()].sort((a, b) => (RANK[eff(a)] ?? 9) - (RANK[eff(b)] ?? 9) || a.label.localeCompare(b.label));
+    // B7: grouped by session (most urgent session first), then by state inside it
+    const all = office.actors(), urg = new Map<string, number>();
+    for (const a of all) urg.set(a.session, Math.min(urg.get(a.session) ?? 9, RANK[eff(a)] ?? 9));
+    const acts = [...all].sort((a, b) => (urg.get(a.session)! - urg.get(b.session)!) || a.project.localeCompare(b.project) || (RANK[eff(a)] ?? 9) - (RANK[eff(b)] ?? 9) || a.label.localeCompare(b.label));
     const show = acts.length >= MIN_AGENTS;
     bar.hidden = !show;
     document.documentElement.style.setProperty("--cb-h", show ? `${bar.offsetHeight || 30}px` : "0px");
@@ -56,18 +68,21 @@ export function bindColonists() {
       return b;
     });
     nodes.forEach((b, i) => {
-      const a = vis[i], s = eff(a);
+      const a = vis[i], s = eff(a), k = statusKey(s, st?.sessions[a.session]), lk = stLook(k);
       const cls = `cb ${s}`;
       if (b.className !== cls) b.className = cls;
-      const label = `${a.label}, ${a.lead ? "session lead" : a.role}, ${s}${a.task && !priv ? `: ${a.task.slice(0, 60)}` : ""}`;
+      b.style.setProperty("--ring", k === "idle" ? "var(--line)" : lk.color);
+      if (b.dataset.g !== lk.glyph) b.dataset.g = lk.glyph; // the glyph badge: never colour alone (A2)
+      const label = `${a.label} (${a.project}), ${a.lead ? "session lead" : a.role}, ${statusWord(k)}${a.task && !priv ? `: ${a.task.slice(0, 60)}` : ""}`;
       if (b.title !== label) { b.title = label; b.setAttribute("aria-label", label); }
       b.setAttribute("aria-pressed", String(office.selected === a.id));
-      const k = `${lookKey(lookFor(a.role, a.id, a.lead))}`;
-      if (b.dataset.k !== k) { b.dataset.k = k; (b.firstChild as HTMLCanvasElement).getContext("2d")!.putImageData(head(lookFor(a.role, a.id, a.lead)), 0, 0); }
+      const lk2 = `${lookKey(lookFor(a.role, a.id, a.lead))}`;
+      if (b.dataset.k !== lk2) { b.dataset.k = lk2; (b.firstChild as HTMLCanvasElement).getContext("2d")!.putImageData(head(lookFor(a.role, a.id, a.lead)), 0, 0); }
     });
-    more.textContent = extra ? `+${extra}` : "";
+    const hiddenNeed = acts.slice(vis.length).filter((a) => ["waiting", "blocked"].includes(eff(a))).length;
+    more.textContent = extra ? `+${extra}${hiddenNeed ? ` · ${hiddenNeed} need you` : ""}` : "";
     more.hidden = !extra;
-    more.title = `${extra} more agents (see the AGENTS list)`;
+    more.title = `${extra} more agents: open the Agents list`;
     bar.append(more);
   };
   office.subscribe(render);

@@ -10,22 +10,25 @@ const day = (t: number) => { const d = new Date(t); return `${d.getFullYear()}-$
 
 /**
  * Stored events -> one summary per local day (oldest first): sessions seen, agents started by type, report outcomes,
- * tokens (turn_end + agent_stop usage), failed tools, and distinct hours with activity. Counts only, no free text.
- * shortcut: tokens sum every usage record, which counts a lead's cumulative transcript total once per turn; switch to deltas if totals look inflated.
+ * tokens, failed tools, and distinct hours with activity. Counts only, no free text.
+ * Tokens: turn_end and usage events carry the session's running total (lead + subagents), so a day counts each
+ * session's highest total once; agent_stop usage is already inside it and is not added again.
+ * shortcut: a session that spans midnight counts its whole total on both days; switch to per-day deltas if that matters.
  */
 export function summarize(events: OfficeEvent[]): DaySummary[] {
-  const days = new Map<string, DaySummary & { s: Set<string>; h: Set<number> }>();
+  const days = new Map<string, DaySummary & { s: Set<string>; h: Set<number>; tok: Map<string, number> }>();
   for (const e of events) {
     const k = day(e.t);
     let d = days.get(k);
-    if (!d) days.set(k, d = { day: k, sessions: 0, agents: {}, outcomes: { done: 0, blocked: 0, partial: 0, empty: 0, other: 0 }, tokens: 0, errors: 0, hours: 0, s: new Set(), h: new Set() });
+    if (!d) days.set(k, d = { day: k, sessions: 0, agents: {}, outcomes: { done: 0, blocked: 0, partial: 0, empty: 0, other: 0 }, tokens: 0, errors: 0, hours: 0, s: new Set(), h: new Set(), tok: new Map() });
     d.s.add(e.session); d.h.add(new Date(e.t).getHours());
     if (e.type === "agent_start") { const r = e.agentType.split(":").pop()!; d.agents[r] = (d.agents[r] ?? 0) + 1; }
     else if (e.type === "agent_stop") d.outcomes[outcomeOf(e.message) ?? "other"]++;
     else if (e.type === "tool_end" && !e.ok) d.errors++;
-    if ((e.type === "turn_end" || e.type === "agent_stop") && e.usage) d.tokens += e.usage.input + e.usage.output + e.usage.cacheCreate;
+    if ((e.type === "turn_end" || e.type === "usage") && e.usage) d.tok.set(e.session, Math.max(d.tok.get(e.session) ?? 0, e.usage.input + e.usage.output + e.usage.cacheCreate));
   }
-  return [...days.values()].sort((a, b) => a.day.localeCompare(b.day)).map(({ s, h, ...d }) => ({ ...d, sessions: s.size, hours: h.size }));
+  return [...days.values()].sort((a, b) => a.day.localeCompare(b.day))
+    .map(({ s, h, tok, ...d }) => ({ ...d, sessions: s.size, hours: h.size, tokens: [...tok.values()].reduce((a, b) => a + b, 0) }));
 }
 
 export function toMarkdown(rows: DaySummary[]): string {

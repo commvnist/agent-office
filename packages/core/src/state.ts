@@ -7,13 +7,13 @@ export const SCHEMA_VERSION = 1;
 export const LOG_MAX = 40;
 export const LIMITS = {
   sessions: 50, agents: 200, pending: 100,
-  logPerSession: 30, tasks: 30, conflicts: 20, track: 100,
+  logPerSession: 30, tasks: 30, outcomes: 30, conflicts: 20, track: 100,
   pendingTtlMs: 60_000, // a SubagentStart follows its delegation within moments
   conflictWindowMs: 15_000,
 };
 export const emptyState = (): OfficeState => ({
   sessions: {}, agents: {}, queue: [], log: [], nextId: 1, pending: {},
-  tasks: [], conflicts: [], nextTask: 1, track: { seen: [], starts: {}, touched: {} },
+  tasks: [], conflicts: [], outcomes: [], nextTask: 1, track: { seen: [], starts: {}, touched: {} },
 });
 
 /** Ids become object keys and pending-key parts: conservative charset, no Object.prototype names, no `lead:` spoofing. */
@@ -185,6 +185,11 @@ function relabel(s: OfficeState): OfficeState {
   return { ...s, sessions };
 }
 
+/** A running total never goes down (a restarted daemon re-reads only a transcript's last 8 MB). */
+const maxUsage = (old: Usage | undefined, u: Usage) => (old && usageTotalOf({ usage: old }) > usageTotalOf({ usage: u }) ? old : u);
+const CLEAR_WAIT = { waiting: false, waitKind: undefined } as const;
+/** First line of a report, bounded: the one-line result. */
+const firstLine = (m?: string) => (m ?? "").split("\n")[0].trim().slice(0, 160);
 const patchSession = (s: OfficeState, id: string, p: Partial<Session>): OfficeState =>
   s.sessions[id] ? { ...s, sessions: { ...s.sessions, [id]: { ...s.sessions[id], ...p } } } : s;
 const patchTask = (s: OfficeState, id: string | undefined, p: Partial<Task>): OfficeState =>
@@ -239,7 +244,7 @@ export function sweep(state: OfficeState, now: number, ttlMs: number, cfg?: Offi
 }
 
 const norm = (s: OfficeState): OfficeState =>
-  s.track && s.tasks && s.conflicts && s.nextTask ? s : { ...s, tasks: s.tasks ?? [], conflicts: s.conflicts ?? [], nextTask: s.nextTask ?? 1, track: s.track ?? { seen: [], starts: {}, touched: {} } };
+  s.track && s.tasks && s.conflicts && s.outcomes && s.nextTask ? s : { ...s, tasks: s.tasks ?? [], conflicts: s.conflicts ?? [], outcomes: s.outcomes ?? [], nextTask: s.nextTask ?? 1, track: s.track ?? { seen: [], starts: {}, touched: {} } };
 
 export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): OfficeState {
   if (!safeId(e.session) || ("agentId" in e && e.agentId !== undefined && !safeId(e.agentId))) return state;
@@ -265,6 +270,8 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
     if (s.track!.seen.includes(k)) return s;
     s = { ...s, track: { ...s.track!, seen: [...s.track!.seen, k].slice(-LIMITS.track) } };
   }
+  const ag = "agentId" in e && e.agentId ? s.agents[e.agentId] : undefined;
+  if (ag) s = { ...s, agents: { ...s.agents, [ag.id]: { ...ag, lastAt: e.t } } };
 
   switch (e.type) {
     case "session_start": {
@@ -299,7 +306,7 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
       const confidence = job && !rest.length ? "exact" : "guess"; // guess: parallel same-type delegations, or none matched
       const agent: Agent = {
         id: e.agentId, session: e.session, agentType: e.agentType, role, seat, parent, task: job?.text,
-        startedAt: e.t, toolCount: 0, confidence, ...(seat ? { seatedAt: e.t, queueWaitMs: 0 } : {}),
+        startedAt: e.t, lastAt: e.t, toolCount: 0, confidence, ...(seat ? { seatedAt: e.t, queueWaitMs: 0 } : {}),
       };
       const pending = { ...s.pending, [key]: rest };
       if (!rest.length) delete pending[key];
@@ -316,9 +323,12 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
         const outcome = outcomeOf(e.message);
         const task = n.tasks!.find((x) => x.agentId === a.id)?.id;
         n = patchTask(n, task, { status: outcome === "blocked" ? "blocked" : "done", endedAt: e.t });
+        const durationMs = a.startedAt === undefined ? undefined : Math.max(0, e.t - a.startedAt);
+        n = { ...n, outcomes: [{ session: e.session, project: n.sessions[e.session]?.project, agentId: a.id, name: a.seat?.name, role: a.role, outcome,
+          text: firstLine(e.message), task: a.task, t: e.t, durationMs }, ...n.outcomes!].slice(0, LIMITS.outcomes) };
         n = say(n, {
           t: e.t, kind: "report", session: e.session, from: a.id, to: a.parent, text: e.message ?? "",
-          outcome, stoppedAt: e.t, durationMs: a.startedAt === undefined ? undefined : Math.max(0, e.t - a.startedAt),
+          outcome, stoppedAt: e.t, durationMs,
           toolCount: a.toolCount, queueWaitMs: a.queueWaitMs, usage: e.usage,
         });
       }
@@ -328,9 +338,9 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
       const a = e.agentId ? s.agents[e.agentId] : undefined;
       const sess = s.sessions[e.session];
       const agents = a ? { ...s.agents, [a.id]: { ...a, doing: e.tool, detail: e.detail, why: e.why, busyAt: e.t, toolCount: (a.toolCount ?? 0) + 1 } } : s.agents;
-      // No agent id means the lead itself is working.
+      // No agent id means the lead itself is working; only the lead's own activity answers its prompt (a helper's never does).
       const sessions = { ...s.sessions, [sess.id]: {
-        ...sess, waiting: false, toolCounts: bump(sess.toolCounts, e.tool.slice(0, KEY_MAX), TOOLS_MAX),
+        ...sess, ...(e.agentId ? {} : CLEAR_WAIT), toolCounts: bump(sess.toolCounts, e.tool.slice(0, KEY_MAX), TOOLS_MAX),
         ...(e.detail && WRITE_TOOLS.has(e.tool) ? { files: bump(sess.files, e.detail.slice(0, KEY_MAX), FILES_MAX) } : {}),
         ...(a ? {} : { doing: e.tool, detail: e.detail, why: e.why, busyAt: e.t }),
       } };
@@ -355,7 +365,8 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
       const lastDurationMs = start === undefined ? undefined : Math.max(0, e.t - start);
       const fail = e.ok ? {} : { lastError: e.error ?? "failed" };
       const patch = (x: { errors?: number }) => ({ doing: undefined, why: undefined, lastDurationMs, ...fail, errors: (x.errors ?? 0) + (e.ok ? 0 : 1) });
-      let n: OfficeState = a ? { ...s, agents: { ...s.agents, [a.id]: { ...a, ...patch(a) } } } : patchSession(s, e.session, patch(sess));
+      let n: OfficeState = a ? { ...s, agents: { ...s.agents, [a.id]: { ...a, ...patch(a) } } }
+        : e.agentId ? s : patchSession(s, e.session, { ...patch(sess), ...CLEAR_WAIT });
       if (k) { const { [k]: _, ...starts } = n.track!.starts; n = { ...n, track: { ...n.track!, starts } }; }
       // A failed Agent call never spawns: its delegation must not be inherited by a later same-type start.
       if (!e.ok && e.id) n = filterPending(n, (j) => j.id !== e.id);
@@ -369,19 +380,24 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
       const text = stripMeta(e.text);
       if (!text) {
         const sum = metaSummary(e.text);
-        const n = patchSession(s, e.session, { waiting: false });
+        const n = patchSession(s, e.session, CLEAR_WAIT);
         return sum ? say(n, { t: e.t, kind: "message", session: e.session, from: leadId(e.session), to: "user", text: sum.slice(0, 140) }) : n;
       }
-      return say(patchSession(s, e.session, { prompt: text, waiting: false }), { t: e.t, kind: "prompt", session: e.session, from: "user", to: leadId(e.session), text });
+      return say(patchSession(s, e.session, { prompt: text, ...CLEAR_WAIT }), { t: e.t, kind: "prompt", session: e.session, from: "user", to: leadId(e.session), text });
     }
     case "turn_end":
-      return say(patchSession(s, e.session, { doing: undefined, detail: undefined, why: undefined, prompt: undefined, ...(e.usage ? { usage: e.usage } : {}) }), { t: e.t, kind: "done", session: e.session, from: leadId(e.session), to: "user", text: "" });
-    case "waiting":
+      return say(patchSession(s, e.session, { ...CLEAR_WAIT, doing: undefined, detail: undefined, why: undefined, prompt: undefined, ...(e.usage ? { usage: maxUsage(s.sessions[e.session].usage, e.usage) } : {}) }), { t: e.t, kind: "done", session: e.session, from: leadId(e.session), to: "user", text: "" });
+    case "usage":
+      return patchSession(s, e.session, { usage: maxUsage(s.sessions[e.session].usage, e.usage) });
+    case "waiting": {
       // idle_prompt: Claude is at the prompt, so a tool or turn that never reported its end (interrupt) is over
       if (e.idle) { // the session's agents too: a tool whose end never arrived (interrupt, lost hook) would otherwise show 'running' for the 5 min cap; a live tool re-sets it on its next event
         const agents = Object.fromEntries(Object.entries(s.agents).map(([id, ag]) => [id, ag.session === e.session && ag.doing ? { ...ag, doing: undefined, detail: undefined, why: undefined } : ag]));
         s = { ...s, agents };
       }
-      return patchSession(s, e.session, { waiting: true, waitingText: e.text, ...(e.idle ? { doing: undefined, detail: undefined, why: undefined, prompt: undefined } : {}) });
+      // Stored events from before waitKind carry no kind: idle = your turn, otherwise only text naming a permission is one.
+      const waitKind = e.kind ?? (e.idle || !/permission/i.test(e.text ?? "") ? "turn" : "permission");
+      return patchSession(s, e.session, { waiting: true, waitKind, waitingText: e.text, ...(e.idle ? { doing: undefined, detail: undefined, why: undefined, prompt: undefined } : {}) });
+    }
   }
 }

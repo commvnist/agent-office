@@ -18,45 +18,79 @@ function addCwdRoot(roots: string[], cwd: unknown, home: string) {
 }
 const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? v : 0);
 
+/** Real path of a `.jsonl` under ~/.claude/projects or the payload cwd, else undefined (never read anything else). */
+function allowed(path: unknown, cwd: unknown, home: string): string | undefined {
+  if (typeof path !== "string" || !path.endsWith(".jsonl")) return undefined;
+  const real = realpathSync(path);
+  const roots = [join(home, ".claude", "projects")];
+  addCwdRoot(roots, cwd, home);
+  return roots.some((r) => { try { return under(real, realpathSync(r)); } catch { return false; } }) ? real : undefined;
+}
+
 /**
- * Sum assistant token usage in a transcript JSONL (last 8 MB). Local telemetry only.
- * Only `.jsonl` files whose real path is under ~/.claude/projects or the payload cwd are read.
- * shortcut: no streaming parse, the tail is held in memory (8 MB), and a partial first line is dropped.
+ * A session's running token total across its transcripts (lead + subagents). Message ids are shared across files, so a
+ * message mirrored in two transcripts counts once; a streamed message repeats its id and the last line wins.
  */
-export function readUsage(path: unknown, cwd?: unknown, home = homedir()): Usage | undefined {
+export type Ledger = { offsets: Map<string, number>; ids: Map<string, Usage>; base: Usage };
+export const newLedger = (): Ledger => ({ offsets: new Map(), ids: new Map(), base: { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 } });
+const LEDGER_IDS = 50_000;
+
+/**
+ * Read only what was appended to a transcript since the last call (at most its last 8 MB) and add its assistant `usage`
+ * fields to the ledger. Nothing else of a line is kept. Same path rules as readNarration. Never throws.
+ * shortcut: past LEDGER_IDS messages the oldest are folded into `base`, so a very late repeat of a folded id would count twice; fine for streamed repeats, which are adjacent.
+ */
+export function tallyUsage(l: Ledger, path: unknown, cwd?: unknown, home = homedir()): void {
   try {
-    if (typeof path !== "string" || !path.endsWith(".jsonl")) return undefined;
-    const real = realpathSync(path);
-    const roots = [join(home, ".claude", "projects")];
-    addCwdRoot(roots, cwd, home);
-    if (!roots.some((r) => { try { return under(real, realpathSync(r)); } catch { return false; } })) return undefined;
+    const real = allowed(path, cwd, home);
+    if (!real) return;
     const fd = openSync(real, "r");
-    let text: string;
+    let text: string, from: number, at = l.offsets.get(real) ?? 0;
     try {
-      const size = fstatSync(fd).size, len = Math.min(size, MAX_BYTES), buf = Buffer.alloc(len);
-      readSync(fd, buf, 0, len, size - len);
+      const size = fstatSync(fd).size;
+      if (at > size) at = 0; // replaced or truncated: start over (ids dedupe what was already counted)
+      from = Math.max(at, size - MAX_BYTES);
+      const buf = Buffer.alloc(size - from);
+      readSync(fd, buf, 0, buf.length, from);
       text = buf.toString("utf8");
-      if (size > len) text = text.slice(text.indexOf("\n") + 1);
     } finally { closeSync(fd); }
-    // Streamed responses repeat one message id; the last line of an id wins.
-    const byId = new Map<string, Record<string, unknown>>();
-    let i = 0;
+    if (from > at) { const cut = text.indexOf("\n") + 1; from += Buffer.byteLength(text.slice(0, cut)); text = text.slice(cut); } // partial first line
+    let pos = from;
     for (const line of text.split("\n")) {
+      const start = pos;
+      pos += Buffer.byteLength(line) + 1;
       if (!line.includes('"usage"')) continue;
       try {
         const o = JSON.parse(line);
         const m = o?.type === "assistant" ? o.message : undefined;
-        if (m && typeof m.usage === "object" && m.usage) byId.set(typeof m.id === "string" ? m.id : `#${i++}`, m.usage);
+        if (!m || typeof m.usage !== "object" || !m.usage) continue;
+        const u = m.usage, key = typeof m.id === "string" ? m.id : `${real}@${start}`; // no id: the byte offset is stable across reads
+        l.ids.delete(key); // re-insert so the newest stays last
+        l.ids.set(key, { input: n(u.input_tokens), output: n(u.output_tokens), cacheRead: n(u.cache_read_input_tokens), cacheCreate: n(u.cache_creation_input_tokens) });
       } catch { /* partial or non-JSON line */ }
     }
-    if (!byId.size) return undefined;
-    const u: Usage = { input: 0, output: 0, cacheRead: 0, cacheCreate: 0 };
-    for (const x of byId.values()) {
-      u.input += n(x.input_tokens); u.output += n(x.output_tokens);
-      u.cacheRead += n(x.cache_read_input_tokens); u.cacheCreate += n(x.cache_creation_input_tokens);
+    // Resume at the start of the last (possibly unfinished) line: a line re-read later keeps its key, so it never counts twice.
+    l.offsets.set(real, from + Buffer.byteLength(text.slice(0, text.lastIndexOf("\n") + 1)));
+    for (const [k, x] of l.ids) {
+      if (l.ids.size <= LEDGER_IDS) break;
+      for (const f of ["input", "output", "cacheRead", "cacheCreate"] as const) l.base[f] += x[f];
+      l.ids.delete(k);
     }
-    return u;
-  } catch { return undefined; }
+  } catch { /* unreadable: keep what we have */ }
+}
+
+export function ledgerTotal(l: Ledger): Usage | undefined {
+  if (!l.ids.size && !l.base.input && !l.base.output) return undefined;
+  const u = { ...l.base };
+  for (const x of l.ids.values()) { u.input += x.input; u.output += x.output; u.cacheRead += x.cacheRead; u.cacheCreate += x.cacheCreate; }
+  return u;
+}
+
+/** Token total of one transcript (its last 8 MB). Local telemetry only; same path rules. */
+export function readUsage(path: unknown, cwd?: unknown, home = homedir()): Usage | undefined {
+  const l = newLedger();
+  tallyUsage(l, path, cwd, home);
+  return ledgerTotal(l);
 }
 
 /**
@@ -67,11 +101,8 @@ export function readUsage(path: unknown, cwd?: unknown, home = homedir()): Usage
  */
 export function readNarration(path: unknown, cwd?: unknown, home = homedir()): { id: string; text: string }[] {
   try {
-    if (typeof path !== "string" || !path.endsWith(".jsonl")) return [];
-    const real = realpathSync(path);
-    const roots = [join(home, ".claude", "projects")];
-    addCwdRoot(roots, cwd, home);
-    if (!roots.some((r) => { try { return under(real, realpathSync(r)); } catch { return false; } })) return [];
+    const real = allowed(path, cwd, home);
+    if (!real) return [];
     const fd = openSync(real, "r");
     let text: string;
     try {

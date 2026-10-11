@@ -46,3 +46,18 @@ export function roleColor(role: string): string {
   const i = roles.indexOf(role), p = DEFAULT_THEME.roleColors;
   return i >= 0 ? p[i % p.length] : hsl(hash(role) % 360, 0.55, 0.52);
 }
+
+// ---- status vocabulary (one map for every surface: ring, dot, row accent, pill, toast, legend) ----
+/**
+ * Loudest first. Every status is a colour AND a glyph AND a word, never colour alone (colour-vision safe).
+ * permission = Claude is asking to run something (act now); turn = idle at the prompt (your move); blocked = a helper gave up.
+ */
+export type StatusKey = "permission" | "turn" | "blocked" | "working" | "idle";
+export const STATUS: Record<StatusKey, { color: string; glyph: string; label: string }> = {
+  permission: { color: "#ffb020", glyph: "!", label: "needs permission" },
+  turn: { color: "#7fe3ff", glyph: "?", label: "your turn" },
+  blocked: { color: "#ff5c6c", glyph: "x", label: "gave up" },
+  working: { color: "#3ddc97", glyph: "", label: "working" },
+  idle: { color: "#8b93ad", glyph: "", label: "idle" },
+};
+export const STATUS_ORDER: StatusKey[] = ["permission", "turn", "blocked", "working", "idle"]; // a helper that gave up is usually handled by its lead, so it ranks below the two states that wait on you

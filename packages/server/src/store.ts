@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, readFileSync, renameSync, statSync, chmodSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, renameSync, statSync, chmodSync, unlinkSync, writeFileSync } from "node:fs";
 import { emptyState, reduce, sweep, type OfficeConfig, type OfficeEvent, type OfficeState } from "@agent-office/core";
 
 export const MAX_BYTES = 5 * 1024 * 1024;
@@ -25,6 +25,22 @@ export function loadEvents(file: string, since = 0, limit = 5000, until = Infini
     }
   }
   return out.slice(-limit);
+}
+
+/** Retention: drop stored events older than `since` (and unparseable lines) from the log and its backup. Returns lines removed. */
+export function pruneEvents(file: string, since: number): number {
+  let removed = 0;
+  for (const f of [file + ".1", file]) {
+    let lines: string[];
+    try { lines = readFileSync(f, "utf8").split("\n").filter(Boolean); } catch { continue; }
+    const keep = lines.filter((l) => { try { const e = JSON.parse(l); return typeof e?.t === "number" && e.t >= since; } catch { return false; } });
+    if (keep.length === lines.length) continue;
+    removed += lines.length - keep.length;
+    if (!keep.length) { unlinkSync(f); continue; }
+    writeFileSync(f + ".tmp", keep.join("\n") + "\n", { mode: 0o600 });
+    renameSync(f + ".tmp", f);
+  }
+  return removed;
 }
 
 /** Rebuild state from stored events, then sweep so sessions that went quiet do not resurrect. */

@@ -4,7 +4,7 @@ const FOCUSABLE = "button,input,select,textarea,a[href],[tabindex]:not([tabindex
 /** Open dialogs, oldest first: only the newest (top layer) reacts to Escape, so one Esc never closes two. */
 const stack: (() => void)[] = [];
 
-export function modal(dlg: HTMLElement, trigger: HTMLElement, onOpen?: () => void) {
+export function modal(dlg: HTMLElement, trigger: HTMLElement, onOpen?: () => void, onClose?: () => void) {
   dlg.tabIndex = -1;
   const items = () => Array.from(dlg.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((x) => !x.hasAttribute("disabled"));
   const onKey = (e: KeyboardEvent) => {
@@ -23,7 +23,9 @@ export function modal(dlg: HTMLElement, trigger: HTMLElement, onOpen?: () => voi
     const t = e.target as Node;
     if (!dlg.contains(t) && !trigger.contains(t)) close();
   };
+  let back: HTMLElement | null = null;
   function open() {
+    back = document.activeElement as HTMLElement | null;
     onOpen?.();
     dlg.hidden = false;
     stack.push(close);
@@ -38,7 +40,8 @@ export function modal(dlg: HTMLElement, trigger: HTMLElement, onOpen?: () => voi
     if (at >= 0) stack.splice(at, 1);
     document.removeEventListener("keydown", onKey);
     document.removeEventListener("pointerdown", onDown);
-    trigger.focus();
+    onClose?.();
+    (trigger.isConnected ? trigger : back)?.focus(); // a trigger that is not on the page (the palette's): back to where focus was
   }
   return { open, close, toggle: () => (dlg.hidden ? open() : close()) };
 }

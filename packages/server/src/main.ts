@@ -11,12 +11,18 @@ import {
 import { adapt, clip } from "./adapter.ts";
 import { validateConfig, unknownKeys } from "./config.ts";
 import { summarize } from "./digest.ts";
-import { appendRotating, loadEvents, replay } from "./store.ts";
-import { publicState } from "./snapshot.ts";
-import { readNarration, readUsage } from "./usage.ts";
+import { appendRotating, loadEvents, pruneEvents, replay } from "./store.ts";
+import { fitEnvelope, publicState } from "./snapshot.ts";
+import { readNarration, readUsage, newLedger, tallyUsage, ledgerTotal, type Ledger } from "./usage.ts";
 
 const PORT = Number(process.env.AGENT_OFFICE_PORT ?? 4747);
 const HOST = process.env.AGENT_OFFICE_HOST || "127.0.0.1";
+const LOOPBACK = ["127.0.0.1", "localhost", "::1"].includes(HOST);
+// Loopback only unless the operator opts in explicitly: a typo'd or copied HOST must not expose the office.
+if (!LOOPBACK && process.env.AGENT_OFFICE_ALLOW_REMOTE !== "1") {
+  console.error(`[agent-office] refusing to bind ${HOST}: not loopback. Set AGENT_OFFICE_ALLOW_REMOTE=1 as well to allow it.`);
+  process.exit(1);
+}
 const DIR = process.env.AGENT_OFFICE_HOME ?? join(homedir(), ".agent-office");
 const CONFIG = join(DIR, "office.json");
 const VERSION: string = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
@@ -66,8 +72,12 @@ reloadConfig();
 
 // State: rebuilt from the stored event log, then swept so quiet sessions do not come back.
 const EVENTS = join(DIR, "events.jsonl");
-// shortcut: replay the last 50k events of the 24 h window (a busy hour can exceed the 5k default and drop session starts); raise it if sessions come back as "recovered"
-let state: OfficeState = replay(cfg, loadEvents(EVENTS, Date.now() - 24 * 3600_000, 50_000), Date.now(), ttlMs());
+const historyMs = () => (cfg.historyHours ?? 168) * 3600_000;
+/** Retention: delete stored events older than historyHours (boot and hourly). */
+const prune = () => { try { const n = pruneEvents(EVENTS, Date.now() - historyMs()); if (n) log(`history: pruned ${n} events older than ${cfg.historyHours ?? 168} h`); } catch (e) { log("history prune:", (e as Error).message); } };
+prune();
+// shortcut: replay the last 50k events of the retention window (a busy hour can exceed the 5k default and drop session starts); raise it if sessions come back as "recovered"
+let state: OfficeState = replay(cfg, loadEvents(EVENTS, Date.now() - historyMs(), 50_000), Date.now(), ttlMs());
 let rev = 0, events = 0, lastEventAt = 0;
 /** Re-read office.json; a change must reach clients (and the envelope cache) whichever request noticed it first. */
 const refreshConfig = () => { if (!reloadConfig()) return false; rev++; push(); return true; };
@@ -79,10 +89,10 @@ function envelope(priv: boolean): string {
   if (cache.rev !== rev) cache = { rev };
   const k = priv ? "priv" : "json";
   const hide = priv || !!cfg.privacy;
-  return (cache[k] ??= JSON.stringify({
-    schema: SCHEMA_VERSION, version: VERSION, epoch: EPOCH, rev, privacy: hide,
-    configError, configWarning, state: publicState(state, hide), config: cfg,
-  }));
+  return (cache[k] ??= fitEnvelope({
+    schema: SCHEMA_VERSION, version: VERSION, epoch: EPOCH, rev, privacy: hide, protocol: cfg.protocol ?? "office",
+    configError, configWarning, config: cfg,
+  }, publicState(state, hide), MAX_STATE));
 }
 const write = (res: ServerResponse, chunk: string) => {
   if (res.writableLength > MAX_BUFFERED) { clients.delete(res); res.destroy(); return; }
@@ -90,13 +100,10 @@ const write = (res: ServerResponse, chunk: string) => {
 };
 const push = () => { for (const [res, c] of clients) write(res, `id: ${EPOCH}-${rev}\ndata: ${envelope(c.priv)}\n\n`); };
 
-/** Install a new state; refuse (keep the old one) when the snapshot would exceed the size guard. */
-function commit(next: OfficeState): boolean {
-  const prev = state;
+/** Install a new state and push it (an oversized envelope is trimmed and marked degraded, never dropped: fitEnvelope). */
+function commit(next: OfficeState) {
   state = next; rev++;
-  if (envelope(false).length > MAX_STATE) { state = prev; rev++; log("state too large, event dropped"); return false; }
   push();
-  return true;
 }
 
 const WEB = fileURLToPath(new URL("../../web/dist/", import.meta.url));
@@ -119,6 +126,8 @@ const json = (res: ServerResponse, code: number, body: unknown) => res.writeHead
 
 const TEXTY = ["text", "detail", "why", "message", "error", "cwd", "branch"];
 const strip = (e: OfficeEvent) => Object.fromEntries(Object.entries(e).filter(([k]) => !TEXTY.includes(k)));
+/** Stored form in privacy mode: the same fields gone, `text` kept as "" so the event still replays. */
+const scrub = (e: OfficeEvent) => ({ ...strip(e), ...("text" in e ? { text: "" } : {}) });
 
 /** Only text meant for the model, bounded, without control characters. */
 const cleanContext = (s: string) => s.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "").slice(0, 2000);
@@ -130,6 +139,7 @@ const denials = new Map<string, number>();
 const narrated = new Map<string, { seen: Set<string>; primed: boolean; at: number; texts: string[] }>();
 const NARRATE_EVERY_MS = 1500, NARRATE_MAX_SESSIONS = 64, NARRATE_MAX_IDS = 200;
 function narrationEvents(payload: any, now: number): OfficeEvent[] {
+  if (cfg.privacy) return []; // privacy mode: the transcript is never opened
   const hook = String(payload?.hook_event_name);
   if (!["PreToolUse", "PostToolUse", "Stop", "UserPromptSubmit"].includes(hook) || payload?.agent_id) return []; // the lead only
   const session = typeof payload?.session_id === "string" ? payload.session_id : "";
@@ -165,21 +175,46 @@ function narrationEvents(payload: any, now: number): OfficeEvent[] {
   return out.slice(-3);
 }
 
+// Spend: one running ledger per session over every transcript it names (lead + subagents), read incrementally
+// (token usage fields only, see usage.ts), refreshed at most every USAGE_EVERY_MS during the turn and always at Stop/SubagentStop.
+const ledgers = new Map<string, { l: Ledger; paths: Map<string, unknown>; at: number }>();
+const USAGE_EVERY_MS = 5000, LEDGER_SESSIONS = 64;
+function sessionUsage(payload: any, now: number, force: boolean) {
+  if (cfg.privacy) return undefined; // privacy mode: no transcript reads at all
+  const session = payload?.session_id;
+  if (typeof session !== "string" || session.length > 64) return undefined;
+  let b = ledgers.get(session);
+  if (!b) {
+    if (ledgers.size >= LEDGER_SESSIONS) ledgers.delete(ledgers.keys().next().value as string);
+    ledgers.set(session, (b = { l: newLedger(), paths: new Map(), at: 0 }));
+  }
+  for (const k of ["transcript_path", "agent_transcript_path"]) if (typeof payload[k] === "string" && b.paths.size < 256) b.paths.set(payload[k], payload.cwd);
+  if (!force && now - b.at < USAGE_EVERY_MS) return undefined;
+  b.at = now;
+  for (const [p, cwd] of b.paths) tallyUsage(b.l, p, cwd);
+  return ledgerTotal(b.l);
+}
+
 function onEvent(payload: any, res: ServerResponse) {
   if (payload && payload.ao_proto !== undefined) lastProto = payload.ao_proto;
   const c = (refreshConfig(), cfg);
   const evs = adapt(payload);
   evs.unshift(...narrationEvents(payload, Date.now())); // the lead's words come before the tool call they introduce
   if (evs.length) { events++; lastEventAt = Date.now(); }
+  const hook = String(payload?.hook_event_name);
+  const total = ["PostToolUse", "Stop", "SubagentStop"].includes(hook) ? sessionUsage(payload, Date.now(), hook !== "PostToolUse") : undefined;
   for (const e of evs) {
-    if (e.type === "agent_stop") e.usage = readUsage(payload.agent_transcript_path, payload.cwd);
-    else if (e.type === "turn_end") e.usage = readUsage(payload.transcript_path, payload.cwd);
+    if (e.type === "agent_stop" && !c.privacy) e.usage = readUsage(payload.agent_transcript_path, payload.cwd);
+    else if (e.type === "turn_end") e.usage = total;
     if ("usage" in e && !e.usage) delete e.usage;
   }
-  const hook = String(payload?.hook_event_name);
+  const sid = evs[0]?.session;
+  if (total && hook !== "Stop" && sid && JSON.stringify(state.sessions[sid]?.usage) !== JSON.stringify(total)) evs.push({ type: "usage", session: sid, usage: total, t: Date.now() });
+  if (hook === "SessionEnd" && typeof payload?.session_id === "string") ledgers.delete(payload.session_id);
   // Seat enforcement: deny an Agent spawn when every desk is taken, but never more than 3 times in a row.
   const del = evs.find((e) => e.type === "delegate");
-  if (c.enforceSeats && hook === "PreToolUse" && del?.type === "delegate") {
+  const office = c.protocol !== "observe"; // observe: nothing injected, nothing denied
+  if (office && c.enforceSeats && hook === "PreToolUse" && del?.type === "delegate") {
     const role = roleFor(c, del.agentType), key = `${del.session}|${role}`;
     if (!capacityFor(c, state, role).canSpawn) {
       const n = denials.get(key) ?? 0;
@@ -198,10 +233,11 @@ function onEvent(payload: any, res: ServerResponse) {
     // Hook stdout is parsed by Claude Code: this is how roster/identity reach the model.
     if (e.type === "session_start") ctx = leadRoster(c);
     else if (e.type === "agent_start") ctx = introFor(c, next, e.agentId);
-    try { appendRotating(EVENTS, JSON.stringify({ v: SCHEMA_VERSION, ...e })); } catch (err) { log("event log:", (err as Error).message); }
+    // Privacy mode: free text never reaches disk (same fields /history blanks).
+    try { appendRotating(EVENTS, JSON.stringify({ v: SCHEMA_VERSION, ...(c.privacy ? scrub(e) : e) })); } catch (err) { log("event log:", (err as Error).message); }
   }
   if (evs.length) commit(next);
-  const out = ctx && (hook === "SessionStart" || hook === "SubagentStart")
+  const out = office && ctx && (hook === "SessionStart" || hook === "SubagentStart")
     ? { hookSpecificOutput: { hookEventName: hook, additionalContext: cleanContext(ctx) } } : undefined;
   res.writeHead(200, { "content-type": "application/json" }).end(out ? JSON.stringify(out) : "");
 }
@@ -235,7 +271,7 @@ function handle(req: IncomingMessage, res: ServerResponse, allowedHosts: Set<str
       try {
         let payload: unknown;
         try { payload = JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { return void res.writeHead(400).end(); }
-        if (process.env.AGENT_OFFICE_LOG) appendRotating(join(DIR, "events.log"), `${new Date().toISOString()} ${Buffer.concat(chunks).toString("utf8").trim()}`);
+        if (process.env.AGENT_OFFICE_LOG && !cfg.privacy) appendRotating(join(DIR, "events.log"), `${new Date().toISOString()} ${Buffer.concat(chunks).toString("utf8").trim()}`);
         onEvent(payload, res);
       } catch (e) { log("event error:", e); if (!res.headersSent) res.writeHead(500).end(); }
     });
@@ -321,9 +357,10 @@ server.listen(PORT, HOST, () => {
   for (const f of ["port", "pid"]) writeFileSync(join(DIR, f), String(f === "port" ? port : process.pid));
   process.on("exit", () => { for (const f of ["port", "pid"]) try { unlinkSync(join(DIR, f)); } catch { /* gone */ } });
   for (const s of ["SIGINT", "SIGTERM"]) process.on(s, () => process.exit(0));
-  if (!["127.0.0.1", "localhost", "::1"].includes(HOST)) log(`WARNING: bound to ${HOST}, not loopback. Anyone who can reach it and has the token can send events; hooks and browser must use this host.`);
+  if (!LOOPBACK) log(`WARNING: bound to ${HOST}, not loopback (AGENT_OFFICE_ALLOW_REMOTE=1). Anyone who can reach it and has the token can send events; hooks and browser must use this host.`);
   console.log(`agent-office listening on http://${HOST}:${port}`);
   setInterval(() => { refreshConfig(); }, 2000).unref();
+  setInterval(prune, 3600_000).unref();
   setInterval(() => {
     const r = sweep(state, Date.now(), ttlMs(), cfg);
     if (r.removed.sessions.length) { log("swept idle sessions:", r.removed.sessions.join(","), "agents:", r.removed.agents.length); commit(r.state); }

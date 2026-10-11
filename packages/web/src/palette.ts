@@ -5,14 +5,17 @@ import { ignoreKey } from "./camera.ts";
 import { announce, btn, el } from "./dom.ts";
 import { modal } from "./dialog.ts";
 import { rank } from "./funlogic.ts";
-import { group } from "./toolbar.ts";
+import { statusKey, statusWord } from "./triage.ts";
 
 export type Cmd = { label: string; run: () => void };
 // Modules register their own handlers here, so no command depends on a toolbar button's label.
 const registry: Cmd[] = [];
 export const register = (label: string, run: () => void) => { registry.push({ label, run: () => { run(); announce(label); } }); };
+let opener = () => {};
+/** Help's "Command palette" button. */
+export const openPalette = () => opener();
 
-export function bindPalette(tools: HTMLElement) {
+export function bindPalette() {
   const dlg = el("div", "dlg pal"), input = el("input"), list = el("ul"), count = el("div", "sr");
   dlg.id = "palette";
   dlg.hidden = true;
@@ -30,14 +33,13 @@ export function bindPalette(tools: HTMLElement) {
   count.setAttribute("role", "status");
   dlg.append(input, list, count);
   document.body.append(dlg);
+  // not in the toolbar (V8: menus plus the palette): Ctrl+K, ":" and Help open it; focus returns to where it was
   const open = btn("Commands", "Command palette (Ctrl+K or :)", () => m.toggle());
-  open.setAttribute("aria-haspopup", "dialog");
-  group(tools, "Setup").append(open);
 
   const all = (): Cmd[] => {
     const priv = office.privacy || office.source.private;
     const agents = office.actors().map((a) => ({
-      label: `Agent: ${a.label} · ${a.lead ? "lead" : a.role} · ${a.status}${a.task && !priv ? ` · ${a.task.slice(0, 40)}` : ""}`,
+      label: `Agent: ${a.label} · ${a.lead ? "lead" : a.role} · ${statusWord(statusKey(a.status, office.getEnvelope()?.state.sessions[a.session]))}${a.task && !priv ? ` · ${a.task.slice(0, 40)}` : ""}`,
       run: () => { office.select(a.id); office.focus(a.id); },
     }));
     const sessions = office.sessions().map((s) => ({ label: `Session: ${s.project}`, run: () => { office.select(s.lead); office.focus(s.lead); } }));
@@ -80,6 +82,7 @@ export function bindPalette(tools: HTMLElement) {
     } else if (e.key === "Enter") { e.preventDefault(); run(sel); }
   });
   const m = modal(dlg, open, () => { input.value = ""; render(); });
+  opener = () => m.open();
   addEventListener("keydown", (e) => {
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "k") { e.preventDefault(); m.toggle(); }
     else if (e.key === ":" && !ignoreKey(e)) { e.preventDefault(); if (dlg.hidden) m.open(); }

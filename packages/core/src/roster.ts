@@ -8,11 +8,12 @@ export function leadRoster(cfg: OfficeConfig): string {
     return `- ${r.agent}: ${r.count} on the core team (${core})${temps}`;
   });
   const mode = cfg.parallelism ?? "auto";
-  const head = "You are the lead of a small office. Delegate to coworkers by subagent type; each delegation shows up in a live office view.";
+  // Neutral by default: the office describes who is available, it never asks for more delegation (V2).
+  const head = "An office view is watching this session; subagents you start appear in it. Delegating is optional.";
   const nudge = {
     off: [],
     auto: [
-      `Parallelism: auto. Fan out only when a task has 2+ independent parts; launch those subagents in ONE message. Size gate: for small tasks (<= 2 files, one concern) do it yourself or use one agent; skip architect/review waves.`,
+      "Parallelism: your call. Doing the work yourself is fine; if you do start independent subagents, starting them in one message lets them run in parallel.",
     ],
     aggressive: [
       "Parallelism: aggressive. Split work into independent pieces and launch all independent subagents in ONE message so they run in parallel; spread same-role work across the seats below instead of one big task. Give each a self-contained brief with the files it owns.",

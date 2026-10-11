@@ -41,6 +41,14 @@ export function validateConfig(raw: unknown, defaultRoles?: OfficeConfig["roles"
     if (raw.parallelism !== "off" && raw.parallelism !== "auto" && raw.parallelism !== "aggressive") throw new Error("parallelism must be off, auto or aggressive");
     cfg.parallelism = raw.parallelism;
   }
+  if (raw.protocol !== undefined) {
+    if (raw.protocol !== "office" && raw.protocol !== "observe") throw new Error("protocol must be office or observe");
+    cfg.protocol = raw.protocol;
+  }
+  if (raw.historyHours !== undefined) {
+    if (!int(raw.historyHours, 1, 2160)) throw new Error("historyHours must be an integer 1-2160");
+    cfg.historyHours = raw.historyHours as number;
+  }
   for (const k of ["enforceSeats", "privacy"] as const) {
     if (raw[k] === undefined) continue;
     if (typeof raw[k] !== "boolean") throw new Error(`${k} must be a boolean`);
@@ -61,7 +69,7 @@ export function validateConfig(raw: unknown, defaultRoles?: OfficeConfig["roles"
   return cfg;
 }
 
-const KNOWN = ["roles", "parallelism", "enforceSeats", "privacy", "theme", "idleTtlMinutes", "spendAlarmTokens"];
+const KNOWN = ["roles", "protocol", "historyHours", "parallelism", "enforceSeats", "privacy", "theme", "idleTtlMinutes", "spendAlarmTokens"];
 const ROLE_KEYS = ["agent", "count", "names", "overflow"];
 
 /** Paths of keys validateConfig would silently drop (typos like "paralelism"). Non-fatal; cap 5. */

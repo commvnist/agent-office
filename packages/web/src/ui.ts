@@ -3,9 +3,11 @@
 import { office, type ActorInfo, type FeedItem } from "./api.ts";
 import { hotFiles, leadId } from "@agent-office/core";
 import { $, announce as domAnnounce, btn, clip, copy, el, renderIf, store, sync } from "./dom.ts";
-import { bySession, burnHot, burnRate, cdCommand, filterFeed, fmtAge, fmtDur, fmtTokens, projectHue, quietBefore, radar, rosterGroups, sanitizeFilters, statusGroups, summary, sumUsage, urgency, usageTotal, whoLine, type FeedFilter, type RadarItem } from "./logic.ts";
+import { bySession, burnHot, captionText, burnRate, cdCommand, filterFeed, fmtAge, fmtDur, fmtTokens, projectHue, quietBefore, radar, rosterGroups, sanitizeFilters, statusGroups, summary, sumUsage, urgency, usageTotal, whoLine, type FeedFilter, type RadarItem } from "./logic.ts";
 import { bindPanelChrome } from "./panel.ts";
-import { bindModes } from "./modes.ts";
+import { backToLive, bindModes, toggleSample } from "./modes.ts";
+import { STATUS, STATUS_ORDER } from "./theme.ts";
+import { clipWords, doneRows, dropOutcome, look, nextStep, outcomeLook, statusKey, statusWord, tree } from "./triage.ts";
 import * as notify from "./notify.ts";
 import { bindFun, ringsEl } from "./fundom.ts";
 import { bindColonists } from "./colonists.ts";
@@ -25,6 +27,10 @@ const stateOf = () => office.getEnvelope()?.state;
 const offline = () => office.source.mode === "live" && office.connection.state === "retrying";
 /** Leads of a waiting session read as waiting everywhere (radar, roster, session row). */
 const effStatus = (a: ActorInfo) => (a.lead && a.status !== "blocked" && stateOf()?.sessions[a.session]?.waiting ? "waiting" : a.status);
+/** The shared STATUS key of an actor (one map for every surface, A1). */
+const keyOf = (a: ActorInfo) => statusKey(effStatus(a), stateOf()?.sessions[a.session]);
+/** Status chip: colour from the shared map, plus glyph and word (never colour alone). */
+const chip = (k: Parameters<typeof look>[0]) => { const c = el("span", "stc", statusWord(k)); c.style.setProperty("--st", look(k).color); return c; };
 
 // ---- aria live regions: structure only, batched in dom.ts; blocked/waiting go to the assertive one ----
 const announce = (s: string, hot = false) => domAnnounce(s, hot, office.source.mode === "live" ? Infinity : 3);
@@ -39,45 +45,69 @@ const SNOOZE_MS = 30 * 60_000;
 const snoozed = new Map<string, number>(Object.entries(loadJson<Record<string, number>>("snooze", {})));
 const lastReport = (id: string) => office.feed.find((i) => i.kind === "report" && i.fromId === id && i.text)?.text;
 
+const RANKED = [...STATUS_ORDER, "stuck"];
+/** Z6: NEEDS YOU, the header pill, title, favicon and chimes read the LIVE envelope, also during Replay and Sample. */
 function renderRadar(now: number) {
-  const env = office.getEnvelope();
-  if (!env) return;
-  const all = radar(office.actors(), env.state, now, (k, fb) => firstSeen.get(k) ?? (firstSeen.set(k, fb), fb), stuckMin * 60_000);
+  const sim = office.source.mode !== "live", env = sim ? office.source.liveEnvelope() : office.getEnvelope();
+  // shortcut: during a simulation the live blocked helpers are not known (main.ts holds them per displayed scene); live waits and stalls are
+  const all = env ? radar(sim ? [] : office.actors(), env.state, now, (k, fb) => firstSeen.get(k) ?? (firstSeen.set(k, fb), fb), stuckMin * 60_000) : [];
+  all.sort((a, b) => RANKED.indexOf(notify.kindOf(a)) - RANKED.indexOf(notify.kindOf(b)) || a.since - b.since); // permission is the loudest (V3)
   const keys = new Set(all.map((i) => i.key));
   for (const k of firstSeen.keys()) if (!keys.has(k)) firstSeen.delete(k);
   let changed = false;
   for (const [k, u] of snoozed) if (u <= now || !keys.has(k)) { snoozed.delete(k); changed = true; }
   if (changed) store.set("snooze", JSON.stringify(Object.fromEntries(snoozed)));
   items = all.filter((i) => !snoozed.has(i.key));
-  for (const i of items) if (!radarKeys.has(i.key) && i.kind !== "stuck") announce(i.kind === "blocked" ? `${i.label} is blocked` : `${i.project} is waiting for you`, true);
+  for (const i of items) if (!radarKeys.has(i.key) && i.kind !== "stuck") announce(`${i.label}: ${look(notify.kindOf(i)).label}`, true);
   radarKeys = new Set(items.map((i) => i.key));
-  const LABEL = { blocked: "blocked", waiting: "waiting for you", stuck: "no activity" };
-  const why = (i: RadarItem) => clip(i.reason ?? (i.kind === "blocked" ? lastReport(i.id) ?? "" : ""), 90);
-  renderIf($("radar-list"), items.map((i) => `${i.key}|${fmtAge(now - i.since)}|${why(i)}`).join(","), () =>
+  const why = (i: RadarItem) => dropOutcome(i.reason ?? (i.kind === "blocked" ? lastReport(i.id) ?? "" : "")).trim();
+  // a live row during a replay: go back to live first, then find it there
+  const open = (i: RadarItem) => { if (sim) backToLive(); pick(i.id); };
+  renderIf($("radar-list"), JSON.stringify([sim, items.map((i) => `${i.key}|${notify.kindOf(i)}|${fmtAge(now - i.since)}|${why(i)}`)]), () =>
     items.length
       ? items.map((i) => {
-        const w = el("div", `rdw ${i.kind} t${i.tier}`);
+        const k = notify.kindOf(i), w = el("div", `rdw t${i.tier}`);
+        w.style.setProperty("--st", look(k).color);
         w.setAttribute("role", "listitem");
         accent(w, i.project);
         const b = el("button", "rd");
         b.type = "button";
-        b.append(el("b", "", i.label), el("span", "", ` ${LABEL[i.kind]}${i.tier ? " (escalated)" : ""} · ${fmtAge(now - i.since)}`));
-        if (why(i)) b.append(el("span", "why", why(i)));
-        b.addEventListener("click", () => pick(i.id));
-        w.append(b);
-        if (i.kind !== "blocked") w.append(btn("Snooze", "Hide this for 30 minutes", () => { snoozed.set(i.key, Date.now() + SNOOZE_MS); store.set("snooze", JSON.stringify(Object.fromEntries(snoozed))); refresh(); }, "b sm"));
+        const head = el("span", "rh");
+        head.append(chip(k), el("b", "", ` ${i.label}`), el("span", "k", ` · ${i.tier ? "escalated · " : ""}${fmtAge(now - i.since)}`));
+        b.append(head);
+        const full = why(i);
+        if (full) { b.append(el("span", "why", clipWords(full, 140))); b.title = full; }
+        b.addEventListener("click", () => open(i));
+        const acts = el("div", "ra");
+        const go = btn("Open", sim ? "Back to live and focus it" : "Focus it in the office", () => open(i), "b sm pri");
+        go.setAttribute("aria-label", `Open ${i.label}`);
+        acts.append(go);
+        if (i.kind !== "blocked") acts.append(btn("Snooze", "Hide this for 30 minutes", () => { snoozed.set(i.key, Date.now() + SNOOZE_MS); store.set("snooze", JSON.stringify(Object.fromEntries(snoozed))); refresh(); }, "b sm"));
+        w.append(b, acts);
         return w;
       })
-      : [el("div", "k pad", "Nothing needs you.")]);
-  document.dispatchEvent(new CustomEvent("ao:radar", { detail: items.length })); // the collapsed panel toggle shows this same count
+      : [el("div", "k pad", sim ? "Nothing live needs you." : "Nothing needs you.")]);
+  document.dispatchEvent(new CustomEvent("ao:radar", { detail: items.length })); // the collapsed panel toggle and kiosk use this same count
   $("radar").classList.toggle("hot", items.length > 0);
   $("n-radar").textContent = items.length ? `(${items.length})` : "";
+  renderPill(sim);
+}
+/** The one header pill (A3, B6, H2): the loudest live item with its name and reason; during Replay/Sample the LIVE chip. */
+function renderPill(sim: boolean) {
   const n = $("need"), first = items[0];
-  n.hidden = !first;
-  if (first) {
-    n.className = first.kind === "blocked" ? "blocked" : "";
-    n.textContent = `${items.length} need${items.length === 1 ? "s" : ""} you: ${first.label} ${LABEL[first.kind]}`;
+  n.hidden = !first && !(sim && office.source.mode === "replay"); // an empty sample has its own Stop button
+  n.classList.toggle("live-chip", sim);
+  if (sim) {
+    n.style.removeProperty("--st");
+    n.textContent = `LIVE: ${items.length ? `${items.length} need${items.length === 1 ? "s" : ""} you` : "nothing needs you"} · back to live`;
+    n.title = "Stop the replay or sample and show the live office";
+    return;
   }
+  if (!first) return;
+  const k = notify.kindOf(first), why = dropOutcome(first.reason ?? "");
+  n.style.setProperty("--st", look(k).color);
+  n.textContent = `${statusWord(k)}: ${first.label}${items.length > 1 ? ` +${items.length - 1}` : ""}`;
+  n.title = `${first.label}: ${look(k).label}${why ? ` (${why})` : ""}. ${nextStep(k, first.project)} Click to open it; n cycles.`;
 }
 
 // ---- per-agent tool timeline: the state keeps only the latest call, so successive snapshots build the last 12 ----
@@ -112,53 +142,97 @@ function toolList(calls: readonly ToolCall[], hide: boolean): HTMLElement {
   return d;
 }
 
-// ---- selected card (#79 #91 #92) ----
+// ---- selected card (#79 #91 #92) = the triage card (X1, X2): state, reason, who delegated it, the next step, the tree ----
 function renderCard() {
   const c = $("card"), id = office.selected;
   const a = id ? office.actors().find((x) => x.id === id) : undefined;
-  $("card-sec").hidden = !a;
-  if (!a) { c.dataset.sig = ""; return; }
-  const rows: [string, string][] = [["role", a.lead ? "session lead" : a.role], ["session", a.project], ["status", effStatus(a)]];
-  if (a.doing) rows.push(["last tool", `${a.doing}${a.detail ? " · " + a.detail : ""}`]);
-  if (a.why) rows.push(["why", a.why]);
-  if (a.task) rows.push(["task", a.task]);
-  if (a.confidence === "guess") rows.push(["attribution", "guess (several or no matching delegations)"]);
-  if (a.branch) rows.push(["branch", a.branch]);
-  if (a.cwd) rows.push(["folder", a.cwd]);
-  if (a.chain.length) { // show the lead's name, not the raw session id
-    const up = office.actors().find((x) => x.id === a.chain[0]);
-    rows.push(["reports to", up?.label ?? a.chain[0].replace(/^lead:/, "")]);
-  }
+  if (!a) { c.dataset.sig = ""; c.replaceChildren(); return; } // renderCrumb decides whether the section shows
+  const acts = office.actors(), k = keyOf(a), sess = stateOf()?.sessions[a.session];
+  const t = tree(acts, a.id), lead = t.up[0];
   const f = office.feed;
   const last = (p: (i: FeedItem) => boolean) => f.find((i) => p(i) && i.text);
+  const report = last((i) => i.kind === "report" && i.fromId === a.id)?.text;
+  // the reason for the state, up front: the lead's prompt text, or the helper's report; never the "BLOCKED:" prefix twice (A9)
+  const reason = k === "permission" || k === "turn" ? sess?.waitingText ?? "" : k === "blocked" ? dropOutcome(report ?? "no report text") : "";
+  const rows: [string, string][] = [["role", a.lead ? "session lead" : a.role], ["session", a.project]];
+  if (a.doing) rows.push(["last tool", `${a.doing}${a.detail ? " · " + a.detail : ""}`]);
+  if (a.why) rows.push(["why", a.why]);
+  if (a.confidence === "guess") rows.push(["handed by", "a guess: several or no delegations matched this helper"]);
+  if (a.branch) rows.push(["branch", a.branch]);
+  if (a.cwd) rows.push(["folder", a.cwd]);
   const texts: [string, string | undefined][] = [
     ["prompt", last((i) => i.kind === "prompt" && i.toId === a.id)?.text],
     ["delegation received", last((i) => i.kind === "delegate" && i.toId === a.id)?.text],
     ["delegated", last((i) => i.kind === "delegate" && i.fromId === a.id)?.text],
     ["said", last((i) => i.kind === "message" && i.fromId === a.id)?.text],
-    ["report", last((i) => i.kind === "report" && i.fromId === a.id)?.text],
+    ["report", report],
   ];
-  const full = texts.filter((t): t is [string, string] => !!t[1]);
-  if (a.status === "blocked") full.sort((x, y) => +(y[0] === "report") - +(x[0] === "report")); // most relevant first
-  // The reason for a gold/red ring, up front: a waiting lead's notification, or a blocked agent's report.
-  const al = a.status === "waiting" ? ["waiting", "Needs you: " + (stateOf()?.sessions[a.session]?.waitingText ?? "waiting for input")]
-    : a.status === "blocked" ? ["blocked", "Blocked: " + (last((i) => i.kind === "report" && i.fromId === a.id)?.text ?? "no report text")] : null;
+  const full = texts.filter((x): x is [string, string] => !!x[1]);
+  if (k === "blocked") full.sort((x, y) => +(y[0] === "report") - +(x[0] === "report")); // most relevant first
   const calls = tools.get(a.id), hide = hideText();
-  renderIf(c, JSON.stringify([a.label, al, rows, full, calls, hide]), () => {
-    const out: Node[] = [el("div", "n", a.label)];
-    if (al) out.push(el("div", `al tx ${al[0]}`, al[1]));
-    const md = [`## ${a.label}`, ...rows.map(([k, v]) => `- ${k}: ${v}`), ...(al ? [`- ${al[1]}`] : []), ...full.map(([k, v]) => `\n### ${k}\n${v}`)].join("\n");
-    out.push(btn("Clear", "Deselect this agent", () => office.select(null), "b sm"), copyBtn("Copy summary", md, "Copy this agent's state as markdown"));
-    for (const [k, v] of rows) { const d = el("div", ""); d.append(el("span", "k", k + "  "), document.createTextNode(v)); d.title = a.why ?? ""; out.push(d); }
-    out.push(toolList(calls, hide));
-    full.forEach(([k, v], n) => {
+  const sig = JSON.stringify([a.label, k, reason, a.task, t.up.map((x) => x.id), t.down.map((x) => [x.id, keyOf(x)]), rows, full, calls, hide, office.source.mode]);
+  renderIf(c, sig, () => {
+    const out: Node[] = [];
+    const head = el("div", "chead");
+    head.append(el("span", "n", a.label), chip(k));
+    out.push(head);
+    if (reason) { const r = el("div", "al tx", reason); r.style.setProperty("--st", look(k).color); out.push(r); }
+    const by = a.lead ? "You, in the terminal" : lead ? `${lead.label}${a.task ? `: ${a.task}` : ""}` : a.task ?? "";
+    const kv = el("div", "kvs");
+    const put = (key: string, v: string, cls = "") => { kv.append(el("span", "k", key), el("span", cls, v)); };
+    if (by) put(a.lead ? "asked by" : "delegated by", by, "tx");
+    else if (a.task) put("task", a.task, "tx");
+    put("next", office.source.mode === "live" ? nextStep(k, a.project, lead?.label) : "This is a replay or sample: nothing to do.");
+    for (const [key, v] of rows) put(key, v, key === "folder" || key === "why" || key === "last tool" ? "tx" : "");
+    out.push(kv);
+    // X2: lead -> ... -> this agent -> its helpers, each one click away
+    if (t.up.length || t.down.length) {
+      const ul = el("ul", "tree");
+      ul.setAttribute("aria-label", "Delegation chain");
+      const li = (x: ActorInfo, depth: number, me = false) => {
+        const l = el("li");
+        l.style.setProperty("--d", String(depth));
+        if (me) l.append(el("b", "", x.label), document.createTextNode(" (this one) "), chip(keyOf(x)));
+        else { const b = btn(x.label, "Select and focus", () => pick(x.id), "sname"); l.append(b, " ", chip(keyOf(x))); }
+        ul.append(l);
+      };
+      t.up.forEach((x, i) => li(x, i));
+      li(a, t.up.length, true);
+      t.down.forEach((x) => li(x, t.up.length + 1));
+      out.push(ul);
+    }
+    const md = [`## ${a.label}: ${look(k).label}`, ...(reason ? [`- reason: ${reason}`] : []), ...(by ? [`- delegated by: ${by}`] : []), ...rows.map(([key, v]) => `- ${key}: ${v}`), ...full.map(([key, v]) => `\n### ${key}\n${v}`)].join("\n");
+    const bar = el("div", "row");
+    bar.append(btn("Focus", "Zoom to and follow it (f)", () => office.focus(a.id), "b sm"), copyBtn("Copy summary", md, "Copy this agent's state as markdown"), btn("Clear", "Deselect (Esc)", () => office.select(null), "b sm"));
+    out.push(bar, toolList(calls, hide));
+    full.forEach(([key, v], n) => {
       const d = el("details", "full");
-      d.open = n === 0;
-      d.append(el("summary", "", k), el("div", "tx", v), copyBtn("Copy", v, `Copy ${k} text`));
+      d.open = n === 0 && k !== "working";
+      d.append(el("summary", "", key), el("div", "tx", v), copyBtn("Copy", v, `Copy ${key} text`));
       out.push(d);
     });
     return out;
   });
+}
+
+// ---- Recently done (V1 in the panel): state.outcomes newest first, else the reports still in the feed ----
+function renderDone(now: number) {
+  const rows = doneRows((stateOf() as { outcomes?: Parameters<typeof doneRows>[0] } | undefined)?.outcomes, office.feed, projectOf);
+  $("n-done").textContent = rows.length ? `(${rows.length})` : "";
+  const hide = hideText();
+  renderIf($("done"), JSON.stringify([rows.map((r) => [r.key, fmtAge(now - r.t)]), hide]), () => rows.length ? rows.map((r) => {
+    const o = outcomeLook(r.outcome), b = el("button", "dn");
+    b.type = "button";
+    b.style.setProperty("--st", o.color);
+    const head = el("span", "rh"), g = el("span", "stc", `${o.glyph} ${o.label}`);
+    g.style.setProperty("--st", o.color);
+    head.append(g, el("b", "", ` ${r.name}`), el("span", "k", ` · ${r.project} · ${fmtAge(now - r.t)}`));
+    b.append(head);
+    const text = r.text || r.task;
+    if (text && !hide) { b.append(el("span", "why", clipWords(text, 120))); b.title = r.task ? `${text}\n\ntask: ${r.task}` : text; }
+    b.addEventListener("click", () => { if (office.actors().some((x) => x.id === r.agentId)) pick(r.agentId); else announce(`${r.name} has left the floor`); });
+    return b;
+  }) : [el("div", "k pad", "Nothing finished yet: when a helper reports back (done, gave up, partly done) it is listed here.")]);
 }
 
 // ---- sessions (#91 #36) + usage / burn rate (#185 #186) ----
@@ -188,7 +262,7 @@ function renderSessions(now: number) {
   const tot = sumUsage(list.map((s) => s.usage));
   $("n-sess").textContent = rows.length ? `(${rows.length})` : "";
   renderIf($("sessions"), JSON.stringify([rows.map((r) => [r.s, r.prompt, r.u, r.last ? fmtAge(now - r.last) : "", Math.round(r.rate / 1000), filter.session === r.s.id, r.c]), idleOpen]), () => {
-    if (!rows.length) return [el("div", "k pad", offline() ? "Offline: waiting for the daemon (see the banner at the top of the panel)." : "No sessions yet. Start Claude Code with the plugin, or press Sample above.")];
+    if (!rows.length) return [el("div", "k pad", offline() ? "Offline: waiting for the daemon (see the banner at the top of the panel)." : "No sessions yet. Start Claude Code with the plugin.")];
     const one = ({ s, last, prompt, rate, c }: (typeof rows)[number]) => {
       const d = el("div", c.total ? "sess hasr" : "sess");
       accent(d, s.project);
@@ -307,11 +381,13 @@ function renderRoster(now: number) {
     }
     const b = li.firstChild as HTMLButtonElement, [m, sub] = Array.from(b.children) as HTMLElement[];
     const started = a.lead ? st?.sessions[a.session]?.startedAt : st?.agents[a.id]?.startedAt;
-    const t = `${a.label}: ${a.lead ? "session lead" : a.role}, ${e.st}${started ? ` · ${fmtDur(now - started)}` : ""}`;
+    const k = keyOf(a);
+    const t = `${a.label}: ${a.lead ? "session lead" : a.role}, ${statusWord(k)}${started ? ` · ${fmtDur(now - started)}` : ""}`;
     if (m.textContent !== t) m.textContent = t;
     const task = clip(a.task ?? "", 80);
     if (sub.textContent !== task) sub.textContent = task;
     b.className = `r ${e.st}`;
+    b.style.setProperty("--st", look(k).color);
     b.title = a.why ?? a.task ?? "";
     b.setAttribute("aria-pressed", String(office.selected === a.id));
     b.tabIndex = a.id === rover ? 0 : -1;
@@ -356,7 +432,7 @@ function markHover() {
 
 // ---- feed (#77 #78): persisted + deep-linked filters, keyed rows ----
 const filter: FeedFilter = { session: "", kind: "", agent: "", muted: new Set() };
-let grouped = false, frozen: FeedItem[] | null = null, hoverSnap: FeedItem[] | null = null, pointerIn = false;
+let grouped = false, hoverSnap: FeedItem[] | null = null, pointerIn = false;
 const KINDS = ["prompt", "delegate", "report", "message", "done", "conflict"];
 const time = (t: number) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 const feedCache = new Map<string, HTMLElement>();
@@ -402,7 +478,7 @@ function feedRow(f: FeedItem): HTMLElement {
   const t = el("span", "t", time(f.t));
   head.append(el("span", "who", whoLine(f)), t);
   main.append(head);
-  if (f.text) main.append(el("span", "tx", f.text));
+  if (f.text) main.append(el("span", "tx", f.kind === "report" ? captionText(f) : f.text)); // A9: the headline already says blocked / finished
   const target = () => [f.fromId, f.toId].find((x) => x && office.actors().some((a) => a.id === x)) ?? null;
   main.addEventListener("click", () => { const id = target(); if (id) pick(id); });
   main.addEventListener("mouseenter", () => { t.title = `${fmtAge(Date.now() - f.t)} ago`; document.dispatchEvent(new CustomEvent("ao:hover", { detail: target() })); });
@@ -417,12 +493,11 @@ function feedRow(f: FeedItem): HTMLElement {
 }
 
 function renderFeed() {
-  const src = frozen ?? hoverSnap ?? office.feed;
+  const src = hoverSnap ?? office.feed;
   const all = filterFeed(src, filter);
   const shown = all.slice(0, 60);
   const i0 = hoverSnap?.[0] ? office.feed.indexOf(hoverSnap[0]) : office.feed.length;
-  const fresh = hoverSnap && !frozen ? (i0 < 0 ? office.feed.length : i0) : 0; // rows that arrived while the list was held
-  $("fd-pause").textContent = frozen ? `Resume${office.feed[0] && office.feed[0] !== frozen[0] ? " (new)" : ""}` : "Pause";
+  const fresh = hoverSnap ? (i0 < 0 ? office.feed.length : i0) : 0; // rows that arrived while the list was held
   $("fd-new").hidden = fresh === 0;
   $("fd-new").textContent = `${fresh} new`;
   const active = !!(filter.session || filter.kind || filter.agent || filter.muted.size);
@@ -482,14 +557,12 @@ function bindFeed() {
   group.addEventListener("change", () => { grouped = group.checked; saveFilters(); renderFeed(); });
   const gl = el("label", "k");
   gl.append(group, document.createTextNode(" group by session"));
-  const pause = btn("Pause", "Freeze the feed while you read", () => { frozen = frozen ? null : office.feed.slice(); renderFeed(); });
-  pause.id = "fd-pause";
   const clear = btn("Clear all", "Remove every filter and un-mute all agents", () => { filter.session = filter.kind = filter.agent = ""; filter.muted.clear(); saveFilters(); renderFeed(); renderRoster(Date.now()); renderSessions(Date.now()); });
   clear.id = "fd-clear";
   const fresh = btn("new", "Show the newest activity", () => { hoverSnap = null; $("feed").scrollTop = 0; renderFeed(); });
   fresh.id = "fd-new";
   fresh.hidden = true;
-  bar.append(sel("fd-session", "Filter by session", "session"), sel("fd-kind", "Filter by kind", "kind"), sel("fd-agent", "Filter by agent", "agent"), gl, pause, fresh, clear);
+  bar.append(sel("fd-session", "Filter by session", "session"), sel("fd-kind", "Filter by kind", "kind"), sel("fd-agent", "Filter by agent", "agent"), gl, fresh, clear);
   // hovering or reading further down freezes the list so rows do not move under the pointer
   const feed = $("feed");
   const hold = () => {
@@ -515,14 +588,26 @@ function renderStats() {
   // agents = every actor on the floor, leads included: the same number as the AGENTS list and the canvas label
   const working = as.filter((a) => a.status === "working" || a.status === "thinking").length;
   const full = `${ns} session${ns === 1 ? "" : "s"} · ${as.length} agent${as.length === 1 ? "" : "s"}${q ? ` · ${q} queued` : ""}${items.length ? ` · ${items.length} need you` : ""}${e.configError ? " · config error" : ""}`;
-  const pill = $("stats"), short = ns ? `${working} working · ${items.length} need you` : "";
+  const outs = (s as { outcomes?: { outcome?: string }[] }).outcomes;
+  const done = outs ? outs.filter((o) => o.outcome === "done").length : office.feed.filter((f) => f.kind === "report" && f.outcome === "done").length;
+  // the needs-you count lives in the pill (#need); these are the calm numbers: busy and finished (H2)
+  const pill = $("stats"), short = ns ? `${working} working · ${done} done` : "";
   pill.textContent = short + (e.configError ? " · config error" : "");
   pill.setAttribute("aria-label", short ? `${short}. ${full}` : full); // the visible numbers first, then the totals
   pill.title = `${full}. Agents include each session's lead`;
-  $("cap-stats").textContent = short;
+  $("cap-stats").textContent = `${short}${items.length ? ` · ${items.length} need you` : ""}`;
   $("empty").style.display = ns || office.source.mode !== "live" ? "none" : "block";
   $("top").classList.toggle("priv", office.privacy || office.source.private);
   document.body.classList.toggle("priv", hideText());
+  // I1: is free text on screen right now? One chip, always visible; it toggles Private (which reloads)
+  const pc = $("privchip"), hidden = hideText(), pv = office.source.private;
+  const ptxt = hidden ? "◌ text hidden" : "◉ text shown";
+  if (pc.textContent !== ptxt) pc.replaceChildren(ptxt.slice(0, 1), el("span", "pl", ptxt.slice(1)));
+  pc.setAttribute("aria-pressed", String(pv));
+  pc.title = `${hidden ? "Prompts, commands and paths are hidden" : "Prompts, commands and paths are shown"}${office.privacy ? " (the daemon blanks text)" : ""}. Click to turn Private ${pv ? "off" : "on"} (reloads).`;
+  // V2: the office protocol shapes the sessions it shows: say so
+  const nudged = (office.source.liveEnvelope()?.config.protocol ?? e.config.protocol ?? "office") === "office";
+  $("nudge").hidden = !nudged;
   const mode = office.source.mode, st = office.connection.state, live = $("live");
   const name = mode === "replay" ? "replay" : mode !== "live" ? "sample" : st === "live" ? "connected" : st === "retrying" ? "offline, retrying" : "connecting";
   if (live.getAttribute("aria-label") !== name) { live.setAttribute("aria-label", name); live.title = name; }
@@ -535,7 +620,9 @@ function refresh() {
   notify.update(items, office.sessions().filter((s) => burnHot(rateOf(s.id, now)))); // title + alerts keep working in a background tab
   if (document.hidden) return; // nobody is looking: skip the DOM work
   renderStats();
+  renderCrumb();
   renderCard();
+  renderDone(now);
   renderSessions(now);
   if (pendingSel && office.actors().some((a) => a.id === pendingSel)) { const id = pendingSel; pendingSel = null; office.select(id); }
   renderRoster(now);
@@ -550,9 +637,41 @@ function refresh() {
   }
 }
 
+// ---- scope breadcrumb (X6): All > project > agent, each a step up; Esc walks up one level ----
+function renderCrumb() {
+  const a = office.selected ? office.actors().find((x) => x.id === office.selected) : undefined;
+  const scoped = filter.session, nav = $("crumb");
+  const sig = JSON.stringify([scoped, a?.id, a?.label, a?.project]);
+  $("card-sec").hidden = !a && !scoped;
+  renderIf(nav, sig, () => {
+    const out: Node[] = [btn("All", "Show every session and clear the selection", () => { office.select(null); setFilter("session", ""); }, "crumb")];
+    const sid = a?.session ?? scoped;
+    if (sid) out.push(el("span", "sep", "▸"), btn(projectOf(sid), "Scope the panel to this session", () => { office.select(null); setFilter("session", sid); }, "crumb"));
+    if (a) out.push(el("span", "sep", "▸"), el("b", "", a.label));
+    return out;
+  });
+}
+function bindEscScope() {
+  // capture: runs before main.ts clears the selection, so one Esc walks up exactly one level
+  addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || office.selected || !filter.session) return;
+    if (document.querySelector(".dlg:not([hidden]),.view:not([hidden]),#settings:not([hidden]),.mpop:not([hidden])") || document.body.matches(".presenter,.kiosk")) return;
+    setFilter("session", "");
+  }, true);
+}
+/** Phones (H3): the toolbar lives in the sheet's "More" section, after NEEDS YOU and the lists; desktops keep it in the header. */
+function bindPlacement(tools: HTMLElement) {
+  const mq = matchMedia("(max-width:800px)");
+  const place = () => (mq.matches ? $("more-body") : $("top-tools")).append(tools);
+  mq.addEventListener("change", place);
+  place();
+}
+
 function bindFolds() {
+  const narrow = matchMedia("(max-width:800px)").matches;
   document.querySelectorAll<HTMLDetailsElement>("details.sec").forEach((d) => {
-    d.open = (store.get(`fold.${d.id}`) ?? (d.hasAttribute("open") ? "1" : "0")) !== "0";
+    const def = d.hasAttribute("open") || (narrow && d.id === "lists"); // phones: the agent list right after NEEDS YOU
+    d.open = (store.get(`fold.${d.id}`) ?? (def ? "1" : "0")) !== "0";
     d.addEventListener("toggle", () => store.set(`fold.${d.id}`, d.open ? "1" : "0"));
   });
 }
@@ -576,15 +695,23 @@ export function bindUi() {
   new ResizeObserver(() => document.documentElement.style.setProperty("--top-h", $("top").offsetHeight + "px")).observe($("top"));
   bindPanelChrome(tools);
   bindModes(tools, $("modebar"));
-  tools.append(btn("Intro", "Show or hide the intro (the ? key opens Help)", () => { $("intro").hidden = !$("intro").hidden; }));
-  $("empty-sample").addEventListener("click", () => $("sample").click());
+  $("empty-sample").addEventListener("click", toggleSample);
+  bindPlacement(tools);
+  bindEscScope();
+  for (const k of STATUS_ORDER) document.documentElement.style.setProperty(`--st-${k}`, STATUS[k].color);
+  $("privchip").addEventListener("click", () => office.source.setPrivate(!office.source.private));
   bindFolds();
   bindRadarOpts();
   bindFeed();
   bindFun();
   bindColonists();
   bindRosterKeys();
-  $("need").addEventListener("click", () => { if (items[0]) pick(items[0].id); $("radar").scrollIntoView({ block: "nearest" }); });
+  $("need").addEventListener("click", () => {
+    if (office.source.mode !== "live") { backToLive(); return; }
+    if (items[0]) pick(items[0].id);
+    if (document.body.classList.contains("collapsed")) $("tg").click();
+    $("radar").scrollIntoView({ block: "nearest" });
+  });
   document.addEventListener("ao:canvas-hover", (e) => { canvasHover = (e as CustomEvent<string | null>).detail ?? null; markHover(); });
   document.addEventListener("visibilitychange", refresh);
   office.subscribe(trackTools);

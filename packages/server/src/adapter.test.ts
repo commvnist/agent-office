@@ -94,3 +94,10 @@ test("idle_prompt notification is flagged idle; other notifications are not", ()
   assert.equal((n("idle_prompt") as { idle?: boolean }).idle, true);
   assert.equal((n("permission_prompt") as { idle?: boolean }).idle, undefined);
 });
+
+test("notification kind: permission_prompt is permission, idle_prompt is turn, unknown types are left to the reducer", () => {
+  const n = (type?: string) => adapt({ hook_event_name: "Notification", session_id: "s", message: "m", notification_type: type }, 1)[0] as { kind?: string };
+  assert.equal(n("permission_prompt").kind, "permission");
+  assert.equal(n("idle_prompt").kind, "turn");
+  assert.equal(n(undefined).kind, undefined);
+});
