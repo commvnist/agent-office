@@ -36,8 +36,9 @@ export const newLedger = (): Ledger => ({ offsets: new Map(), ids: new Map(), ba
 const LEDGER_IDS = 50_000;
 
 /**
- * Read only what was appended to a transcript since the last call (at most its last 8 MB) and add its assistant `usage`
- * fields to the ledger. Nothing else of a line is kept. Same path rules as readNarration. Never throws.
+ * Read what was appended to a transcript since the last call, 8 MB per read until caught up (a daemon restart re-reads a
+ * long transcript from the start, so the total never shrinks to its tail), and add its assistant `usage` fields to the
+ * ledger. Nothing else of a line is kept. Same path rules as readNarration. Never throws.
  * shortcut: past LEDGER_IDS messages the oldest are folded into `base`, so a very late repeat of a folded id would count twice; fine for streamed repeats, which are adjacent.
  */
 export function tallyUsage(l: Ledger, path: unknown, cwd?: unknown, home = homedir()): void {
@@ -45,32 +46,35 @@ export function tallyUsage(l: Ledger, path: unknown, cwd?: unknown, home = homed
     const real = allowed(path, cwd, home);
     if (!real) return;
     const fd = openSync(real, "r");
-    let text: string, from: number, at = l.offsets.get(real) ?? 0;
     try {
       const size = fstatSync(fd).size;
+      let at = l.offsets.get(real) ?? 0;
       if (at > size) at = 0; // replaced or truncated: start over (ids dedupe what was already counted)
-      from = Math.max(at, size - MAX_BYTES);
-      const buf = Buffer.alloc(size - from);
-      readSync(fd, buf, 0, buf.length, from);
-      text = buf.toString("utf8");
+      while (at < size) {
+        const buf = Buffer.alloc(Math.min(MAX_BYTES, size - at));
+        readSync(fd, buf, 0, buf.length, at);
+        // Resume at the start of the last (possibly unfinished) line: a line re-read later keeps its key, so it never counts twice.
+        const last = at + buf.length >= size, nl = buf.lastIndexOf(10) + 1;
+        const cut = nl || (last ? 0 : buf.length); // no newline in a full 8 MB read: one huge line, skipped
+        let pos = at;
+        for (const line of buf.subarray(0, last ? buf.length : cut).toString("utf8").split("\n")) {
+          const start = pos;
+          pos += Buffer.byteLength(line) + 1;
+          if (!line.includes('"usage"')) continue;
+          try {
+            const o = JSON.parse(line);
+            const m = o?.type === "assistant" ? o.message : undefined;
+            if (!m || typeof m.usage !== "object" || !m.usage) continue;
+            const u = m.usage, key = typeof m.id === "string" ? m.id : `${real}@${start}`; // no id: the byte offset is stable across reads
+            l.ids.delete(key); // re-insert so the newest stays last
+            l.ids.set(key, { input: n(u.input_tokens), output: n(u.output_tokens), cacheRead: n(u.cache_read_input_tokens), cacheCreate: n(u.cache_creation_input_tokens) });
+          } catch { /* partial or non-JSON line */ }
+        }
+        at += cut;
+        if (last) break;
+      }
+      l.offsets.set(real, at);
     } finally { closeSync(fd); }
-    if (from > at) { const cut = text.indexOf("\n") + 1; from += Buffer.byteLength(text.slice(0, cut)); text = text.slice(cut); } // partial first line
-    let pos = from;
-    for (const line of text.split("\n")) {
-      const start = pos;
-      pos += Buffer.byteLength(line) + 1;
-      if (!line.includes('"usage"')) continue;
-      try {
-        const o = JSON.parse(line);
-        const m = o?.type === "assistant" ? o.message : undefined;
-        if (!m || typeof m.usage !== "object" || !m.usage) continue;
-        const u = m.usage, key = typeof m.id === "string" ? m.id : `${real}@${start}`; // no id: the byte offset is stable across reads
-        l.ids.delete(key); // re-insert so the newest stays last
-        l.ids.set(key, { input: n(u.input_tokens), output: n(u.output_tokens), cacheRead: n(u.cache_read_input_tokens), cacheCreate: n(u.cache_creation_input_tokens) });
-      } catch { /* partial or non-JSON line */ }
-    }
-    // Resume at the start of the last (possibly unfinished) line: a line re-read later keeps its key, so it never counts twice.
-    l.offsets.set(real, from + Buffer.byteLength(text.slice(0, text.lastIndexOf("\n") + 1)));
     for (const [k, x] of l.ids) {
       if (l.ids.size <= LEDGER_IDS) break;
       for (const f of ["input", "output", "cacheRead", "cacheCreate"] as const) l.base[f] += x[f];
@@ -86,7 +90,7 @@ export function ledgerTotal(l: Ledger): Usage | undefined {
   return u;
 }
 
-/** Token total of one transcript (its last 8 MB). Local telemetry only; same path rules. */
+/** Token total of one transcript. Local telemetry only; same path rules. */
 export function readUsage(path: unknown, cwd?: unknown, home = homedir()): Usage | undefined {
   const l = newLedger();
   tallyUsage(l, path, cwd, home);

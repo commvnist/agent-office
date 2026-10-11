@@ -115,7 +115,9 @@ function events(p: Record<string, unknown>, session: string, agentId: string | u
     case "Notification":
     {
       // Known notification types decide the kind; otherwise the reducer reads it from the text.
-      const kind = p.notification_type === "permission_prompt" ? "permission" : p.notification_type === "idle_prompt" ? "turn" : undefined;
+      // A question tool arrives as a permission_prompt ("needs your permission to use AskUserQuestion"), but it asks for an answer: your turn.
+      const ask = typeof p.message === "string" && /\bAskUserQuestion\b/.test(p.message);
+      const kind = ask || p.notification_type === "idle_prompt" ? "turn" : p.notification_type === "permission_prompt" ? "permission" : undefined;
       return [{ type: "waiting", session, text: clip(p.message, 80) || undefined, ...(kind === "turn" ? { idle: true } : {}), kind, t }];
     }
     case "PostToolUse": {
@@ -128,7 +130,9 @@ function events(p: Record<string, unknown>, session: string, agentId: string | u
       return [{ type: "tool_end", session, agentId, tool, ok: false, error: clip(p.error ?? input.error, 120) || "failed", id, t }];
     case "PreToolUse": {
       const d = detail(tool, input);
-      const out: OfficeEvent[] = [{ type: "tool", session, agentId, tool, detail: d || undefined, why: why(tool, input, d), id, t }];
+      // Real SubagentStop payloads rarely carry last_assistant_message: a subagent's report travels as SubagentHandback's input.
+      const report = tool === "SubagentHandback" && agentId ? clip(input.message, 220) || undefined : undefined;
+      const out: OfficeEvent[] = [{ type: "tool", session, agentId, tool, detail: d || undefined, why: why(tool, input, d), id, t, ...(report ? { message: report } : {}) }];
       if ((tool === "Agent" || tool === "Task") && input.subagent_type) {
         out.push({ type: "delegate", session, from: agentId, agentType: name(input.subagent_type, "unknown"), text: clip(input.description ?? input.prompt, 140), id, t });
       } else if (/SendMessage/i.test(tool)) {

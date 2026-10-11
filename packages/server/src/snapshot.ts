@@ -8,7 +8,7 @@ export function publicState(state: OfficeState, priv: boolean): Public {
   const sessions = Object.fromEntries(Object.entries(rest.sessions).map(([k, x]) => [k,
     { ...x, prompt: undefined, why: undefined, detail: undefined, waitingText: undefined, lastError: undefined, cwd: undefined, branch: undefined, files: undefined }]));
   const agents = Object.fromEntries(Object.entries(rest.agents).map(([k, a]) => [k,
-    { ...a, task: undefined, why: undefined, detail: undefined, lastError: undefined }]));
+    { ...a, task: undefined, report: undefined, why: undefined, detail: undefined, lastError: undefined }]));
   return {
     ...rest, sessions, agents,
     log: rest.log.map((i) => ({ ...i, text: "" })),

@@ -50,7 +50,7 @@ export type OfficeEvent = Base &
     | { type: "agent_start"; session: string; agentId: string; agentType: string; t: number }
     | { type: "agent_stop"; session: string; agentId: string; message?: string; usage?: Usage; t: number }
     /** `id` = tool_use_id; `why` = plain-English reason. */
-    | { type: "tool"; session: string; agentId?: string; tool: string; detail?: string; why?: string; id?: string; t: number }
+    | { type: "tool"; session: string; agentId?: string; tool: string; detail?: string; why?: string; id?: string; t: number; /** a subagent's hand-back report (SubagentHandback input) */ message?: string }
     /** PostToolUse / PostToolUseFailure. */
     | { type: "tool_end"; session: string; agentId?: string; tool: string; ok: boolean; error?: string; id?: string; t: number }
     /** The lead (or an agent) is about to spawn `agentType` with this task text. */
@@ -117,6 +117,7 @@ export type Agent = {
   errors?: number;
   lastError?: string;
   lastDurationMs?: number; // duration of the last finished tool
+  report?: string; // its hand-back report, held until agent_stop
   lastAt?: number; // time of this agent's last event (start, tool, tool_end); compare against siblings to spot a silent helper
 };
 

@@ -367,7 +367,7 @@ Core loops, with how often users stall: glance (low), triage a blocked agent (**
 
 Built by the lead session and two Opus agents in parallel: A on core, server and docs; B on the DOM experience; the lead on the canvas. Each item was judged before building, and anything that didn't hold up was skipped with a reason.
 
-**Checks at hand-off.** Typecheck, 278 tests, the compliance check and the web build all pass. The daemon was restarted on the new code. Nothing is committed.
+**Checks at hand-off.** Typecheck, 278 tests, the compliance check and the web build all pass. Committed as 5523c35.
 
 ### Done
 
@@ -409,3 +409,20 @@ Built by the lead session and two Opus agents in parallel: A on core, server and
 | V4 and G1–G6 session-collapse level of detail | Large, and touches allocation and the scene. Chip grouping by session and the "+N · k need you" overflow landed as the first step. |
 | P1 delta streaming, P2 per-day history, P5 floors, P6 performance gate, P7 multi-machine digest, the after-action summary, and derived signals (permission latency, tool p95) | Architectural, so they're next-phase work. |
 | B10, H5 | Header and strip baseline and canvas label clamping depend on camera sizing; left for the art and layout pass. |
+
+## Finishing pass (October 2026)
+
+Every open item, in phase order. Each phase ends with typecheck, tests, compliance, the web build and a screenshot pass (desktop and 390x800; 3, 12 and 45 agents; day and night; a blocked helper, a permission prompt and a your-turn lead).
+
+### Phase 0: the vision build on real data
+
+Watched the owner's real Claude Code 2.1.296 sessions through the running daemon. Three things were wrong on real data and are fixed:
+
+| Check | Found on real data | Fix |
+|---|---|---|
+| Outcomes, wall ledger, desk cards | 140 of 155 real subagent stops carried no `last_assistant_message`, so nearly every outcome was `empty`. A real subagent hands its report back as the `SubagentHandback` tool's `message` input. | The adapter keeps that input (already allowlisted by the forwarder) on the tool event; the reducer holds it as the agent's `report` and uses it when the stop has no message. No transcript read was widened. Verified live: a probe subagent's report reached the ledger as `done`. |
+| Permission vs your-turn | The only real permission notifications were "needs your permission to use AskUserQuestion", which is Claude asking a question. | A question prompt is now your turn (cyan `?`), in the adapter and in the replay fallback for stored events. |
+| Mid-turn spend | After a daemon restart the ledger read only the last 8 MB of a transcript; the owner's 48 MB lead transcript showed about 155k output tokens instead of 918k. | A fresh ledger catches up from the start, still at most 8 MB per read (0.2 s for 48 MB). |
+| Junction LEDs | The pod of a working real helper shows its lit tick. | No change. |
+
+Not observable from here: a real tool-permission prompt (this session runs without them), and `idle_prompt` (it fires after a minute at the prompt, and none was stored). Both paths are covered by adapter and reducer tests with the documented payloads.

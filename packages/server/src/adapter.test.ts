@@ -10,6 +10,19 @@ test("maps subagent and tool hooks, ignores unknown events", () => {
   assert.deepEqual(adapt({ hook_event_name: "SessionStart" }), []);
 });
 
+test("a subagent's SubagentHandback carries its report; the lead's or another tool's does not", () => {
+  const base = { hook_event_name: "PreToolUse", session_id: "s", tool_name: "SubagentHandback", tool_input: { message: "DONE: shipped" } };
+  assert.equal((adapt({ ...base, agent_id: "a" })[0] as { message?: string }).message, "DONE: shipped");
+  assert.equal((adapt(base)[0] as { message?: string }).message, undefined);
+  assert.equal((adapt({ ...base, agent_id: "a", tool_name: "Bash" })[0] as { message?: string }).message, undefined);
+});
+
+test("a question prompt is your turn, a tool permission prompt is permission", () => {
+  const n = (message: string) => adapt({ hook_event_name: "Notification", session_id: "s", notification_type: "permission_prompt", message })[0] as { kind?: string };
+  assert.equal(n("Claude needs your permission to use AskUserQuestion").kind, "turn");
+  assert.equal(n("Claude needs your permission to use Bash").kind, "permission");
+});
+
 test("Agent tool call yields a tool event plus a delegation with the task text", () => {
   const evs = adapt({ hook_event_name: "PreToolUse", session_id: "s", tool_name: "Agent",
     tool_input: { subagent_type: "qa-engineer", description: "Write tests for the cart", prompt: "long..." } }, 1);

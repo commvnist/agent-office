@@ -320,14 +320,15 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
       s = { ...s, track: { ...s.track!, seen: [...s.track!.seen, `${e.session}|stopped|${e.agentId}`].slice(-LIMITS.track) } };
       let n = promote(cfg, { ...s, agents, queue: s.queue.filter((id) => id !== e.agentId) }, e.t);
       if (a) {
-        const outcome = outcomeOf(e.message);
+        const msg = e.message ?? a.report;
+        const outcome = outcomeOf(msg);
         const task = n.tasks!.find((x) => x.agentId === a.id)?.id;
         n = patchTask(n, task, { status: outcome === "blocked" ? "blocked" : "done", endedAt: e.t });
         const durationMs = a.startedAt === undefined ? undefined : Math.max(0, e.t - a.startedAt);
         n = { ...n, outcomes: [{ session: e.session, project: n.sessions[e.session]?.project, agentId: a.id, name: a.seat?.name, role: a.role, outcome,
-          text: firstLine(e.message), task: a.task, t: e.t, durationMs }, ...n.outcomes!].slice(0, LIMITS.outcomes) };
+          text: firstLine(msg), task: a.task, t: e.t, durationMs }, ...n.outcomes!].slice(0, LIMITS.outcomes) };
         n = say(n, {
-          t: e.t, kind: "report", session: e.session, from: a.id, to: a.parent, text: e.message ?? "",
+          t: e.t, kind: "report", session: e.session, from: a.id, to: a.parent, text: msg ?? "",
           outcome, stoppedAt: e.t, durationMs,
           toolCount: a.toolCount, queueWaitMs: a.queueWaitMs, usage: e.usage,
         });
@@ -337,7 +338,7 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
     case "tool": {
       const a = e.agentId ? s.agents[e.agentId] : undefined;
       const sess = s.sessions[e.session];
-      const agents = a ? { ...s.agents, [a.id]: { ...a, doing: e.tool, detail: e.detail, why: e.why, busyAt: e.t, toolCount: (a.toolCount ?? 0) + 1 } } : s.agents;
+      const agents = a ? { ...s.agents, [a.id]: { ...a, ...(e.message ? { report: e.message } : {}), doing: e.tool, detail: e.detail, why: e.why, busyAt: e.t, toolCount: (a.toolCount ?? 0) + 1 } } : s.agents;
       // No agent id means the lead itself is working; only the lead's own activity answers its prompt (a helper's never does).
       const sessions = { ...s.sessions, [sess.id]: {
         ...sess, ...(e.agentId ? {} : CLEAR_WAIT), toolCounts: bump(sess.toolCounts, e.tool.slice(0, KEY_MAX), TOOLS_MAX),
@@ -396,7 +397,7 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
         s = { ...s, agents };
       }
       // Stored events from before waitKind carry no kind: idle = your turn, otherwise only text naming a permission is one.
-      const waitKind = e.kind ?? (e.idle || !/permission/i.test(e.text ?? "") ? "turn" : "permission");
+      const waitKind = e.kind ?? (e.idle || !/permission/i.test(e.text ?? "") || /\bAskUserQuestion\b/.test(e.text ?? "") ? "turn" : "permission");
       return patchSession(s, e.session, { waiting: true, waitKind, waitingText: e.text, ...(e.idle ? { doing: undefined, detail: undefined, why: undefined, prompt: undefined } : {}) });
     }
   }

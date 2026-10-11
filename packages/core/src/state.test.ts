@@ -404,6 +404,7 @@ test("waitKind: explicit kind wins; without one, only text naming a permission i
   assert.equal(run(wait("x", "turn")).sessions.s1.waitKind, "turn");
   assert.equal(run(wait("Claude needs your permission to use Edit")).sessions.s1.waitKind, "permission");
   assert.equal(run(wait("Claude is waiting for your input")).sessions.s1.waitKind, "turn");
+  assert.equal(run(wait("Claude needs your permission to use AskUserQuestion")).sessions.s1.waitKind, "turn", "a question asks for an answer");
 });
 
 test("outcomes: newest first, one-line result plus task, bounded, kept after the session ends; agents carry lastAt", () => {
@@ -418,6 +419,14 @@ test("outcomes: newest first, one-line result plus task, bounded, kept after the
   for (let i = 0; i < 40; i++) s = reduce(cfg, reduce(cfg, s, { ...start(`b${i}`), t: i }), { type: "agent_stop", session: "s1", agentId: `b${i}`, message: `PARTIAL: ${i}`, t: 100 + i });
   assert.equal(s.outcomes!.length, LIMITS.outcomes);
   assert.equal(s.outcomes![0].text, "PARTIAL: 39");
+});
+
+test("a stop without a message takes the report the agent handed back", () => {
+  let s = run(lead({ type: "session_start", project: "p" }), { ...start("a"), t: 5 });
+  s = reduce(cfg, s, lead({ type: "tool", agentId: "a", tool: "SubagentHandback", message: "BLOCKED: no access", t: 9 }));
+  s = reduce(cfg, s, { type: "agent_stop", session: "s1", agentId: "a", t: 10 });
+  assert.equal(s.outcomes![0].outcome, "blocked");
+  assert.equal(s.outcomes![0].text, "BLOCKED: no access");
 });
 
 test("a usage event updates the session's running total, never lowering it", () => {

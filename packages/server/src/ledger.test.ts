@@ -43,3 +43,11 @@ test("ledger: a window that slides past old messages never shrinks the running t
   assert.equal(ledgerTotal(l)!.output, 8);
   assert.equal(ledgerTotal(newLedger()), undefined);
 });
+
+test("ledger: a fresh ledger (daemon restart) counts a transcript longer than 8 MB from its start, 8 MB per read", () => {
+  const f = join(dir, "long.jsonl"), pad = JSON.stringify({ type: "user", text: "x".repeat(1_000_000) }) + "\n";
+  writeFileSync(f, line("first", 7) + pad.repeat(10) + line("last", 1));
+  const l = newLedger();
+  tallyUsage(l, f, undefined, home);
+  assert.equal(ledgerTotal(l)!.output, 8);
+});

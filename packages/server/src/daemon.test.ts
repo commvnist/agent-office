@@ -198,6 +198,13 @@ test("spend: the session total includes subagent transcripts and refreshes durin
   assert.equal(s.state.outcomes[0].text, "DONE: ok");
   await post(d, { hook_event_name: "Stop", session_id: "u1", transcript_path: lead, cwd });
   assert.equal((await st(d)).state.sessions.u1.usage.output, 105, "Stop keeps the subagent share");
+  // Real payloads usually omit last_assistant_message: the report arrives as SubagentHandback's input before the stop.
+  await post(d, { hook_event_name: "SubagentStart", session_id: "u1", agent_id: "a2", agent_type: "qa-engineer" });
+  await post(d, { hook_event_name: "PreToolUse", session_id: "u1", agent_id: "a2", tool_name: "SubagentHandback", tool_input: { message: "BLOCKED: no access" } });
+  await post(d, { hook_event_name: "SubagentStop", session_id: "u1", agent_id: "a2", cwd });
+  const o = (await st(d)).state.outcomes[0];
+  assert.equal(o.outcome, "blocked");
+  assert.equal(o.text, "BLOCKED: no access");
 });
 
 test("observe protocol injects no context and never denies a spawn; the envelope names the protocol", async () => {
