@@ -17,7 +17,7 @@ import { dev, setDpr } from "./snap.ts";
 import { clip, store } from "./dom.ts";
 import { ticketTex } from "./ticket.ts";
 import { hash } from "./color.ts";
-import { alertsFor, boardLines, crowdLod, doorHold, holds, loadLevel, newAlerts, feedItem, isWorking, pickPartner, pickStroller, planInteraction, sessionHue, shrinkFloor, pushCapped, courierDue, statusOf, stepHold, couchSeats, tetherAlpha, ticketEnd, ticketFor, ticketT, yieldsTo, TICKET_MS, uniqueNames, type Action, type PlanCtx, type Shrink, type StrollCand, type Ticket } from "./choreo.ts";
+import { courierGuard, alertsFor, boardLines, crowdLod, doorHold, holds, loadLevel, newAlerts, feedItem, isWorking, pickPartner, pickStroller, planInteraction, sessionHue, shrinkFloor, pushCapped, courierDue, statusOf, stepHold, couchSeats, tetherAlpha, ticketEnd, ticketFor, ticketT, yieldsTo, TICKET_MS, uniqueNames, type Action, type PlanCtx, type Shrink, type StrollCand, type Ticket } from "./choreo.ts";
 import { advance, connect, newCursor, type Envelope } from "./net.ts";
 import { camera, bindPointer, isNarrow, phoneScale, pickAuto } from "./camera.ts";
 import { hooks, liveIn, office, publish, pushFeed, setConnection, isPresenter, type ActorInfo, type SessionInfo } from "./api.ts";
@@ -694,14 +694,9 @@ function stepCourier(dt: number, now: number) {
   else if (courier.path.length) {
     const n = feet(courier.path[0]), dx = n.x - courier.x, dy = n.y - courier.y, dist = Math.hypot(dx, dy);
     let yield_ = false;
-    let near = false; // anticipate: a walker within 2.2 tiles stops the courier; one within a tile fades it, so the two never read as overlapping
-    for (const a of actors.values()) {
-      if (a.sitting) continue;
-      const dd = Math.hypot(a.pos.x - courier.x, a.pos.y - courier.y);
-      if (dd < T * 2.2) yield_ = true;
-      if (dd < T) near = true;
-    }
-    sp.alpha = near ? 0.3 : 1;
+    const g = courierGuard(courier.x, courier.y, [...actors.values()].filter((a) => !a.sitting).map((a) => a.pos), T);
+    yield_ = g.wait;
+    sp.alpha = g.fade ? 0.3 : 1;
     if (!yield_) {
       const st = Math.min(dist, 34 * dt);
       if (dist > 0) { courier.x += (dx / dist) * st; courier.y += (dy / dist) * st; }

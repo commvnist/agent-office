@@ -273,3 +273,12 @@ test("courierDue: rate cap, alert, live and ambient gates", () => {
   assert.equal(courierDue(t, 0, { ...ok, live: true }), false);
   assert.equal(courierDue(t, 0, { ...ok, ambient: false }), false);
 });
+
+test("courier guard: waits for a walker within 2.2 tiles, ghosts within 1, ignores far ones", async () => {
+  const { courierGuard } = await import("./choreo.ts");
+  const T = 16;
+  assert.deepEqual(courierGuard(0, 0, [{ x: 100, y: 0 }], T), { wait: false, fade: false });
+  assert.deepEqual(courierGuard(0, 0, [{ x: 30, y: 0 }], T), { wait: true, fade: false });
+  assert.deepEqual(courierGuard(0, 0, [{ x: 10, y: 0 }], T), { wait: true, fade: true });
+  assert.deepEqual(courierGuard(0, 0, [], T), { wait: false, fade: false });
+});

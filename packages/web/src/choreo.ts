@@ -379,3 +379,14 @@ export function courierDue(now: number, last: number, o: { live: boolean; alert:
   if (o.live || o.alert || !o.ambient || now - last < COURIER_GAP_MS) return false;
   return now % COURIER_GAP_MS >= hash(`courier${Math.floor(now / COURIER_GAP_MS)}`) % (COURIER_GAP_MS / 2);
 }
+
+/** Courier vs walkers: wait for anyone within 2.2 tiles, ghost within 1 tile, so the two never read as overlapping. `walkers` are non-seated positions in art px. */
+export function courierGuard(cx: number, cy: number, walkers: Iterable<{ x: number; y: number }>, tile: number): { wait: boolean; fade: boolean } {
+  let wait = false, fade = false;
+  for (const w of walkers) {
+    const d = Math.hypot(w.x - cx, w.y - cy);
+    if (d < tile * 2.2) wait = true;
+    if (d < tile) fade = true;
+  }
+  return { wait, fade };
+}

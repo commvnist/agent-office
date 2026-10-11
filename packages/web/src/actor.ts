@@ -588,6 +588,12 @@ export class Actor {
   /** Screen-space floor rect after syncUi, or null when no floor bounds are set. */
   floorPx(): Rect | null { return floor ? this.flr : null; }
 
+  /** Walking within ~1.6 tiles of the door: arrivals bunch up there, so their tags would pile into a column; a pip stands in until they are clear of it. */
+  get atDoor(): boolean {
+    if (this.sitting) return false;
+    const f = feet(this.door);
+    return Math.hypot(this.pos.x - f.x, this.pos.y - f.y) < T * 1.6;
+  }
   /** Screen-space box of the name tag after syncUi (for label stacking); alerts keep their place. */
   tagBox(): Box {
     return { x: this.tag.x, y: this.tag.y, w: this.tag.width, h: this.tag.height, pri: this.alert ? 1 : 0, dir: this.lead ? 1 : undefined };
@@ -680,7 +686,11 @@ export function tagHits(cx: number, cy: number, w: number, h: number): boolean {
 export function layoutTags(actors: Iterable<Actor>): number {
   tagList.length = 0;
   tagBoxes.length = 0;
-  for (const a of actors) if (!a.low) { tagList.push(a); tagBoxes.push(a.tagBox()); }
+  for (const a of actors) {
+    if (a.low) continue;
+    if (a.atDoor) { a.placeTag(0, true); continue; } // not stacked: a pip until clear of the door
+    tagList.push(a); tagBoxes.push(a.tagBox());
+  }
   hidden.length = 0;
   hidden.length = tagList.length; hidden.fill(false);
   const dy = stackLabels(tagBoxes, tagList[0]?.floorPx() ?? undefined, hidden);
