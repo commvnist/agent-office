@@ -1,9 +1,9 @@
 import { Container, Graphics, Sprite, Text } from "pixi.js";
 import { TILE_PX, type Tile } from "@agent-office/core";
 import { dev } from "./snap.ts";
-import { personTex, emoteTex, ringTex, toolIconTex, type Dir, type Emote, type Expr, type Look } from "./sprites.ts";
+import { personTex, emoteTex, ringTex, toolIconTex, badgeIconTex, pipTex, PIP, type Dir, type Emote, type Expr, type Look } from "./sprites.ts";
 import { easeSpeed, fontPx, settings, stackBubbles, textZoom, type BubbleBox } from "./settings.ts";
-import { STATUS, theme } from "./theme.ts";
+import { KEY, STATUS, theme } from "./theme.ts";
 import { HOP_MS, JITTER_MS, SQUASH_MS, cleanText, clampBox, hopPose, idleTier, jitterX, microPose, microSlot, sipState, popScale, quirkAt, squashY, stackLabels, statusOf, stepDrop, type Status, toolIcon, type Box, type Rect } from "./choreo.ts";
 import { hash } from "./color.ts";
 
@@ -43,18 +43,6 @@ const all = new Set<Actor>(); // live actors, for neighbour glances
 let floor: Rect | null = null;
 export function setFloorBounds(r: Rect) { floor = r; }
 
-/** Small event-type glyph in a chip on the bubble's top-left corner. */
-function drawBadge(g: Graphics, b: Badge, fg: number, bg: number) {
-  g.roundRect(-5, -6, 14, 14, 3).fill(fg);
-  const s = { width: 1.5, color: bg };
-  if (b === "prompt") g.moveTo(0, -2).lineTo(4, 1).lineTo(0, 4).stroke(s);
-  else if (b === "delegate") g.moveTo(-1, 1).lineTo(6, 1).moveTo(3, -2).lineTo(6, 1).lineTo(3, 4).stroke(s);
-  else if (b === "report") g.moveTo(-1, 1).lineTo(1, 4).lineTo(6, -2).stroke(s);
-  else if (b === "guess") g.moveTo(0, -2).lineTo(5, -2).lineTo(5, 0).lineTo(2.5, 1.5).lineTo(2.5, 2.5).stroke(s).rect(2, 4, 1, 1).fill(bg); // "?"
-  else if (b === "tool") g.rect(0, -2, 5, 5).stroke(s).moveTo(2.5, -3).lineTo(2.5, 5).stroke(s);
-  else g.rect(-1, -2, 8, 6).stroke(s).moveTo(-1, -2).lineTo(3, 1).lineTo(7, -2).stroke(s);
-}
-
 let blank = false;
 /** Stream-safe: new and live bubbles show an ellipsis instead of free text; the caller refreshes actors on change. */
 export const setBubbleBlank = (b: boolean) => { const c = blank !== b; blank = b; return c; };
@@ -66,36 +54,40 @@ function makeBubble(text: string, kind: BubbleKind, badge?: Badge): Container {
     text: blank ? "…" : cleanText(text),
     style: { fontFamily: MONO, fontSize: fontPx(small ? 10 : 12), fill: st.fg, wordWrap: true, wordWrapWidth: Math.round((small ? 190 : 210) * u), lineHeight: Math.round((small ? 14 : 16) * u) },
   });
+  // radius, stroke, tail and chip follow the text zoom in whole pixels (an even stroke stays on the pixel grid when centred)
   const pad = Math.round(7 * u), w = Math.ceil(t.width) + pad * 2, h = Math.ceil(t.height) + pad * 2;
+  const sw = 2 * Math.max(1, Math.round(u)), tw = Math.max(3, Math.round(6 * u)), th = Math.max(4, Math.round(8 * u)), cx = Math.round(w / 2);
   const g = new Graphics();
-  g.roundRect(0, 0, w, h, 6).fill(st.bg).stroke({ width: 2, color: st.border });
-  g.poly([w / 2 - 6, h - 1, w / 2 + 6, h - 1, w / 2, h + 8]).fill(st.bg);
-  g.moveTo(w / 2 - 6, h).lineTo(w / 2, h + 8).lineTo(w / 2 + 6, h).stroke({ width: 2, color: st.border });
+  g.roundRect(0, 0, w, h, Math.max(2, Math.round(6 * u))).fill(st.bg).stroke({ width: sw, color: st.border });
+  g.poly([cx - tw, h - sw / 2, cx + tw, h - sw / 2, cx, h + th]).fill(st.bg);
+  g.moveTo(cx - tw, h).lineTo(cx, h + th).lineTo(cx + tw, h).stroke({ width: sw, color: st.border });
   t.position.set(pad, pad);
   const c = new Container();
   c.addChild(g, t);
-  if (badge) {
-    const b = new Graphics(), ic = kind === "tool" ? toolIcon(text) : null;
-    if (ic) { // tool family icon in the corner chip; the text stays for what the icon cannot say
-      b.roundRect(-5, -6, 14, 14, 3).fill(st.border);
-      const s = new Sprite(toolIconTex(ic));
-      s.tint = st.bg; s.scale.set(1.5); s.position.set(-3.25, -4.25);
-      c.addChild(b, s);
-    } else { drawBadge(b, badge, st.border, st.bg); c.addChild(b); }
+  if (badge) { // corner chip: a square plate with a 7x7 pixel glyph at a whole-number scale (tool family icon, else the event type)
+    const ic = kind === "tool" ? toolIcon(text) : null, k = Math.max(1, Math.round(1.5 * u)), m = Math.max(1, Math.round(2 * u)), o = Math.round(5 * u);
+    const b = new Graphics().rect(-o, -o, 7 * k + 2 * m, 7 * k + 2 * m).fill(st.border);
+    const s = new Sprite(ic ? toolIconTex(ic) : badgeIconTex(badge));
+    s.tint = st.bg; s.scale.set(k); s.position.set(m - o, m - o);
+    c.addChild(b, s);
   }
-  c.pivot.set(w / 2, h + 8);
+  c.pivot.set(cx, h + th);
   return c;
 }
 
-/** A status pip at (x, y): dot = working, "!" = waiting, x = blocked, square = queued, ring = idle (shape, not colour alone). */
-export function pipShape(g: Graphics, x: number, y: number, r: number, s: Status, waitKind: WaitKind): Graphics {
-  const rim = { width: 1.5, color: 0x0e0d16 };
-  if (s === "working") g.circle(x, y, r).fill(0x4ade80).stroke(rim); // dot
-  else if (s === "waiting") g.circle(x, y, r + 1).fill(Number.parseInt(STATUS[waitKind].color.slice(1), 16)).stroke(rim).rect(x - 0.8, y - r * 0.7, 1.6, r * 0.8).fill(0x1d1b2b).rect(x - 0.8, y + r * 0.3, 1.6, 1.6).fill(0x1d1b2b); // "!"
-  else if (s === "blocked") g.circle(x, y, r + 1).fill(Number.parseInt(STATUS.blocked.color.slice(1), 16)).stroke(rim).moveTo(x - r * 0.5, y - r * 0.5).lineTo(x + r * 0.5, y + r * 0.5).moveTo(x + r * 0.5, y - r * 0.5).lineTo(x - r * 0.5, y + r * 0.5).stroke({ width: 1.5, color: 0xffffff }); // x
-  else if (s === "queued") g.rect(x - r, y - r, r * 2, r * 2).fill(0xffffff).stroke(rim); // square
-  else g.circle(x, y, r).stroke({ width: 2, color: 0xaab0c8 }); // ring
-  return g;
+/** Status pip sprite scale for a pip of radius r screen px: a whole number, so the 9x9 pixel pip never resamples. */
+export const pipScale = (r: number) => Math.max(1, Math.round((2 * r) / PIP));
+/** Point a pip sprite (anchor centred) at the texture for status `s`, at a whole-number scale for radius r. */
+export function setPip(sp: Sprite, s: Status, waitKind: WaitKind, r: number): Sprite {
+  sp.texture = pipTex(s, waitKind);
+  sp.anchor.set(0.5);
+  sp.scale.set(pipScale(r));
+  return sp;
+}
+/** Centre a pip sprite near (x, y) with its top-left corner on a whole pixel (its side is 9 x scale, often odd). */
+export function placePip(sp: Sprite, x: number, y: number) {
+  const w = sp.width;
+  sp.position.set(dev(x - w / 2) + w / 2, dev(y - w / 2) + w / 2);
 }
 
 /** Fixed screen boxes (x = centre, y = top) that name tags and bubbles must keep clear of: the session badges (main.ts fills it per frame). */
@@ -166,7 +158,7 @@ export class Actor {
   private emoteKey = "";
   private emoteBorn = 0;
   low = false; // LOD: see setLod
-  readonly pip = new Graphics(); // LOD status pip, screen space
+  readonly pip = new Sprite(); // LOD status pip (a 9x9 pixel texture per state), screen space
   demoted = false; // tag swapped for the pip because the floor was too crowded
   onScreen = true;
   private ringScr = { x: 0, y: 0, w: 0, h: 0 }; // the world ring's screen box after syncUi (label stacking) // after syncUi: off-screen tags are not stacked (their floor rect is not the visible one)
@@ -214,7 +206,7 @@ export class Actor {
     // hit box padded by ~8 screen px so it stays grabbable at fit zoom (#117)
     this.c.hitArea = { contains: (x: number, y: number) => { const p = 8 / this.sc; return x > -12 - p && x < 12 + p && y > -30 - p && y < 4 + p; } };
     world.addChild(this.c);
-    this.tag = new Text({ text: label, style: { fontFamily: MONO, fontSize: fontPx(11), fill: 0xffffff, stroke: { color: 0x0e0d16, width: 3 } } });
+    this.tag = new Text({ text: label, style: { fontFamily: MONO, fontSize: fontPx(11), fill: KEY.text.fg, stroke: { color: KEY.env[0], width: 3 } } });
     this.tag.anchor.set(0.5, 0);
     this.glyph.anchor.set(0.5, 1);
     this.ring.anchor.set(0.5);
@@ -246,7 +238,7 @@ export class Actor {
     const q = this.queued && this.qpos ? ` #${this.qpos}` : "";
     const st = this.alert === "blocked" ? STATUS.blocked : this.alert === "waiting" ? STATUS[this.waitKind] : null;
     this.tag.text = `${st ? st.glyph + " " : ""}${lines.join("\n")}${q}${this.idle ? " (idle)" : this.staleMin ? ` idle ${this.staleMin}m` : ""}`;
-    this.tag.style.fill = st ? Number.parseInt(st.color.slice(1), 16) : 0xffffff;
+    this.tag.style.fill = st ? st.color : KEY.text.fg;
   }
   /** "idle Nm" tag suffix once the agent is stale; 0 clears. */
   setStaleMin(n: number) {
@@ -286,18 +278,25 @@ export class Actor {
   }
   setHover(b: boolean) { this.hover = b; this.drawMark(); }
   setSelected(b: boolean) { this.selected = b; this.drawMark(); }
+  private markKey = "";
+  /** HUD reticle: corner brackets around the person, drawn as whole-pixel rects at scale 1 (uniform, never stretched); selected adds mid-edge ticks. */
   private drawMark() {
-    this.mark.clear();
-    this.mark.visible = this.hover || this.selected;
-    if (!this.mark.visible) return;
-    // HUD reticle: corner brackets around the person; selected adds mid-edge ticks
-    const sel = this.selected, col = sel ? 0x7fe3ff : 0x5aa9c9, w = 11, h = 15, L = sel ? 5 : 4, m = this.mark;
-    for (const sx of [-1, 1]) for (const sy of [-1, 1]) m.moveTo(sx * w, sy * (h - L)).lineTo(sx * w, sy * h).lineTo(sx * (w - L), sy * h);
-    m.stroke({ width: sel ? 1.5 : 1, color: col });
-    if (sel) {
-      for (const sx of [-1, 1]) m.moveTo(sx * w, -1).lineTo(sx * (w - 2), -1).moveTo(sx * w, 1).lineTo(sx * (w - 2), 1);
-      m.stroke({ width: 1, color: col, alpha: 0.8 });
+    const on = this.hover || this.selected, m = this.mark;
+    m.visible = on;
+    if (!on) { if (this.markKey) { this.markKey = ""; m.clear(); } return; }
+    const sel = this.selected, sc = this.sc, sit = this.sitting;
+    const key = `${+sel}${sc}${+sit}`;
+    if (key === this.markKey) return;
+    this.markKey = key;
+    const W = Math.round(11 * sc), H = Math.round((sit ? 12 : 15) * sc), L = Math.max(2, Math.round((sel ? 5 : 4) * sc)), t = Math.max(1, Math.round(sc * (sel ? 0.6 : 0.4)));
+    m.clear();
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+      const x = sx < 0 ? -W : W - t, y = sy < 0 ? -H : H - t;
+      m.rect(x, sy < 0 ? -H : H - L, t, L).rect(sx < 0 ? -W : W - L, y, L, t);
     }
+    const Lh = Math.round(L / 2);
+    if (sel) for (const sx of [-1, 1]) m.rect(sx < 0 ? -W : W - Lh, -Math.ceil(t / 2), Lh, t);
+    m.fill(sel ? 0x7fe3ff : 0x5aa9c9);
   }
   /** Labeled idle ambient visit: walk to `to`, linger, return home. No speech; main.ts decides when. */
   idleStroll(to: Tile, ms: number, toward?: { x: number; y: number }, couch?: { x: number; y: number }) {
@@ -388,7 +387,7 @@ export class Actor {
     const key = `${s}${this.waitKind}${r}`;
     if (key === this.pipKey) return;
     this.pipKey = key;
-    pipShape(this.pip.clear(), 0, 0, r, s, this.waitKind);
+    setPip(this.pip, s, this.waitKind, r);
   }
   /** Collapsed crew (main.ts): the sprite and every overlay hide; the desk keeps showing the work. */
   hidden = false;
@@ -460,7 +459,8 @@ export class Actor {
     // --- pose
     const sit = !moving && this.sitting;
     const pc = this.perch;
-    if (sit || pc) this.dir = "down", this.flip = false;
+    if (sit) this.dir = "down", this.flip = false;
+    else if (pc) this.dir = "up", this.flip = false; // the couch faces its table: the lounger is seen from behind
     if (sit && !this.wasSitting && !settings.reducedMotion) { this.nudge = 1; this.settle = 0.8; } // chair pull-out, then a small settle into the seat
     this.wasSitting = sit;
     const still = settings.reducedMotion;
@@ -504,8 +504,7 @@ export class Actor {
       think: (glancing && !this.working) || (this.sip === "sip" && !glancing), // the glance turns the head only; arms keep the think pose
       raise: this.alert === "waiting" && !moving && !pc, // waiting on you: a hand goes up (readable at pod scale without a UI mark)
     });
-    const ls = this.lead ? 1.08 : 1;
-    this.sprite.scale.x = (glancing ? this.glanceFlip : this.flip) ? -ls : ls;
+    this.sprite.scale.x = (glancing ? this.glanceFlip : this.flip) ? -1 : 1; // leads at 1x too: whole art pixels; the padded shoulders are the lead cue
     this.sprite.tint = this.stale ? 0x8a8a9c : 0xffffff;
     // fade in/out near the door (#110); sitting agents are never dimmed
     const dd = Math.hypot(this.pos.x - feet(this.door).x, this.pos.y - feet(this.door).y);
@@ -517,18 +516,19 @@ export class Actor {
     this.nudge = Math.max(0, this.nudge - dt * 4);
     const hp = hopPose(this.hopMs);
     this.sprite.x = (standing && !still && !settings.ambientPaused && (now + this.h * 7) % 5000 < 240 ? 1 : 0) + jitterX(this.jitterMs); // occasional weight shift + error jitter
-    this.sprite.y = hp.y - this.nudge * 3 - lean; // up = away from the desk below
-    this.sprite.scale.y = ls * hp.sy * squashY(this.squashMs) * (1 - 0.1 * Math.sin(this.settle * Math.PI));
+    this.sprite.y = Math.round(hp.y - this.nudge * 3) - lean; // up = away from the desk below; whole art px (stepped)
+    const th = this.sprite.texture.height; // squash/settle in whole art rows: the figure steps, it never resamples to a fractional height
+    this.sprite.scale.y = Math.max(1, Math.round(th * hp.sy * squashY(this.squashMs) * (1 - 0.1 * Math.sin(this.settle * Math.PI)))) / th;
     // lanes: walkers keep 2px to their right so opposite flows pass; standing, seated and couch figures sit on their tile
     const k = moving && !pc ? 2 : 0;
     const tx = this.dir === "down" ? -k : this.dir === "up" ? k : 0, ty = this.dir === "side" ? (this.flip ? -k : k) : 0;
     if (still) { this.lx = tx; this.ly = ty; } else { const f = Math.min(1, dt * 12); this.lx += (tx - this.lx) * f; this.ly += (ty - this.ly) * f; }
     this.c.position.set(Math.round(this.pos.x + this.lx + this.lineX), Math.round(this.pos.y + this.ly));
-    this.c.zIndex = this.pos.y + (pc ? 2 : 0); // on the couch: above its back and cushions (sorted at its bottom edge)
-    // --- emote: explicit one wins, else thinking dots while seated and idle, else waiting-in-line
+    this.c.zIndex = this.pos.y + (pc ? 2 : 0); // on the couch: above its cushions, under its back rail (scene.ts stacks the rail at +3)
+    // --- emote: explicit one wins, else waiting-in-line. A seated agent that is thinking shows dots on its monitor (scene.ts), not a
+    // cloud: the cloud sat on the leaned-back pose and landed on the desk row above
     if (this.emote && (this.emote.left -= ms) <= 0) this.emote = null;
     let e: Emote | null = this.emote?.e ?? null;
-    if (!e && sit && !this.working && this.thinking) e = (still || settings.ambientPaused ? "dots1" : `dots${Math.floor(now / 350) % 3}`) as Emote;
     if (!e && this.queued && !moving) e = "question";
     const ek = e ? (e.startsWith("dots") ? "dots" : e) : "";
     if (ek !== this.emoteKey) { this.emoteKey = ek; this.emoteBorn = now; }
@@ -578,7 +578,7 @@ export class Actor {
       this.speech.node.scale.set(settings.reducedMotion ? 1 : popScale(this.t - this.speech.born));
     }
     this.headPip.x = sx; this.headPip.y = headY + 4;
-    if (this.low) { this.drawPip(Math.max(3, sc * 2)); this.pip.position.set(sx, headY + 4); }
+    if (this.low) { this.drawPip(Math.max(3, sc * 2)); placePip(this.pip, sx, headY + 4); }
     if (this.toolBubble) {
       this.toolBubble.node.visible = !this.speech && !this.low && !this.hidden;
       this.toolBubble.node.alpha = fade(this.toolBubble);
@@ -592,8 +592,8 @@ export class Actor {
     const rt = this.ring.texture;
     this.ringScr.x = sx; this.ringScr.y = dev(sy - 12 * sc); this.ringScr.w = rt.width * sc; this.ringScr.h = rt.height * sc;
     this.mark.position.set(sx, dev(sy - (this.sitting ? 9 : 12) * sc));
-    this.mark.scale.set(sc, sc * (this.sitting ? 0.82 : 1)); // a seated figure is shorter: keep the brackets hugging it
-    const gs = Math.max(2, sc * 1.6);
+    this.drawMark(); // redrawn only when the scale, the seat or the state changes
+    const gs = dev(Math.max(2, sc * 1.6)); // whole device px per glyph texel
     this.glyph.scale.set(gs);
     this.glyph.position.set(dev(sx + 14 * sc), dev(sy - (this.sitting ? 18 : couched ? 22 : 26) * sc));
     // arc for a tool call that has been running a while: busy, not hung (#114)
@@ -652,13 +652,13 @@ export class Actor {
       this.tag.visible = this.plate.visible = !hide;
       this.pip.visible = hide;
     }
-    if (hide) { this.drawPip(Math.max(3, this.sc * 2)); this.pip.position.set(this.headPip.x, this.headPip.y); return; }
+    if (hide) { this.drawPip(Math.max(3, this.sc * 2)); placePip(this.pip, this.headPip.x, this.headPip.y); return; }
     this.tag.y += dy;
     if (floor) this.clampTag();
     const w = this.tag.width, h = this.tag.height;
     if (w !== this.plateW || h !== this.plateH) { // re-tessellate only when the text box changes size
       this.plateW = w; this.plateH = h;
-      this.plate.clear().roundRect(0, 0, w + 6, h + 2, 3).fill({ color: 0x0e0d16, alpha: 0.66 });
+      this.plate.clear().rect(0, 0, Math.ceil(w) + 6, Math.ceil(h) + 2).fill({ color: KEY.env[0], alpha: 0.66 }); // square, like the session badges
     }
     this.plate.position.set(dev(this.tag.x - w / 2 - 3), dev(this.tag.y - 1));
   }
@@ -682,6 +682,7 @@ const bubbleBoxes: BubbleBox[] = [];
 const bubbleNodes: { node: Container | null; fade: number; fl: Rect | null }[] = []; // node null = a name tag, an obstacle only
 const tagList: Actor[] = [];
 const tagBoxes: Box[] = [];
+const alertScratch: Box[] = [];
 const hidden: boolean[] = [];
 
 function addBubble(a: Actor, b: { node: Container; born: number } | null, tool: boolean, zone: string, top: number) {
@@ -709,6 +710,12 @@ export function layoutBubbles(actors: Iterable<Actor>, view?: { w: number; h: nu
     if (a.low || a.demoted) continue; // no tag on screen, nothing to avoid
     const tb = a.tagBox(); // prio 3: tags place first and never move; box y is the bottom edge here
     bubbleBoxes.push({ x: tb.x, y: tb.y + tb.h, w: tb.w, h: tb.h, prio: 3, age: 0, zone, tool: false });
+    bubbleNodes.push({ node: null, fade: 1, fl: null });
+  }
+  alertScratch.length = 0;
+  for (const a of actors) if (!a.hidden) a.alertBoxes(alertScratch);
+  for (const o of alertScratch) { // an alert's flag and ring: fixed like tags, so no bubble ever covers them (x = centre, y = top; bubble boxes use the bottom edge)
+    bubbleBoxes.push({ x: o.x, y: o.y + o.h, w: o.w, h: o.h, prio: 3, age: 0, zone: "", tool: false });
     bubbleNodes.push({ node: null, fade: 1, fl: null });
   }
   for (const o of obstacles) { // session badges: fixed like tags

@@ -2,11 +2,11 @@
 /* Header toolbar (toolbar.ts): Office | Sessions | History switch, Display and Export menus, Settings, Help, palette. */
 #top-tools{display:contents}
 #tools{display:flex;align-items:center;gap:8px;flex:none}
-#top .b,#top .mpop{text-transform:none;letter-spacing:normal;font-size:calc(12px * var(--ts,1))}
+#top .b,#top .mpop{text-transform:none;letter-spacing:normal;font-size:calc(13px * var(--ts,1))}
 .tgrp{position:relative;display:inline-flex;gap:4px;align-items:center}
-.tg-views{gap:0} .tg-views .b{border-radius:0} .tg-views .b:first-child{border-start-start-radius:3px;border-end-start-radius:3px} .tg-views .b:last-child{border-start-end-radius:3px;border-end-end-radius:3px} .tg-views .b+.b{margin-inline-start:-1px}
+.tg-views{gap:0} .tg-views .b{border-radius:0} .tg-views .b:first-child{border-start-start-radius:var(--r);border-end-start-radius:var(--r)} .tg-views .b:last-child{border-start-end-radius:var(--r);border-end-end-radius:var(--r)} .tg-views .b+.b{margin-inline-start:-1px}
 .tg-views .b[aria-pressed=true]::before{content:none} /* the filled segment is the mark; a check would shift the switch */
-.mpop{position:absolute;top:calc(100% + 6px);inset-inline-end:0;z-index:20;display:flex;flex-direction:column;align-items:stretch;gap:4px;min-width:200px;padding:8px;background:var(--panel);border:1px solid var(--line);border-radius:6px;box-shadow:0 8px 24px #0008}
+.mpop{position:absolute;top:calc(100% + 6px);inset-inline-end:0;z-index:20;display:flex;flex-direction:column;align-items:stretch;gap:4px;min-width:200px;padding:8px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);box-shadow:0 8px 24px #0008}
 .mpop .b{text-align:start}
 /* O4: folded header groups render open inside More, each under its name (the phone sheet's pattern) */
 #menu-more .mtg{display:none}
@@ -20,27 +20,27 @@
 .goal{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--soft)}
 #done .more-done{margin:8px var(--pad)}
 /* Dialogs (C1-C6): a sticky title row with a close button, scroll shadows when the content runs on, never past the window */
-.dlg{position:absolute;right:calc(var(--sw) + 8px);top:calc(var(--top-h,40px) + 8px);z-index:6;border:1px solid var(--line);border-radius:6px;padding:12px;width:300px;max-height:calc(100dvh - var(--top-h,40px) - 72px);overflow:auto;display:flex;flex-direction:column;gap:8px}
+.dlg{position:absolute;right:calc(var(--sw) + 8px);top:calc(var(--top-h,40px) + 8px);z-index:6;border:1px solid var(--line);border-radius:var(--r);padding:12px;width:300px;max-height:calc(100dvh - var(--top-h,40px) - 72px);overflow:auto;display:flex;flex-direction:column;gap:8px}
 .dlg,#settings{background:linear-gradient(var(--panel) 30%,transparent) center top/100% 40px no-repeat local,linear-gradient(transparent,var(--panel) 70%) center bottom/100% 40px no-repeat local,radial-gradient(farthest-side at 50% 0,#000a,transparent) center top/100% 10px no-repeat scroll,radial-gradient(farthest-side at 50% 100%,#000a,transparent) center bottom/100% 10px no-repeat scroll,var(--panel);box-shadow:0 12px 32px #000a}
 .dhead{position:sticky;top:-12px;z-index:1;display:flex;justify-content:space-between;align-items:center;margin:-12px -12px 0;padding:8px 12px;background:var(--panel);border-bottom:1px solid var(--line)}
-.dhead h2{margin:0;font-size:calc(12px * var(--ts,1));letter-spacing:.1em;text-transform:uppercase}
+.dhead h2{margin:0;font-size:calc(11px * var(--ts,1));letter-spacing:.1em;text-transform:uppercase}
 .sgrp{border:0;border-top:1px solid var(--line);margin:0;padding:8px 0 0;display:flex;flex-direction:column;gap:6px;min-width:0}
 .sgrp legend{padding:0 8px 0 0;font-size:calc(11px * var(--ts,1));font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--mute)}
-.sgrp p{margin:0;line-height:1.45}
+.sgrp p{margin:0}
 .sgrp > .b{align-self:flex-start}
 .mutes .srow{grid-template-columns:minmax(0,1fr) auto;cursor:default} .mutes .srow>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap} .sctl{display:flex;gap:4px}
-.kv{display:grid;grid-template-columns:120px minmax(0,1fr);gap:8px;align-items:baseline;line-height:1.45} .kv>:first-child{justify-self:start;max-width:100%;overflow-wrap:anywhere} /* C1: a fixed label column, values at min-width 0 */
+.kv{display:grid;grid-template-columns:120px minmax(0,1fr);gap:8px;align-items:baseline} .kv>:first-child{justify-self:start;max-width:100%;overflow-wrap:anywhere} /* C1: a fixed label column, values at min-width 0 */
 #help h3{margin:8px 0 0;font-size:calc(11px * var(--ts,1));font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--mute)}
-#help p{margin:0;line-height:1.5} #help > .b{align-self:flex-start}
-kbd{font:inherit;border:1px solid var(--line);border-radius:3px;padding:0 4px}
+#help p{margin:0} #help > .b{align-self:flex-start}
+kbd{font:inherit;border:1px solid var(--line);border-radius:var(--r);padding:0 4px}
 #settings{max-height:80vh;overflow:auto}
 #stale{position:fixed;left:0;right:0;bottom:0;z-index:40;background:var(--off);color:var(--ink);font-weight:700;text-align:center;padding:4px 8px}
 .view{position:fixed;left:0;top:var(--top-h,34px);right:var(--sw,0px);bottom:0;z-index:4;background:var(--bg);overflow:auto}
 /* #top's gradient is transparent at its bottom edge; under a view it must be solid or the moving canvas shows through */
 body:has(.view:not([hidden])) #top{background:var(--bg)}
 .wallgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(190px,100%),1fr));gap:8px;padding:12px}
-.tile{display:flex;flex-direction:column;gap:4px;text-align:left;background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--st,var(--mute));border-radius:4px;padding:8px 12px;cursor:pointer}
-.tile>span:nth-child(2){color:var(--st);font-weight:700}
+.tile{display:flex;flex-direction:column;gap:4px;text-align:left;background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--st,var(--mute));border-radius:var(--r);padding:8px 12px;cursor:pointer}
+.tile>span:nth-child(2){color:var(--st);font-weight:700} .tile.ended>span:nth-child(2){color:inherit;font-weight:400} .tile .stw{color:var(--st);font-weight:700} /* ended: only the word is coloured */
 .tile .er{color:var(--bad-ink)}
 .tile.ended{cursor:default}
 .tlview{display:flex;flex-direction:column;overflow:hidden}
@@ -48,46 +48,46 @@ body:has(.view:not([hidden])) #top{background:var(--bg)}
 .tlwrap{flex:1;min-height:0;overflow-y:auto;position:relative}
 .tlwrap canvas{position:sticky;top:0;display:block;cursor:crosshair}
 .tl-legend{display:flex;flex-wrap:wrap;gap:4px 12px;padding:0 16px 8px;font-size:calc(11px * var(--ts,1))}
-.tl-legend .sw{display:inline-block;width:10px;height:10px;margin-inline-end:4px;border-radius:2px}
-.frozen-chip{position:fixed;left:12px;top:calc(var(--top-h,34px) + 6px);z-index:41;background:var(--acc);color:var(--ink);font-weight:700;padding:4px 8px;border-radius:6px;display:flex;gap:8px;align-items:center}
-#settings input[type=number]{width:96px;background:var(--raise);color:inherit;border:1px solid var(--line);border-radius:4px}
-.sess.pc{border-inline-start:3px solid var(--pc)} /* project accent; radar and feed rows keep their kind stripe and get a dot */
-.rdw.pc::before,.it.pc::before{content:"";flex:none;align-self:flex-start;width:8px;height:8px;margin:12px 0 0 8px;border-radius:50%;background:var(--pc)}
+.tl-legend .sw{display:inline-block;width:10px;height:10px;margin-inline-end:4px;border-radius:var(--r)}
+.frozen-chip{position:fixed;left:12px;top:calc(var(--top-h,34px) + 6px);z-index:41;background:var(--acc);color:var(--ink);font-weight:700;padding:4px 8px;border-radius:var(--r);display:flex;gap:8px;align-items:center}
+#settings input[type=number]{width:96px;background:var(--raise);color:inherit;border:1px solid var(--line);border-radius:var(--r)}
+.sess.pc{border-inline-start:3px solid var(--pc)} /* session colour; radar and feed rows keep their kind stripe and colour the name (index.html .pc) */
 #tg.hot{border-color:var(--st-permission,var(--warn))}
 #mm{position:absolute;right:8px;bottom:8px;z-index:3;display:flex;align-items:flex-end;gap:4px;opacity:.8}
 #mm[hidden],#minimap[hidden]{display:none}
-#minimap{border:1px solid var(--line);border-radius:4px;cursor:crosshair;touch-action:none;max-width:120px;max-height:80px}
-#mm button{font:11px/1 inherit;padding:4px 4px;border:1px solid var(--line);border-radius:4px;background:var(--panel);color:inherit;cursor:pointer}
+#minimap{border:1px solid var(--line);border-radius:var(--r);cursor:crosshair;touch-action:none;max-width:120px;max-height:80px}
+#mm button{font:11px/1 inherit;padding:4px 4px;border:1px solid var(--line);border-radius:var(--r);background:var(--panel);color:inherit;cursor:pointer}
 @media (max-width:800px){
   #top{padding-top:env(safe-area-inset-top)}
   .dlg{right:8px}
 }
 /* fun layer (fundom.ts, colonists.ts, palette.ts): quiet, below dialogs (z 6) and above the canvas */
 #colony{position:absolute;inset-inline:0 var(--sw);top:var(--top-h,40px);z-index:3;display:flex;gap:4px;align-items:center;padding:4px 16px;box-sizing:border-box;overflow:hidden;background:color-mix(in srgb,var(--panel) 82%,transparent);border-bottom:1px solid var(--line)}
-.cb{position:relative;flex:none;display:grid;place-items:center;box-sizing:border-box;width:24px;height:24px;padding:0;border:2px solid var(--ring,var(--line));border-radius:50%;background:var(--panel);cursor:pointer}
-.cb canvas{width:18px;height:18px;image-rendering:pixelated;border-radius:50%}
+.cb{position:relative;flex:none;display:grid;place-items:center;box-sizing:border-box;width:24px;height:24px;padding:0;border:2px solid var(--ring,var(--line));border-radius:var(--r);background:var(--panel);cursor:pointer}
+.cb canvas{width:18px;height:18px;image-rendering:pixelated}
 .cb.working{--ring:var(--good)} .cb.thinking{--ring:var(--acc)} .cb.waiting{--ring:var(--warn)} .cb.blocked{--ring:var(--bad)} .cb.idle{--ring:var(--line)}
 .cb.queued{--ring:var(--mute);border-style:dashed}
-.cb[data-g]:not([data-g=""])::after{content:attr(data-g);position:absolute;top:-6px;inset-inline-end:-6px;min-width:15px;height:15px;border-radius:8px;background:var(--ring);color:var(--ink);font:800 11px/15px ui-monospace,monospace;text-align:center;box-shadow:0 0 0 1.5px var(--bg)} /* A2: the status glyph, never colour alone */
+.cb[data-g]:not([data-g=""])::after{content:attr(data-g);position:absolute;top:-6px;inset-inline-end:-6px;min-width:15px;height:15px;border-radius:var(--r);background:var(--ring);color:var(--ink);font:800 11px/15px ui-monospace,monospace;text-align:center;box-shadow:0 0 0 1.5px var(--bg)} /* A2: the status glyph, never colour alone */
 .cb[aria-pressed=true]{box-shadow:0 0 0 2px var(--acc)}
 /* hook: session identity on chips (project colour + 2-letter glyph) needs data-session/--pc on .cb in colonists.ts; the DOM only has the status ring and portrait today */
-.cb.more{width:auto;min-width:24px;padding:0 6px;border:1px solid var(--line);border-radius:12px;color:var(--soft);cursor:pointer;font-size:calc(11px * var(--ts,1));white-space:nowrap}
+.cb.more{width:auto;min-width:24px;padding:0 6px;border:1px solid var(--line);border-radius:var(--r);color:var(--soft);cursor:pointer;font-size:calc(11px * var(--ts,1));white-space:nowrap}
 #hl{position:absolute;inset-inline-end:calc(var(--sw) + 12px);top:calc(var(--top-h,40px) + var(--cb-h,0px) + 8px);z-index:3;display:flex;flex-direction:column;gap:8px;align-items:flex-end;pointer-events:none}
-.hl{pointer-events:auto;display:flex;gap:8px;align-items:flex-start;text-align:start;max-width:min(340px,80vw);box-sizing:border-box;background:var(--panel);border:1px solid var(--line);border-inline-start:3px solid var(--glow);border-radius:3px;padding:8px 12px;cursor:pointer;animation:fx-in .2s cubic-bezier(0.16,1,0.3,1)}
+.hl{pointer-events:auto;display:flex;gap:8px;align-items:flex-start;text-align:start;max-width:min(340px,80vw);box-sizing:border-box;background:var(--panel);border:1px solid var(--line);border-inline-start:3px solid var(--glow);border-radius:var(--r);padding:8px 12px;cursor:pointer;animation:fx-in .2s cubic-bezier(0.16,1,0.3,1)}
 .hl.done{border-inline-start-color:var(--st-working)} .hl.blocked{border-inline-start-color:var(--st-blocked)} .hl.partial{border-inline-start-color:var(--st-idle)}
 .hl.still{animation:fade .15s ease-out}
 @keyframes fade{from{opacity:0}to{opacity:1}}
-.hl .hg{flex:none;font-size:calc(16px * var(--ts,1));line-height:1.2}
+.hl .hg{flex:none;font-size:calc(15px * var(--ts,1));line-height:1.2}
 .tt{display:flex;flex-direction:column;min-width:0;word-break:break-word} .tt span{color:var(--soft)}
 @keyframes fx-in{from{opacity:0;transform:translateX(calc(16px * var(--dir)))}to{opacity:1;transform:none}}
 body.tick.presenter #caption{bottom:44px}
-#ticker{position:absolute;inset-inline:0 var(--sw);bottom:0;z-index:3;height:26px;display:flex;align-items:center;padding:0 16px;box-sizing:border-box;overflow:hidden;white-space:nowrap;background:color-mix(in srgb,var(--panel) 88%,transparent);border-top:1px solid var(--line);color:var(--soft)}
+#ticker{position:absolute;inset-inline:0 var(--sw);bottom:0;z-index:3;height:26px;display:flex;align-items:center;padding:0 16px;box-sizing:border-box;overflow:hidden;white-space:nowrap;background:color-mix(in srgb,var(--panel) 94%,transparent);border-top:1px solid var(--line);color:var(--soft);font-size:calc(11px * var(--ts,1))}
+body:not(.presenter):not(.kiosk) #ticker{border-top-color:transparent} /* the meter strip above it draws the one rule */
 #ticker{visibility:hidden;opacity:0;transition:opacity .4s,visibility .4s} #ticker.show{visibility:visible;opacity:1}
 #ticker span{overflow:hidden;text-overflow:ellipsis}
 .sp{display:flex;align-items:center;gap:8px;padding:4px 16px;color:var(--acc)} .sp .k:last-child{color:var(--soft)} .sp .k:first-child{min-width:78px}
 /* events/min + tokens/min: a 24px strip pinned to the stage bottom (inside the panel DOM, so visibility:visible beats the collapsed panel's hidden); presenter/kiosk hide #side and with it the strip */
 #spark:empty{display:none}
-#spark{position:fixed;inset-inline:0 var(--sw);bottom:0;z-index:3;height:24px;box-sizing:border-box;display:flex;align-items:center;gap:24px;padding:0 16px;visibility:visible;overflow:hidden;white-space:nowrap;background:color-mix(in srgb,var(--panel) 94%,transparent);border-top:1px solid var(--line)}
+#spark{position:fixed;inset-inline:0 var(--sw);bottom:0;z-index:3;height:24px;box-sizing:border-box;display:flex;align-items:center;gap:24px;padding:0 16px;visibility:visible;overflow:hidden;white-space:nowrap;background:color-mix(in srgb,var(--panel) 94%,transparent);border-top:1px solid var(--line);font-size:calc(11px * var(--ts,1))}
 #spark .sp{padding:0;gap:8px} #spark .sp .k:first-child{min-width:0} #spark svg{flex:none;height:16px}
 body.tick #spark{bottom:26px}
 #mm{bottom:32px}
@@ -95,10 +95,10 @@ body.tick #spark{bottom:26px}
 @media (max-width:800px){body:not(.collapsed) #spark{inset-inline-end:min(var(--swx,340px),92vw)}}
 .sess{position:relative} .sess.hasr{padding-inline-end:48px} .sess .rings{position:absolute;inset-inline-end:12px;top:8px}
 .pal{position:fixed;left:50%;right:auto;top:14vh;transform:translateX(-50%);width:min(520px,92vw);z-index:50}
-.pal input{width:100%;box-sizing:border-box;background:var(--raise);border:1px solid var(--line);border-radius:4px;padding:8px 8px}
+.pal input{width:100%;box-sizing:border-box;background:var(--raise);border:1px solid var(--line);border-radius:var(--r);padding:8px 8px}
 .pal ul{list-style:none;margin:8px 0 0;padding:0;max-height:50vh;overflow:auto}
-.pi{padding:8px 8px;border-radius:3px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pi[aria-selected=true]{background:var(--acc);color:var(--bg)}
+.pi{padding:8px 8px;border-radius:var(--r);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pi[aria-selected=true]{background:var(--acc);color:var(--ink)}
 .srow>span:first-child{min-width:0}
 /* per-agent tool timeline in the selected card */
 .tcalls ul.tc{list-style:none;margin:4px 0;padding:0;max-height:12em;overflow:auto;font-size:calc(11px * var(--ts,1))}

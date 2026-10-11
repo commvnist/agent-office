@@ -3,7 +3,7 @@
 import { office, type ActorInfo, type FeedItem } from "./api.ts";
 import { hotFiles, leadId } from "@agent-office/core";
 import { $, announce as domAnnounce, btn, clip, copy, el, renderIf, store, sync } from "./dom.ts";
-import { bySession, burnHot, gaveUpKey, captionText, burnRate, cdCommand, filterFeed, fmtAge, fmtDur, fmtTokens, projectHue, quietBefore, radar, rosterGroups, sanitizeFilters, statusGroups, summary, sumUsage, urgency, usageTotal, whoLine, type FeedFilter, type RadarItem } from "./logic.ts";
+import { bySession, burnHot, gaveUpKey, captionText, burnRate, cdCommand, filterFeed, fmtAge, fmtDur, fmtTokens, quietBefore, sessionColor, radar, rosterGroups, sanitizeFilters, statusGroups, summary, sumUsage, urgency, usageTotal, whoLine, type FeedFilter, type RadarItem } from "./logic.ts";
 import { bindPanelChrome } from "./panel.ts";
 import { backToLive, bindModes, toggleSample } from "./modes.ts";
 import { KEY, STATUS, STATUS_ORDER } from "./theme.ts";
@@ -23,7 +23,8 @@ const FEEDBACK_MS = 1200;
 const copyBtn = (label: string, text: string, title: string) =>
   btn(label, title, async (b) => { b.textContent = (await copy(text)) ? "Copied" : "Copy failed"; setTimeout(() => (b.textContent = label), FEEDBACK_MS); }, "b sm");
 const loadJson = <T,>(k: string, fb: T): T => { try { return JSON.parse(store.get(k) ?? "") ?? fb; } catch { return fb; } };
-const accent = (e: HTMLElement, project: string) => { e.classList.add("pc"); e.style.setProperty("--pc", `hsl(${projectHue(project)} 60% 65%)`); };
+/** The session's one identity colour (the scene's session hue) on a row: its stripe or name (sessionColor). */
+const accent = (e: HTMLElement, sessionId: string) => { e.classList.add("pc"); e.style.setProperty("--pc", sessionColor(sessionId)); };
 const stateOf = () => office.getEnvelope()?.state;
 const signals = (sid: string) => stateOf()?.sessions[sid];
 /** Live source with the daemon stream down: panel sections say so instead of looking empty. */
@@ -37,7 +38,8 @@ const chip = (k: Parameters<typeof look>[0]) => { const c = el("span", "stc", st
 
 // R3: the chrome is on the scene's value key: one source (theme.ts) for the env steps, the cyan, the neon and the status colours
 const E = KEY.env;
-for (const [k, v] of Object.entries({ bg: E[1], panel: E[2], line: E[3], raise: E[3], ink: E[0], acc: KEY.cyan, glow: KEY.cyan, glow2: KEY.neon, warn: STATUS.permission.color,
+// the chrome accent is the room's paper and lit edge, not cyan: cyan means only your-turn and machine light (visual refinement pass)
+for (const [k, v] of Object.entries({ bg: E[1], panel: E[2], line: E[3], raise: E[3], ink: E[0], acc: KEY.paper, glow: E[5], glow2: KEY.neon, ...KEY.text, warn: STATUS.permission.color,
   bad: STATUS.blocked.color, good: STATUS.working.color, off: STATUS.blocked.color, prompt: KEY.warm })) document.documentElement.style.setProperty(`--${k}`, v);
 
 // ---- aria live regions: structure only, batched in dom.ts; blocked/waiting go to the assertive one ----
@@ -84,7 +86,7 @@ function renderRadar(now: number) {
         const k = notify.kindOf(i), w = el("div", `rdw t${i.tier}`);
         w.style.setProperty("--st", look(k).color);
         w.setAttribute("role", "listitem");
-        accent(w, i.project);
+        if (i.session) accent(w, i.session);
         const b = el("button", "rd");
         b.type = "button";
         const head = el("span", "rh");
@@ -265,7 +267,7 @@ function renderDone(now: number) {
     b.style.setProperty("--st", o.color);
     const head = el("span", "rh"), g = el("span", "stc", `${o.glyph} ${o.label}`);
     g.style.setProperty("--st", o.color);
-    head.append(g, el("b", "", ` ${r.name}`), el("span", "k", ` · ${r.name === r.project ? "" : `${r.project} · `}${fmtAge(now - r.t)}`)); // a lead row is named by its project
+    head.append(g, el("b", "", ` ${r.name}`), ...(r.name === r.project ? [] : [el("span", "k", ` · ${r.project}`)]),  " ", el("span", "k age", `· ${fmtAge(now - r.t)}`)); // a lead row is named by its project; "· age" never wraps
     b.append(head);
     const text = r.text || r.task;
     if (text && !hide) { b.append(el("span", "why", clipWords(text, 120))); b.title = r.task ? `${text}\n\ntask: ${r.task}` : text; }
@@ -306,7 +308,7 @@ function renderSessions(now: number) {
     if (!rows.length) return [el("div", "k pad", offline() ? "Offline: waiting for the daemon (see the banner at the top of the panel)." : "No sessions yet. Start Claude Code with the plugin.")];
     const one = ({ s, last, prompt, result, perm, rate, c, g, worst }: (typeof rows)[number]) => {
       const d = el("div", c.total ? "sess hasr" : "sess");
-      accent(d, s.project);
+      accent(d, s.id);
       if (c.total) d.append(ringsEl(c));
       const h = btn(s.project, "Scope the panel to this session (click again to clear) and select its lead", () => { setFilter("session", filter.session === s.id ? "" : s.id); if (filter.session) pick(s.lead); }, "sname");
       h.setAttribute("aria-pressed", String(filter.session === s.id));
@@ -461,7 +463,7 @@ function renderFiles() {
       const i = Math.max(f.path.lastIndexOf("/"), f.path.lastIndexOf("\\")), dir = f.path.slice(0, i + 1), base = f.path.slice(i + 1);
       const b = el("button", "hf pc");
       b.type = "button";
-      accent(b, projectOf(f.session));
+      accent(b, f.session);
       b.title = f.path;
       b.append(el("b", "", base), el("span", "k dir", dir ? ` ${clip(dir, 40)}` : ""), el("span", "n", `×${f.count}`));
       b.addEventListener("click", () => { const lead = office.sessions().find((s) => s.id === f.session)?.lead; if (lead) pick(lead); });
@@ -515,11 +517,11 @@ function feedRow(f: FeedItem): HTMLElement {
   const row = el("div", `it ${f.kind}`);
   row.setAttribute("role", "listitem");
   row.dataset.ids = [f.fromId, f.toId].filter(Boolean).join("|");
-  accent(row, projectOf(f.session ?? ""));
+  if (f.session) accent(row, f.session);
   const main = el("button", "row");
   main.type = "button";
   main.title = "Select and pulse this actor";
-  const head = el("div");
+  const head = el("div", "hd");
   const t = el("span", "t", time(f.t));
   head.append(el("span", "who", whoLine(f)), t);
   main.append(head);
@@ -667,7 +669,6 @@ function refresh() {
   notify.update(items, office.sessions().filter((s) => burnHot(rateOf(s.id, now)))); // title + alerts keep working in a background tab
   if (document.hidden) return; // nobody is looking: skip the DOM work
   renderStats();
-  fitHeader();
   renderCrumb();
   renderCard();
   renderDone(now);
@@ -747,6 +748,11 @@ export function bindUi() {
   $("side").addEventListener("pointerleave", () => document.dispatchEvent(new CustomEvent("ao:hover", { detail: null })));
   // Wall and timeline views sit under #top, which grows with text scale or wrapped toolbar groups.
   new ResizeObserver(() => { document.documentElement.style.setProperty("--top-h", $("top").offsetHeight + "px"); fitHeader(); }).observe($("top"));
+  // refit only when the header's content changes (text, shown/hidden, classes), once per frame: calling it on every refresh
+  // cost ~4.5% of the main thread at 128 agents (style reads to learn nothing changed)
+  let fitQueued = false;
+  new MutationObserver(() => { if (!fitQueued) { fitQueued = true; requestAnimationFrame(() => { fitQueued = false; fitHeader(); }); } })
+    .observe($("top"), { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["hidden", "class"] });
   bindPanelChrome(tools);
   bindModes(tools, $("modebar"));
   $("empty-sample").addEventListener("click", toggleSample);

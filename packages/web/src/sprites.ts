@@ -210,13 +210,18 @@ export const shelfTex = () =>
     return g;
   });
 
-export const couchTex = () =>
-  memo("couch", () => {
+/**
+ * Couch seen from behind (it faces its table, above it): arms and two seat cushions, then the high back along the bottom edge.
+ * `back` draws the back rail alone: the scene stacks it over a seated figure, so only the head and shoulders show above it.
+ */
+export const couchTex = (back = false) =>
+  memo(`couch:${back}`, () => {
     const g = new Grid(32, 16);
-    slab(g, 1, 3, 30, 7, E[3]); g.rect(1, 3, 30, 1, E[4]); g.set(1, 3, E[5]); g.rect(2, 3, 6, 1, E[5]); // back, rim light from the top left
-    g.rect(4, 8, 24, 1, E[1]); // shadow where the back meets the seat
-    slab(g, 0, 7, 4, 8, shade(E[3], -0.04)); slab(g, 28, 7, 4, 8, shade(E[3], -0.04)); g.rect(0, 7, 4, 1, E[4]);
-    slab(g, 4, 9, 11, 5, E[4]); slab(g, 17, 9, 11, 5, E[4]); g.rect(4, 9, 4, 1, E[5]); g.rect(17, 9, 4, 1, E[5]);
+    if (!back) {
+      for (const x of [0, 28]) { slab(g, x, 2, 4, 8, shade(E[3], -0.04)); g.rect(x, 2, 4, 1, E[4]); } // arm rests, front to back
+      for (const x of [4, 16]) { slab(g, x, 3, 12, 7, E[4]); g.rect(x, 3, 4, 1, E[5]); } // seat cushions, lit front edge
+    }
+    slab(g, 0, 9, 32, 7, E[3]); g.rect(0, 9, 32, 1, E[4]); g.rect(1, 9, 6, 1, E[5]); // high back, rim light from the top left
     return g;
   });
 
@@ -247,13 +252,13 @@ export const tableTex = () =>
     return g;
   });
 
-/** Armchair facing the table (+x); the scene mirrors it for the right-hand side. */
+/** Armchair seen from behind, facing up toward the lounge table like the couch: arm rests, seat, high back on the bottom edge. Symmetric, never mirrored. */
 export const armchairTex = () =>
   memo("armchair", () => {
     const g = new Grid(16, 16);
-    slab(g, 2, 3, 12, 11, E[3]); g.rect(2, 3, 12, 1, E[4]); g.rect(3, 3, 4, 1, E[5]); // back, rim light from the top left
-    slab(g, 3, 5, 9, 7, E[4]); g.rect(3, 5, 3, 1, E[5]); g.rect(3, 11, 9, 1, E[2]); // seat cushion, shaded front
-    slab(g, 1, 7, 3, 7, shade(E[3], -0.04)); g.rect(1, 7, 3, 1, E[4]);
+    for (const x of [1, 12]) { slab(g, x, 3, 3, 8, shade(E[3], -0.04)); g.rect(x, 3, 3, 1, E[4]); }
+    slab(g, 4, 4, 8, 6, E[4]); g.rect(4, 4, 3, 1, E[5]);
+    slab(g, 1, 9, 14, 6, E[3]); g.rect(1, 9, 14, 1, E[4]); g.rect(2, 9, 4, 1, E[5]);
     return g;
   });
 
@@ -353,6 +358,39 @@ const TOOL_ICONS: Record<ToolIconName, string[]> = {
   lens: [".###...", "#...#..", "#...#..", "#...#..", ".###...", "....#..", ".....#."],
 };
 export const toolIconTex = (k: ToolIconName) => memoRaw(`tool:${k}`, () => { const g = new Grid(7, 7); g.map(0, 0, TOOL_ICONS[k], { "#": "#ffffff" }); return g; });
+/** Bubble corner-chip glyphs per hook event type, 7x7 white like the tool icons (tinted by the caller, drawn at a whole-number scale). */
+const BADGE_ICONS: Record<string, string[]> = {
+  prompt: [".......", ".#.....", ".##....", "..##...", ".##....", ".#.....", "......."],
+  delegate: TOOL_ICONS.arrow,
+  report: [".......", "......#", ".....##", "#...##.", "##.##..", ".###...", "..#...."],
+  guess: ["..###..", ".#...#.", ".....#.", "....#..", "...#...", ".......", "...#..."],
+  tool: ["...#...", ".#####.", ".#.#.#.", ".#.#.#.", ".#.#.#.", ".#####.", "...#..."],
+  message: [".......", "#######", "##...##", "#.#.#.#", "#..#..#", "#######", "......."],
+};
+export const badgeIconTex = (k: string) => memoRaw(`badge:${k}`, () => { const g = new Grid(7, 7); g.map(0, 0, BADGE_ICONS[k] ?? BADGE_ICONS.message, { "#": "#ffffff" }); return g; });
+
+/** 9x9 status pip, one per state (shape, not colour alone): dot = working, "!"/"?" = waiting, x = gave up, square = queued, ring = idle. */
+export const PIP = 9;
+const DISC = ["..#####..", ".#ooooo#.", "#ooooooo#", "#ooooooo#", "#ooooooo#", "#ooooooo#", "#ooooooo#", ".#ooooo#.", "..#####.."];
+const PIP_GLYPH: Record<string, string[]> = {
+  permission: ["....#....", "....#....", "....#....", ".........", "....#...."],
+  turn: ["...###...", ".....#...", "....#....", ".........", "....#...."],
+  blocked: ["..#...#..", "...#.#...", "....#....", "...#.#...", "..#...#.."],
+};
+export function pipGrid(s: string, wait: "permission" | "turn" = "permission"): Grid {
+  const g = new Grid(PIP, PIP), rim = E[0];
+  if (s === "queued") { g.rect(0, 0, PIP, PIP, rim); g.rect(1, 1, PIP - 2, PIP - 2, KEY.text.fg); return g; }
+  if (s === "working") { g.map(0, 0, DISC, { "#": rim, o: STATUS.working.color }); return g; }
+  if (s === "waiting" || s === "blocked") {
+    const k = s === "blocked" ? "blocked" : wait;
+    g.map(0, 0, DISC, { "#": rim, o: STATUS[k].color });
+    g.map(0, 2, PIP_GLYPH[k], { "#": k === "blocked" ? KEY.text.fg : E[0] });
+    return g;
+  }
+  g.map(0, 0, DISC, { "#": STATUS.idle.color }); // idle / thinking: an empty ring
+  return g;
+}
+export const pipTex = (s: string, wait: "permission" | "turn" = "permission") => memoRaw(`pip:${s}:${s === "waiting" ? wait : ""}`, () => pipGrid(s, wait));
 
 export const whiteTex = () => memoRaw("white", () => { const g = new Grid(1, 1); g.set(0, 0, "#ffffff"); return g; });
 

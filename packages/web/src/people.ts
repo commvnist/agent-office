@@ -200,6 +200,8 @@ export function person(look0: Look, dir: Dir, pose: Pose, frame: number, o: Pose
   if (raised) {
     g.rect(ax0, Y(5), 1, 6, look.shirt); g.rect(ax1, Y(5), 1, 6, look.shirt);
     g.set(ax0, Y(4), look.skin); g.set(ax1, Y(4), look.skin);
+  } else if (couch && dir === "up") { // lounging, seen from behind: arms at the sides (the couch back hides the rest)
+    g.rect(ax0, Y(10), 1, 4, look.shirt); g.rect(ax1, Y(10), 1, 4, look.shirt);
   } else if (couch) { // forearms in, hands together on a phone
     g.rect(ax0, Y(10), 1, 4, look.shirt); g.rect(ax1, Y(10), 1, 4, look.shirt);
     g.rect(ax0 + 1, Y(13), 2, 1, look.shirt); g.rect(ax1 - 2, Y(13), 2, 1, look.shirt);
@@ -265,9 +267,12 @@ export function person(look0: Look, dir: Dir, pose: Pose, frame: number, o: Pose
   }
   if (wide) { g.rect(3, HT(3), 1, 4, look.hair); if (!side) g.rect(12, HT(3), 1, 4, look.hair); } // hood rim / puffy sides
   // rim light: a lit crown edge plus the key-light (left) edge, so dark hair reads against the navy floor, chairs and outline
-  const lit = toLuma(shade(look.hair, 0.14), Math.min(luma(shade(look.hair, 0.14)), luma(look.skin) - 0.02)), hairDark = shade(look.hair, -0.12), xl = wide ? 3 : 4;
+  const lit = toLuma(shade(look.hair, 0.14), Math.min(luma(shade(look.hair, 0.14)), luma(look.skin) - 0.02)), xl = wide ? 3 : 4;
   for (let y = HT(1); y <= HT(3); y++) if (g.get(xl, y) === look.hair) g.set(xl, y, lit);
-  if (dir === "up") { g.rect(5, HT(2), 6, 1, lit); g.rect(7, HT(3), 2, 4, hairDark); }
+  if (dir === "up") { // back of the head: a lit crown row and a skin nape row under the hair, no dark slab (it read as a hole)
+    g.rect(5, HT(2), 6, 1, lit);
+    if (!hooded && look.style !== 4 && look.style !== 5 && look.style !== 6) g.rect(5, H(9), 6, 1, look.skin);
+  }
   else g.rect(side ? 4 : 5, HT(2), side ? 5 : 6, 1, lit);
   if (dir === "down") {
     g.set(6, H(6), DARK); g.set(9, H(6), DARK);
@@ -286,7 +291,7 @@ export function person(look0: Look, dir: Dir, pose: Pose, frame: number, o: Pose
   if (o.sip && dir === "down") { g.rect(10, H(6), 3, 3, "#f4f1e6"); g.rect(10, H(6), 3, 1, "#6b4a2e"); g.set(13, H(7), "#f4f1e6"); g.rect(9, H(9), 3, 1, look.skin); } // mug raised to the face
   else if (think && dir === "down") g.rect(9, H(8), 3, 2, look.skin); // hand on chin
   if (look.acc === "cap") { g.rect(4, HT(1), 8, 3, acc); if (dir !== "up") g.rect(side ? 8 : 4, HT(4), side ? 4 : 8, 1, shade(acc, -0.15)); }
-  separate(g, look.skin, [look.hair, lit, hairDark, look.shirt, sleeve, shade(look.shirt, 0.08), team]);
+  separate(g, look.skin, [look.hair, lit, look.shirt, sleeve, shade(look.shirt, 0.08), team]);
   return g;
 }
 

@@ -27,6 +27,11 @@ export function parseHighlight(text: string): Highlight {
   return m ? { who: m[1], outcome: m[2] as Highlight["outcome"], what: m[3], dur: m[4] ?? "" } : { who: "", what: text, dur: "", outcome: "" };
 }
 export const OUTCOME_GLYPH = { done: "✓", blocked: "✕", partial: "~", "": "·" } as const;
+/** The ticker line for a highlight in the panel's words ("Maya gave up: ...", not "Maya blocked: ..."); other text as is. */
+export function tickerText(text: string): string {
+  const h = parseHighlight(text), word = { blocked: "gave up", partial: "partly done", done: "done", "": "" }[h.outcome];
+  return h.outcome ? `${h.who} ${word}: ${h.what}${h.dur ? ` (${h.dur})` : ""}` : text;
+}
 
 // ---- sparklines ----
 /** Count of `times` per bin, oldest first, `bins` bins of `binMs` ending at `now`. */

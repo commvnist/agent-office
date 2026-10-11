@@ -1,11 +1,13 @@
-// Minimap (bottom-right of the stage, left of the side panel; collapsible): pods coloured by project, the viewport rectangle, click/drag to move the camera, `g` to hop wings,
+// Minimap (bottom-right of the stage, left of the side panel; collapsible): pods in their session colour, the viewport rectangle, click/drag to move the camera, `g` to hop wings,
 // PageUp/PageDown to move between floors (each floor is a numbered strip on the map).
 // Hidden while the whole office is on screen. DOM-only (no pixi), redrawn on change and at most 4 Hz.
 import { deskPos, FLOOR_DESKS, floorsOf, floorTop, podRow, type Layout } from "@agent-office/core";
 import { camera, ignoreKey } from "./camera.ts";
 import { hsl } from "./color.ts";
+import { office } from "./api.ts";
+import { KEY } from "./theme.ts";
 import { announce, store } from "./dom.ts";
-import { projectHue, viewRect } from "./logic.ts";
+import { projectHue, sessionColor, viewRect } from "./logic.ts";
 
 const T = 16, MAX_W = 120, MAX_H = 80, MIN_MS = 250, MIN_STAGE_W = 600;
 
@@ -94,9 +96,11 @@ export function bindMinimap(host: HTMLElement) {
       g.clearRect(0, 0, c.width, c.height);
       g.fillStyle = "rgba(20,18,31,.85)";
       g.fillRect(0, 0, c.width, c.height);
+      // shortcut: pod owners are project names, so two sessions in one project share the first one's colour; pass session ids from scene.podOwners if that matters
+      const sid = new Map(office.sessions().map((x) => [x.project, x.id]));
       for (let p = 0; p * 4 < layout.props.length; p++) {
-        const t = deskPos(p * 4), o = owners[p];
-        g.fillStyle = o ? hsl(projectHue(o), 0.5, 0.55) : "#3a3850";
+        const t = deskPos(p * 4), o = owners[p], id = o && sid.get(o);
+        g.fillStyle = id ? sessionColor(id, 0.5, 0.55) : o ? hsl(projectHue(o), 0.5, 0.55) : "#3a3850";
         g.fillRect(Math.round(t.x * T * s), Math.round(t.y * T * s), Math.max(2, Math.round(3 * T * s)), Math.max(2, Math.round(4 * T * s)));
       }
       const nf = floorsOf(layout);
@@ -106,12 +110,12 @@ export function bindMinimap(host: HTMLElement) {
         g.textBaseline = "top";
         for (let f = 0; f < nf; f++) {
           const y = Math.round(band(layout, f)[0] * T * s);
-          if (f) { g.fillStyle = "rgba(127,227,255,.45)"; g.fillRect(0, y, c.width, 1); }
-          g.fillStyle = f === cur ? "#7fe3ff" : "rgba(223,228,255,.55)";
+          if (f) { g.fillStyle = KEY.env[5]; g.fillRect(0, y, c.width, 1); }
+          g.fillStyle = f === cur ? KEY.text.fg : KEY.text.mute;
           g.fillText(String(f + 1), 1, y + 2);
         }
       }
-      g.strokeStyle = "#fff";
+      g.strokeStyle = KEY.text.fg;
       g.lineWidth = 1;
       g.strokeRect(Math.round(r.x * s) + 0.5, Math.round(r.y * s) + 0.5, Math.round(r.w * s), Math.round(r.h * s));
     },

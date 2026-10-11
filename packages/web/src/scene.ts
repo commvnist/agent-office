@@ -38,6 +38,8 @@ const E = KEY.env, CY = hexNum(KEY.cyan), CY_OFF = hexNum(KEY.cyanOff), WARM = h
 export type SeatState = { used: boolean; working: boolean; tool?: string; count?: number; stale?: boolean; project?: string; role?: string; flash?: number; waiting?: boolean; prompt?: string;
   /** `load` = tool calls in the last 30 s (0 idle .. 3 busy): lights the desk power rail. `queueDepth` = queued items for the agent (chip stack). `idleMs` = real silence (desaturates the desk). `hue` = session identity hue (floor trim). */
   load?: 0 | 1 | 2 | 3; mug?: boolean; queueDepth?: number; idleMs?: number; hue?: number;
+  /** Seated, between tools, mid-turn: three dots on the monitor (the actor shows no thought cloud at the desk). */
+  think?: boolean;
   /** The occupant is hidden by session collapse: its chair hides too (an empty chair reads as a top hat), the desk keeps its activity (R1). */
   folded?: boolean;
   /** Why it waits: permission (amber lamp) or your turn (cyan lamp); defaults to permission. */
@@ -194,7 +196,7 @@ export class Scene {
     this.buildFurniture(ysort);
     const c = this.geo.rect(`decor:coffee:${l.decor.findIndex((d) => d.kind === "coffee")}`);
     this.coffee = { x: c.x + 8, y: c.y + 2 };
-    const label = () => new Text({ text: "", style: { fontFamily: MONO, fontSize: 10, fill: 0xbfeaff } });
+    const label = () => new Text({ text: "", style: { fontFamily: MONO, fontSize: 10, fill: KEY.text.fg } });
     this.boardText = label(); // summary / empty message; the four column headers are colText
     this.colText = COLS.map(label);
     ui.addChild(this.boardText, ...this.colText, this.boardMask);
@@ -313,12 +315,12 @@ export class Scene {
   private setOwner(i: number, owner: string, hue = -1) {
     const pod = this.pods[i];
     pod.owner = owner; pod.hue = hue;
-    pod.g.clear().roundRect(pod.x, pod.y, pod.w, pod.h, 3);
-    // the pad is the project's colour; the 1px trim at 25% alpha is the session's identity hue
-    if (owner) pod.g.fill({ color: hexNum(hsl(projectHue(owner), 0.4, 0.55)), alpha: 0.09 }) // a quiet tint: shirts always beat the pod behind them.stroke({ width: 1, color: hexNum(hsl(hue >= 0 ? hue : projectHue(owner), 0.65, 0.6)), alpha: 0.25, alignment: 1 });
+    pod.g.clear().rect(pod.x, pod.y, pod.w, pod.h); // square: a curve on a 1 art px grid only anti-aliases
+    // the pad is the project's colour (a quiet tint: shirts always beat the pod behind them); the 1px trim inside it at 25% alpha is the session's identity hue
+    if (owner) pod.g.fill({ color: hexNum(hsl(projectHue(owner), 0.4, 0.55)), alpha: 0.09 }).stroke({ width: 1, color: hexNum(hsl(hue >= 0 ? hue : projectHue(owner), 0.65, 0.6)), alpha: 0.25, alignment: 1 });
     else pod.g.fill({ color: DIM, alpha: 0.14 });
     if (!owner) { if (pod.plaque) pod.plaque.visible = false; return; }
-    pod.plaque ??= this.ui.addChild(new Text({ text: "", style: { fontFamily: MONO, fontSize: 10, fill: 0xffffff, stroke: { color: 0x0e0d16, width: 3 } } }));
+    pod.plaque ??= this.ui.addChild(new Text({ text: "", style: { fontFamily: MONO, fontSize: 10, fill: KEY.text.fg, stroke: { color: E[0], width: 3 } } }));
     pod.plaque.anchor.set(0.5);
     pod.plaque.eventMode = "none";
     pod.plaque.visible = true;
@@ -574,15 +576,16 @@ export class Scene {
       else if (d.kind === "coffee") this.coffeeS = add(coffeeTex(), r.x, r.y, z);
       else if (d.kind === "cooler") add(coolerTex(), r.x, r.y, z);
       else if (d.kind === "bookshelf") add(shelfTex(), r.x, r.y, z);
-      else if (d.kind === "couch") add(couchTex(), r.x, r.y, z);
+      else if (d.kind === "couch") { add(couchTex(), r.x, r.y, z); add(couchTex(true), r.x, r.y, r.y + r.h + 3); } // the back rail stacks over a lounger (actor z = seat + 2)
       else if (d.kind === "rack") { const k = this.geo.bank[this.racks.length]; this.racks.push(add(rackTex(0, Math.min(2, this.racks.length) as 0 | 1 | 2), k.x, k.y, z)); }
       else if (d.kind === "holo") add(holoTex(), r.x, r.y, z);
       else if (d.kind === "lamp") add(floorLampTex(), r.x, r.y, z);
       else if (d.kind === "fridge") add(fridgeTex(), r.x, r.y, z);
       else if (d.kind === "table") add(tableTex(), r.x, r.y, z);
-      else if (d.kind === "booth" || d.kind === "armchair") { // authored facing +x; the right-hand side is the mirror image
+      else if (d.kind === "armchair") add(armchairTex(), r.x, r.y, r.y + r.h); // seen from behind, symmetric: never mirrored (the key light stays top-left)
+      else if (d.kind === "booth") { // authored facing +x; the right-hand side is the mirror image
         const right = d.x > (l.cols - 1) / 2;
-        const s = add(d.kind === "booth" ? boothTex() : armchairTex(), r.x + (right ? T : 0), r.y, r.y + r.h);
+        const s = add(boothTex(), r.x + (right ? T : 0), r.y, r.y + r.h);
         if (right) s.scale.x = -1;
       }
     });
@@ -598,7 +601,7 @@ export class Scene {
   }
 
   /** Monitor glyph by tool kind (#102), lamp shade, role item and drawn over the desk sprite. */
-  private drawDeco(g: Graphics, o: { working: boolean; tool?: string; count: number; role?: string; v: number; waiting: boolean; turn: boolean; flash: boolean; used: boolean; load: number; depth: number; mug: boolean; filed?: string }) {
+  private drawDeco(g: Graphics, o: { working: boolean; tool?: string; count: number; role?: string; v: number; waiting: boolean; turn: boolean; flash: boolean; used: boolean; load: number; depth: number; mug: boolean; think: boolean; filed?: string }) {
     g.clear();
     const px = (x: number, y: number, col: string) => g.rect(x, y, 1, 1).fill(col);
     if (o.filed) { g.rect(1, 3, 4, 3).fill(KEY.paper).rect(1, 3, 4, 1).fill(FILED[o.filed] ?? "#8b93ad"); return; } // a filed result left on the empty desk
@@ -615,7 +618,7 @@ export class Scene {
       else if (k === "edit") g.rect(9, 1, 3, 1).fill("#5be37d").rect(9, 2, 3, 1).fill("#ff6b6b").rect(9, 3, 2, 1).fill("#5be37d");
       else if (k === "read") g.rect(9, 1, 4, 1).fill("#e8ecff").rect(9, 2, 3, 1).fill("#e8ecff").rect(9, 3, 4, 1).fill("#e8ecff");
       else if (k === "web") { for (const [x, y] of [[10, 1], [11, 1], [12, 1], [10, 4], [11, 4], [12, 4], [9, 2], [9, 3], [13, 2], [13, 3], [11, 2], [11, 3]]) px(x, y, c); }
-    }
+    } else if (o.think) { g.rect(9, 1, 5, 4).fill("#12304a"); px(9, 3, KEY.cyan); px(11, 3, KEY.cyan); px(13, 3, KEY.cyan); } // thinking: "..." on the screen
     if (o.used) { // power rail along the desk front: one step lit per load level (static); queue chips stacked in the front gap
       for (let i = 0; i < 3; i++) g.rect(2 + i * 4, 14, 3, 1).fill(i < o.load ? KEY.cyan : E[1]);
       const q = chipStack(o.depth);
@@ -697,11 +700,11 @@ export class Scene {
         const used = !!st?.used, working = used && !!st?.working;
         const el = st?.flash ? now - st.flash - d.idx * 60 : -1; // ship-it wave: 120ms green blink per desk, staggered
         const flash = !settings.reducedMotion && el >= 0 && el < 120 && now - st!.flash! < 1200;
-        const o = { working, tool: working ? st?.tool : undefined, count: used ? st?.count ?? 0 : 0, role: used ? st?.role : undefined, v: d.v, waiting: used && !working && !!st?.waiting, turn: st?.waitKind === "turn", flash, used, load: used ? st?.load ?? 0 : 0, mug: used && !!st?.mug, depth: used ? st?.queueDepth ?? 0 : 0 };
+        const o = { working, tool: working ? st?.tool : undefined, count: used ? st?.count ?? 0 : 0, role: used ? st?.role : undefined, v: d.v, waiting: used && !working && !!st?.waiting, turn: st?.waitKind === "turn", flash, used, load: used ? st?.load ?? 0 : 0, mug: used && !!st?.mug, think: used && !working && !!st?.think, depth: used ? st?.queueDepth ?? 0 : 0 };
         const f = this.filed.get(id);
         if (f && (used || now - f.t > FILED_MS)) this.filed.delete(id); // tidied once someone sits down or after a while
         const filed = !used ? this.filed.get(id)?.kind : undefined;
-        const key = `${o.tool ?? ""}|${o.count}|${o.role ?? ""}|${+working}${+o.waiting}${+o.turn}${+flash}|${+used}${o.load}.${o.depth}${+o.mug}|${filed ?? ""}`;
+        const key = `${o.tool ?? ""}|${o.count}|${o.role ?? ""}|${+working}${+o.waiting}${+o.turn}${+flash}|${+used}${o.load}.${o.depth}${+o.mug}${+o.think}|${filed ?? ""}`;
         if (key !== d.decoKey) { d.decoKey = key; this.drawDeco(d.deco, { ...o, filed }); }
       }
     }
@@ -757,7 +760,7 @@ export class Scene {
       if (tagHits(q.x, q.y, q.width, q.height)) q.visible = false; // a name tag or selection ring wins over the plaque
       // last-prompt caption under the plaque: small, muted, only when zoomed in; text re-set only when its inputs change
       if (!capOn) { if (p.cap) p.cap.visible = false; return; }
-      const cap = (p.cap ??= this.ui.addChild(new Text({ text: "", style: { fontFamily: MONO, fontSize: 9, fill: 0xdfe4ff, stroke: { color: 0x0e0d16, width: 2 } } })));
+      const cap = (p.cap ??= this.ui.addChild(new Text({ text: "", style: { fontFamily: MONO, fontSize: 9, fill: KEY.text.soft, stroke: { color: E[0], width: 2 } } })));
       if (p.prompt !== p.capPrompt || p.capChars !== cchars || p.capPriv !== priv || cap.style.fontSize !== cfs) {
         cap.style.fontSize = cfs;
         p.capPrompt = p.prompt; p.capChars = cchars; p.capPriv = priv;
@@ -825,7 +828,7 @@ export class Scene {
     const anim = burstAllowed();
     const sunny = this.weather === "sunny", rain = this.weather === "rain";
     this.wxWins.forEach((w, i) => {
-      w.sun.visible = sunny;
+      w.sun.visible = sunny && i === 0; // one sun (or moon) in the sky, not one per pane
       w.sun.tint = this.dark ? 0xdfe6ff : 0xffd84a;
       w.sun.position.set(w.x + 21, 7); // inside the pane (x+2..x+29, y 5..23) with >= 2 px clear
       w.cloud.visible = !sunny;
@@ -949,7 +952,7 @@ export class Scene {
         const tx = this.colText[i];
         tx.text = t;
         tx.style.fontSize = fs;
-        tx.style.fill = c === "blocked" && n ? 0xff7a6a : 0xbfeaff;
+        tx.style.fill = c === "blocked" && n ? STATUS.blocked.color : KEY.text.fg;
       });
       this.boardText.style.fontSize = fs;
       const rows = Math.max(1, Math.min(4, Math.floor((20 * sc) / (fs * 1.25)))), wide = Math.floor(((b.w * T - 8) * sc) / (fs * 0.62));
@@ -1009,7 +1012,7 @@ export class Scene {
       }
       g.rect(wx + 15, 5, 2, 19).fill(E[2]); // mullion, centred on the pane
       g.rect(wx, 24, 2 * T, 3).fill(E[4]).rect(wx, 24, 2 * T, 1).fill(E[5]); // sill, lit edge
-      g.rect(wx + 24, 19, 4, 3).fill(0x3fa14c).rect(wx + 25, 18, 2, 1).fill(0x7fd18a).rect(wx + 25, 22, 2, 2).fill(0xa8643c); // sill plant
+      if (i % 2 === 0) g.rect(wx + 24, 19, 4, 3).fill(0x3fa14c).rect(wx + 25, 18, 2, 1).fill(0x7fd18a).rect(wx + 25, 22, 2, 2).fill(0xa8643c); // sill plant
     });
   }
 

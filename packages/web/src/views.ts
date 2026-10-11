@@ -31,7 +31,9 @@ function renderWall(box: HTMLElement) {
   renderWall0(box);
   if (box === wallGrid) renderEnded(endedBox);
 }
-let wallGrid: HTMLElement, endedBox: HTMLElement;
+let wallGrid: HTMLElement, endedBox: HTMLElement, liveCnt: HTMLElement;
+/** Counts never break inside ("1 permission wait", "~ 0 partly done"): spaces within each " · " part are non-breaking. */
+const nb = (s: string) => s.split(" · ").map((x) => x.replace(/ /g, "\u00a0")).join(" · ");
 /** The Sessions view's "Ended" list from state.summaries (newest first). */
 function renderEnded(box: HTMLElement) {
   const list = office.getEnvelope()?.state.summaries ?? [], now = Date.now();
@@ -44,15 +46,17 @@ function renderEnded(box: HTMLElement) {
       // red only when the session got nothing done; mixed outcomes stay neutral and the counts carry the detail
       // worst outcome wins: red if anyone gave up, green only when everything got done, else neutral (a failed session never looks clean)
       d.style.setProperty("--st", (o.blocked ? look("blocked") : o.done && !o.partial && !o.empty ? outcomeLook("done") : outcomeLook("")).color);
-      const outs = el("span", "k", `${t("agent", { n: x.agents })} · `);
+      const outs = el("span", "k", `${nb(t("agent", { n: x.agents }))} · `);
       outs.append(...([["done", o.done], ["partial", o.partial], ["blocked", o.blocked], ...(o.empty ? [["empty", o.empty]] as const : [])] as const).flatMap(([k, n], i) => {
-        const g = el("span", "", `${outcomeLook(k).glyph} ${n} ${outcomeLook(k).label}`); // "✓ 1 done", not a bare "✓ 1" (final review)
+        const g = el("span", "", nb(`${outcomeLook(k).glyph} ${n} ${outcomeLook(k).label}`)); // "✓ 1 done", not a bare "✓ 1" (final review)
         g.title = `${n} ${outcomeLook(k).label}`;
         return i ? [" ", g] : [g];
       }));
       const perm = x.permission.n ? `${x.permission.n} permission wait${x.permission.n === 1 ? "" : "s"} · ${fmtDur(x.permission.totalMs)} total` : "no permission waits";
-      d.append(el("b", "", x.project), el("span", "", `ended ${ago === "just now" ? ago : `${ago} ago`} · ran ${fmtDur(x.durationMs)}`), ...goal(x.prompt, x.result), outs,
-        el("span", x.errors ? "er" : "k", `${x.errors} error${x.errors === 1 ? "" : "s"}`), el("span", "k", perm), el("span", "k", fmtTokens(x.usage) || "no tokens recorded"));
+      const when = el("span", "", nb(` ${ago === "just now" ? ago : `${ago} ago`} · ran ${fmtDur(x.durationMs)}`));
+      when.prepend(el("span", "stw", "ended"));
+      d.append(el("b", "", x.project), when, ...goal(x.prompt, x.result), outs,
+        el("span", x.errors ? "er" : "k", `${x.errors} error${x.errors === 1 ? "" : "s"}`), el("span", "k", nb(perm)), el("span", "k", nb(fmtTokens(x.usage) || "no tokens recorded")));
       return d;
     }));
     const h = el("h2", "", "ENDED ");
@@ -69,6 +73,7 @@ function goal(prompt?: string, result?: string): HTMLElement[] {
 function renderWall0(box: HTMLElement) {
   const e = office.getEnvelope(), now = Date.now();
   if (!e) return;
+  if (box === wallGrid) liveCnt.textContent = office.sessions().length ? `(${office.sessions().length})` : "";
   const acts = office.actors();
   const tiles = office.sessions().map((s) => {
     const ss = e.state.sessions[s.id];
@@ -84,9 +89,9 @@ function renderWall0(box: HTMLElement) {
       const b = el("button", "tile");
       b.type = "button";
       b.style.setProperty("--st", look(x.state).color);
-      b.append(el("b", "", x.s.project), el("span", "", statusWord(x.state)), ...goal(x.prompt, x.result), el("span", "k", [x.age, t("helper", { n: x.helpers }), x.line].filter(Boolean).join(" · ")),
-        el("span", "k", x.tok || "no tokens yet"), el("span", x.errors ? "er" : "k", `${x.errors} error${x.errors === 1 ? "" : "s"}`));
-      if (x.perm) b.append(el("span", "k", x.perm));
+      b.append(el("b", "", x.s.project), el("span", "", statusWord(x.state)), ...goal(x.prompt, x.result), el("span", "k", nb([x.age, t("helper", { n: x.helpers }), x.line].filter(Boolean).join(" · "))),
+        el("span", "k", nb(x.tok || "no tokens yet")), el("span", x.errors ? "er" : "k", `${x.errors} error${x.errors === 1 ? "" : "s"}`));
+      if (x.perm) b.append(el("span", "k", nb(x.perm)));
       b.addEventListener("click", () => { office.select(x.s.lead); setView(""); });
       return b;
     }) : [el("div", "k pad", "No sessions yet. Start Claude Code with the plugin; they appear here.")]);
@@ -144,7 +149,7 @@ function buildTimeline(root: HTMLElement) {
   cv.setAttribute("aria-label", "Timeline of sessions and agents over the chosen range. Bars are coloured by role; the legend lists outcomes.");
   wrap.append(cv, sizer);
   const css = (n: string) => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || "#888";
-  const left = () => Math.min(150, Math.max(70, Math.floor(wrap.clientWidth * 0.28)));
+  const left = () => Math.min(170, Math.max(82, Math.floor(wrap.clientWidth * 0.28)));
   const plot = () => ({ l: left(), w: Math.max(10, wrap.clientWidth - left() - 10) });
   const timeAt = (x: number) => { const p = plot(), v = tl!.view; return v.t0 + (Math.max(0, Math.min(p.w, x - p.l)) / p.w) * (v.t1 - v.t0); };
   const priv = hideText;
@@ -184,7 +189,7 @@ function buildTimeline(root: HTMLElement) {
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     const fg = css("--fg"), mute = css("--mute"), line = css("--line"), panel = css("--panel"), acc = css("--acc"), bad = css("--bad"), warn = css("--warn"), good = css("--good");
     g.fillStyle = panel; g.fillRect(0, 0, W, H);
-    g.font = `${11 * (Number(css("--ts")) || 1)}px ui-monospace,Menlo,monospace`; g.textBaseline = "middle";
+    g.font = `${11 * (Number(css("--ts")) || 1)}px ${getComputedStyle(document.body).fontFamily}`; g.textBaseline = "middle"; // the chrome's own font (Settings > font)
     const { l, w: pw } = plot(), v = tl.view, span = v.t1 - v.t0, x = (t: number) => l + ((t - v.t0) / span) * pw;
     // time grid
     const step = STEPS.find((s) => (s / span) * pw >= 70) ?? STEPS[STEPS.length - 1];
@@ -205,7 +210,7 @@ function buildTimeline(root: HTMLElement) {
       if (i < i0) continue;
       const y = AXIS + i * RH - top, mid = y + RH / 2;
       g.textAlign = "start"; g.fillStyle = r.kind === "session" ? fg : mute;
-      g.fillText(clipL(priv() ? (r.kind === "session" ? `session ${sess}` : r.role) : r.kind === "agent" && r.id && nm.has(r.id) ? `${nm.get(r.id)} · ${r.role.replace(/^.*:/, "")}` : r.label, l - 12 - (r.kind === "agent" ? 10 : 0)), (r.kind === "agent" ? 14 : 4), mid);
+      g.fillText(clipL(priv() ? (r.kind === "session" ? `session ${sess}` : r.role) : r.kind === "agent" && r.id && nm.has(r.id) ? `${nm.get(r.id)} · ${r.role.replace(/^.*:/, "")}` : r.label, l - 24 - (r.kind === "agent" ? 10 : 0)), (r.kind === "agent" ? 26 : 16), mid); // the panel's 16px gutter, helpers one 10px step in
       if (r.e < v.t0 || r.s > v.t1) continue;
       const a = Math.max(l, x(r.s)), b = Math.min(l + pw, x(r.e)), bw = Math.max(2, b - a);
       if (r.kind === "session") { g.fillStyle = line; g.fillRect(a, y + 7, bw, RH - 14); continue; }
@@ -394,7 +399,12 @@ export function bindViews(tools: HTMLElement) {
   wallGrid = grid;
   endedBox = el("section");
   endedBox.setAttribute("aria-label", "Ended sessions");
-  wall.append(grid, endedBox);
+  const liveSec = el("section"), liveH = el("h2", "", "LIVE ");
+  liveSec.setAttribute("aria-label", "Live sessions");
+  liveCnt = el("span", "cnt");
+  liveH.append(liveCnt);
+  liveSec.append(liveH, grid);
+  wall.append(liveSec, endedBox);
   document.body.append(wall, tlRoot);
   const timeline = buildTimeline(tlRoot);
   const bo = btn("Office", "The live office (1)", () => setView(""));

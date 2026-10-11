@@ -55,6 +55,8 @@ export const KEY = {
   attention: STATUS.permission.color,
   blocked: STATUS.blocked.color,
   neon: "#ff3ea5",
+  /** Text on the dark ramp, shared by the chrome (--fg/--soft/--mute) and in-scene labels (visual refinement pass). */
+  text: { fg: "#e8e6f5", soft: "#cfcde6", mute: "#aaa6c6" },
   char: { face: [0.38, 0.85], shirt: [0.25, 0.6], hair: [0.2, 0.5], pants: [0.12, 0.25] },
 } as const;
 const E = KEY.env;

@@ -1,10 +1,10 @@
 import { Application, Container, Graphics, Sprite, Text, UPDATE_PRIORITY, type ContainerChild } from "pixi.js";
 import { buildLayout, deskCount, emptyFun, findPath, seatTile, standNear, stepFun, leadId, parentChain, type FunEvent, type FunMemory, type Layout, type OfficeConfig, type OfficeState, type Tile } from "@agent-office/core";
-import { Actor, T, feet, layoutBubbles, layoutTags, obstacles, pipShape, setBubbleBlank, setBubbleLayer, setFloorBounds } from "./actor.ts";
+import { Actor, T, feet, layoutBubbles, layoutTags, obstacles, pipScale, setPip, setBubbleBlank, setBubbleLayer, setFloorBounds } from "./actor.ts";
 import { hideText } from "./stream.ts";
 import { dropOutcome } from "./triage.ts";
 import { Scene, type SeatState } from "./scene.ts";
-import { lookFor, pulseTex, whiteTex } from "./sprites.ts";
+import { lookFor, PIP, pulseTex, whiteTex } from "./sprites.ts";
 import { KEY, setRoles, STATUS } from "./theme.ts";
 import { isDelight, pickWeather, planDelight, pushSignal, type Delight, type Weather } from "./flair.ts";
 import { Floaters } from "./flairfx.ts";
@@ -12,12 +12,12 @@ import { bindMinimap } from "./minimap.ts";
 import { ambientOn, burstAllowed, fontPx, frozen, setSceneScale, setTextScale, settings } from "./settings.ts";
 import { FxBudget, scaled, type FxClass } from "./fx.ts";
 import { followDue, pickBusiest } from "./follow.ts";
-import { projectHue } from "./logic.ts";
+import { projectHue, sessionColor } from "./logic.ts";
 import { bake } from "./pixel.ts";
 import { dev, setDpr } from "./snap.ts";
 import { clip, store } from "./dom.ts";
 import { ticketTex } from "./ticket.ts";
-import { hash, hsl } from "./color.ts";
+import { hash } from "./color.ts";
 import { clampBox, collapseLatch, stackLabels, worstState, type Box, alertsFor, boardLines, crowdLod, doorHold, holds, loadLevel, newAlerts, feedItem, isWorking, longToolMs, pickStroller, planInteraction, sessionHue, shrinkFloor, pushCapped, statusOf, stepHold, couchSeats, tetherAlpha, ticketEnd, ticketFor, ticketT, yieldsTo, TICKET_MS, uniqueNames, type Action, type PlanCtx, type Shrink, type StrollCand, type Ticket } from "./choreo.ts";
 import { advance, connect, newCursor, type Envelope } from "./net.ts";
 import { camera, bindPointer, isNarrow, phoneScale, pickAuto, type View } from "./camera.ts";
@@ -96,12 +96,12 @@ const bubbleLayer = new Container();
 app.stage.addChild(world, uiLayer, bubbleLayer);
 setBubbleLayer(bubbleLayer);
 // "+N" for arrivals waiting at the door beyond the six drawn in the line; a count of real agents, not text from any event
-const doorTok = new Text({ text: "", style: { fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: 11, fill: 0x7fe3ff, stroke: { color: 0x0e0d16, width: 3 } } });
+const doorTok = new Text({ text: "", style: { fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: 11, fill: 0x7fe3ff, stroke: { color: KEY.env[0], width: 3 } } });
 doorTok.anchor.set(0.5, 1);
 doorTok.visible = false;
 uiLayer.addChild(doorTok);
 // "+N waiting for a desk" over the last waiting spot once the queue outgrows the drawn row (every desk on every floor taken): never an invisible queue
-const queueTok = new Text({ text: "", style: { fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: 11, fill: 0xffffff, stroke: { color: 0x0e0d16, width: 3 } } });
+const queueTok = new Text({ text: "", style: { fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: 11, fill: KEY.text.fg, stroke: { color: KEY.env[0], width: 3 } } });
 queueTok.anchor.set(0.5, 1);
 queueTok.visible = false;
 uiLayer.addChild(queueTok);
@@ -621,7 +621,7 @@ function exec(a: Action, now: number) {
         const near = nearOf(t);
         f.queue({ k: "walk", to: near }, { k: "face", toward: t.pos });
         // ✓ and a burst only for an explicit DONE; partial asks, an unknown outcome stays plain (S3)
-        f.queue({ k: "say", text: dropOutcome(a.text), kind: "report", badge: "report", emote: a.done ? "check" : a.partial ? "question" : undefined, ms: Math.min(4500, 1400 + a.text.length * 35) });
+        f.queue({ k: "say", text: dropOutcome(a.text), kind: "report", badge: a.done ? "report" : undefined, emote: a.done ? "check" : a.partial ? "question" : undefined, ms: Math.min(4500, 1400 + a.text.length * 35) });
         if (a.done || a.partial) t.showEmote(a.partial ? "exclaim" : "check", 2500);
         const k = a.done ? fxk("routine", "report") : 0;
         if (k) burst(feet(near).x, feet(near).y - 14, scaled(10, k), [GOLD, PAPER]);
@@ -640,7 +640,7 @@ function exec(a: Action, now: number) {
       f.setAlert("blocked");
       if (!wasBlocked) f.glitch(); // here, not in the snapshot loop: this handler sets the alert first, so that loop never sees the change; no-op under reduced motion
       if (fxk("routine", "block")) { camera.shake(); scene.lightning(now); }
-      f.speak(a.text, "blocked", 6000, "report");
+      f.speak(a.text, "blocked", 6000); // no ✓ chip: it gave up
       const lead = a.by ? actors.get(a.by) : undefined;
       // a lead that waits on you is at its terminal (its desk): it does not walk over and stack its ring on the helper's
       if (lead && lead !== f && lead.alert !== "waiting") { lead.trim(3); lead.queue({ k: "walk", to: nearOf(f) }, { k: "face", toward: f.pos }); }
@@ -864,7 +864,7 @@ function catSeat(now: number) {
 let collapsed = false;
 const expanded = new Set<string>(); // sessions opened from a badge, an agent or the panel; Escape closes them all
 const sessIdx = new Map<string, number>(); // session id -> 1-based start order ("session N" when text is hidden)
-type SBadge = { c: Container; bg: Graphics; pips: Graphics; name: Text; info: Text; warn: Text; more: Text; key: string; w: number; h: number };
+type SBadge = { c: Container; bg: Graphics; pips: Container; name: Text; info: Text; warn: Text; more: Text; key: string; w: number; h: number };
 const badges = new Map<string, SBadge>();
 const crews = new Map<string, { pod: number; list: Actor[] }>(); // per-frame scratch
 const badgeBoxes: Box[] = [], badgeOf: SBadge[] = [], badgeHide: boolean[] = [];
@@ -875,8 +875,8 @@ function foldCrews() {
   for (const [id, a] of actors) a.setHidden(collapsed && !a.lead && !a.queued && !a.alert && id !== office.selected && !expanded.has(sessOf(id)));
 }
 function newBadge(sid: string): SBadge {
-  const st = (fill: number | string) => ({ fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: 10, fill, stroke: { color: 0x0e0d16, width: 2 } });
-  const bd: SBadge = { c: new Container(), bg: new Graphics(), pips: new Graphics(), name: new Text({ text: "", style: st(0xffffff) }), info: new Text({ text: "", style: st(0xc8cde0) }), warn: new Text({ text: "", style: st(0xffffff) }), more: new Text({ text: "", style: st(0xc8cde0) }), key: "", w: 0, h: 0 };
+  const st = (fill: number | string) => ({ fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: 10, fill, stroke: { color: KEY.env[0], width: 2 } });
+  const bd: SBadge = { c: new Container(), bg: new Graphics(), pips: new Container(), name: new Text({ text: "", style: st(KEY.text.fg) }), info: new Text({ text: "", style: st(KEY.text.soft) }), warn: new Text({ text: "", style: st(KEY.text.fg) }), more: new Text({ text: "", style: st(KEY.text.soft) }), key: "", w: 0, h: 0 };
   bd.c.addChild(bd.bg, bd.pips, bd.name, bd.info, bd.warn, bd.more);
   bd.c.eventMode = "static";
   bd.c.cursor = "pointer";
@@ -917,24 +917,25 @@ function drawBadges(ui: View, W: number, H: number) {
       bd.key = key;
       for (const t of [bd.name, bd.info, bd.warn]) t.style.fontSize = fs;
       bd.name.text = `${open ? "\u25be" : "\u25b8"} ${name}`;
-      bd.name.style.fill = hsl(sessionHue(sid), 0.7, 0.72);
+      bd.name.style.fill = sessionColor(sid);
       bd.info.text = working ? `${working}/${crew.list.length} working` : `${crew.list.length} idle`; // "0/12 working" read as broken
       const more = sts.length - PIPS_SHOWN, bad = worst !== "working" && worst !== "idle";
       // rows: name / counts / a pip per helper (+N) / worst state when it needs you: narrow enough for one pod pitch
-      const row = Math.ceil(bd.name.height), shown = Math.min(PIPS_SHOWN, sts.length), py = pad + 2 * row + r + 2;
+      // pips are the 9x9 pixel pips at a whole-number scale, top-left corners on whole pixels
+      const row = Math.ceil(bd.name.height), shown = Math.min(PIPS_SHOWN, sts.length), P = PIP * pipScale(r), pt = pad + 2 * row + 2;
       bd.name.position.set(pad, pad - 1);
       bd.info.position.set(pad, pad - 1 + row);
-      bd.pips.clear();
-      for (let i = 0; i < shown; i++) pipShape(bd.pips, pad + r + 1 + i * (2 * r + 4), py, r, sts[i].s, sts[i].wait);
+      for (const c of bd.pips.removeChildren()) c.destroy();
+      for (let i = 0; i < shown; i++) bd.pips.addChild(setPip(new Sprite(), sts[i].s, sts[i].wait, r)).position.set(pad + i * (P + 3) + P / 2, pt + P / 2);
       bd.warn.text = bad ? `${STATUS[worst].glyph} ${STATUS[worst].label}` : "";
-      bd.warn.style.fill = bad ? STATUS[worst].color : 0xc8cde0;
-      bd.warn.position.set(pad, py + r + 2);
+      bd.warn.style.fill = bad ? STATUS[worst].color : KEY.text.soft;
+      bd.warn.position.set(pad, pt + P + 2);
       // overflow on the pip row itself ("+4 more"), never on the state line, where it read as "4 more need permission"
-      bd.more.text = more > 0 ? `+${more} more` : ""; bd.more.style.fontSize = fs; bd.more.position.set(pad + shown * (2 * r + 4) + 2, py - bd.more.height / 2);
-      bd.w = Math.ceil(Math.max(bd.name.width, bd.info.width, shown * (2 * r + 4) + (bd.more.text ? bd.more.width + 2 : 0), bd.warn.text ? bd.warn.width : 0)) + 2 * pad;
-      bd.h = Math.ceil(Math.max(py + r + 1, bd.warn.text ? bd.warn.y + bd.warn.height : 0)) + pad;
-      // the border is the loud part only when the crew needs you (state colour); otherwise a quiet session-hue edge
-      bd.bg.clear().rect(0, 0, bd.w, bd.h).fill({ color: 0x0e0d16, alpha: 0.84 }).stroke(bad ? { width: 2, color: STATUS[worst].color, alpha: 1 } : { width: 1, color: hsl(sessionHue(sid), 0.65, 0.6), alpha: open ? 0.3 : 0.5 });
+      bd.more.text = more > 0 ? `+${more} more` : ""; bd.more.style.fontSize = fs; bd.more.position.set(pad + shown * (P + 3) + 2, Math.round(pt + P / 2 - bd.more.height / 2));
+      bd.w = Math.ceil(Math.max(bd.name.width, bd.info.width, shown * (P + 3) + (bd.more.text ? bd.more.width + 2 : 0), bd.warn.text ? bd.warn.width : 0)) + 2 * pad;
+      bd.h = Math.ceil(Math.max(pt + P + 1, bd.warn.text ? bd.warn.y + bd.warn.height : 0)) + pad;
+      // the border is the loud part only when the crew needs you (state colour); otherwise a quiet session-hue edge; drawn inside the plate
+      bd.bg.clear().rect(0, 0, bd.w, bd.h).fill({ color: KEY.env[0], alpha: 0.84 }).stroke(bad ? { width: 2, color: STATUS[worst].color, alpha: 1, alignment: 1 } : { width: 1, color: sessionColor(sid, 0.65, 0.6), alpha: open ? 0.3 : 0.5, alignment: 1 });
     }
     const cx = ui.ox + (pr.x + pr.w / 2) * ui.sc, bot = expanded.has(sid) ? ui.oy + (pr.y - 1) * ui.sc : ui.oy + (pr.y + pr.h / 2) * ui.sc + bd.h / 2; // centred on the folded pod (the crew's place); once opened it moves above the pod so it never covers the people it revealed
     bd.c.visible = cx >= 0 && cx <= W && bot >= TOP && bot - bd.h <= TOP + H; // off-screen pods keep their badge off-screen too
@@ -1113,6 +1114,7 @@ app.ticker.add((tk) => {
       st.load = loadLevel(n);
       st.idleMs = a?.working || !a?.busyAt ? 0 : now - a.busyAt;
       st.mug = a?.sip === "desk";
+      st.think = !!a && a.sitting && !a.working && a.thinking && !a.alert; // dots on the monitor, in place of a thought cloud
       st.folded = !!a?.hidden;
     }
   }
@@ -1164,7 +1166,7 @@ app.ticker.add((tk) => {
     const b = actors.get(id);
     if (!b) continue;
     let t = recvBadges.get(id);
-    if (!t) { t = new Text({ text: "", style: { fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: 10, fill: 0x7fe3ff, stroke: { color: 0x0e0d16, width: 3 } } }); t.anchor.set(0, 1); t.eventMode = "none"; uiLayer.addChild(t); recvBadges.set(id, t); }
+    if (!t) { t = new Text({ text: "", style: { fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: 10, fill: 0x7fe3ff, stroke: { color: KEY.env[0], width: 3 } } }); t.anchor.set(0, 1); t.eventMode = "none"; uiLayer.addChild(t); recvBadges.set(id, t); }
     t.visible = true;
     t.text = `+${n}`;
     if (t.style.fontSize !== fontPx(10)) t.style.fontSize = fontPx(10); // world-relative like every in-scene text (O3)

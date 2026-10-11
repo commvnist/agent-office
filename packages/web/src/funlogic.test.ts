@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { deltaBuckets, fuzzy, parseHighlight, rank, ringMath, sparkBuckets } from "./funlogic.ts";
+import { deltaBuckets, fuzzy, parseHighlight, rank, ringMath, sparkBuckets, tickerText } from "./funlogic.ts";
 
 test("fuzzy: subsequence, word starts beat scattered hits", () => {
   assert.equal(fuzzy("zz", "Timeline"), -1);
@@ -13,6 +13,9 @@ test("fuzzy: subsequence, word starts beat scattered hits", () => {
 test("highlight text parses who / outcome / task / duration", () => {
   assert.deepEqual(parseHighlight("Dev done: implement DiscountCode (2m05s)"), { who: "Dev", outcome: "done", what: "implement DiscountCode", dur: "2m05s" });
   assert.equal(parseHighlight("plain text").outcome, "");
+  assert.equal(tickerText("Maya blocked: no DB password (1m)"), "Maya gave up: no DB password (1m)");
+  assert.equal(tickerText("Dev partial: half of it"), "Dev partly done: half of it");
+  assert.equal(tickerText("plain text"), "plain text");
 });
 
 test("sparkline buckets: counts per minute, oldest first; cumulative deltas ignore drops", () => {

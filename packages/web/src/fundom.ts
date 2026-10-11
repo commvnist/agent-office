@@ -5,7 +5,7 @@ import { office } from "./api.ts";
 import { $, announce, el } from "./dom.ts";
 import { settings } from "./settings.ts";
 import { fmtAge, usageTotal } from "./logic.ts";
-import { deltaBuckets, OUTCOME_GLYPH, parseHighlight, ringMath, sparkBuckets, sparkPoints } from "./funlogic.ts";
+import { deltaBuckets, OUTCOME_GLYPH, parseHighlight, ringMath, sparkBuckets, sparkPoints, tickerText } from "./funlogic.ts";
 
 const HL_MS = 6000, TICK_MS = 6000;
 const pick = (id?: string) => {
@@ -132,7 +132,7 @@ export function bindFun() {
   document.addEventListener("ao:fun", (ev) => {
     const e = (ev as CustomEvent<FunEvent>).detail;
     if (!e || typeof e.text !== "string") return;
-    if (e.kind === "highlight") { highlight(e); say(e.text); }
+    if (e.kind === "highlight") { highlight(e); say(tickerText(e.text)); }
     else if (e.kind === "commentary") say(e.text); // P6: delights stay in the scene; nothing toasts over the stage
   });
   office.onFeed(() => { if (office.source.mode !== "replay") evTimes.push(Date.now()); if (evTimes.length > 4000) evTimes.shift(); });

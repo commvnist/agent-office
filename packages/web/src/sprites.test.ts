@@ -213,3 +213,18 @@ test("graded role shirts stay pairwise distinct (no two roles collapse to one sh
     assert.ok(grey || hueGap(hueOf(shirts[i]), hueOf(shirts[j])) >= 18 || Math.abs(lum(shirts[i]) - lum(shirts[j])) >= 0.06, `${DEFAULT_THEME.roleColors[i]} vs ${DEFAULT_THEME.roleColors[j]}: ${shirts[i]} ~ ${shirts[j]}`);
   }
 });
+
+test("status pips: one 9x9 pixel grid per state, distinct shapes, opaque hex pixels only", async () => {
+  const { pipGrid, PIP } = await import("./sprites.ts");
+  const keys = [["working"], ["waiting", "permission"], ["waiting", "turn"], ["blocked"], ["queued"], ["idle"]] as const;
+  const masks = keys.map(([s, w]) => pipGrid(s, w as "permission" | "turn" | undefined));
+  for (const g of masks) { assert.equal(g.w, PIP); assert.ok(g.cells.every((c) => c === null || /^#[0-9a-f]{6}$/i.test(c))); }
+  assert.equal(new Set(masks.map((g) => g.cells.join())).size, keys.length);
+  assert.equal(pipGrid("thinking").cells.join(), pipGrid("idle").cells.join()); // thinking reads as the idle ring
+});
+
+test("back view: a skin nape row under the hair unless long hair covers it", () => {
+  const nape = (style: 0 | 2 | 5 | 7) => { const g = person({ ...base, style }, "up", "walk", 0), skin = grade({ ...base, style }).skin; return [5, 6, 7, 8, 9, 10].every((x) => g.get(x, 10) === skin); }; // walk: head rows 3..10
+  for (const style of [0, 2, 7] as const) assert.ok(nape(style), `style ${style}`);
+  assert.ok(!nape(5));
+});

@@ -61,3 +61,9 @@ test("caption wording: plain sentences, report prefixes not repeated, lead notes
   assert.equal(captionText(f({ kind: "prompt", text: "DONE is a word" })), "DONE is a word");
   assert.equal(whoLine(f({ kind: "message", from: "shop", to: "user", text: "Report: DONE: x" })), "shop says");
 });
+
+test("sessionColor uses the scene's session hue, so a session has one identity colour everywhere", async () => {
+  const { sessionColor } = await import("./logic.ts");
+  const { sessionHue } = await import("./choreo.ts");
+  assert.equal(sessionColor("abc"), `hsl(${sessionHue("abc")} 70% 72%)`);
+});

@@ -1,6 +1,7 @@
 // Pure helpers for the DOM chrome (no pixi, no DOM): radar, feed filters, formatting, share-poster model.
 import type { OfficeState, Usage } from "@agent-office/core";
 import type { ActorInfo, FeedItem, SessionInfo } from "./api.ts";
+import { hash } from "./color.ts";
 
 export const fmtAge = (ms: number) => {
   const s = Math.floor(ms / 1000);
@@ -34,6 +35,8 @@ export function safeHue(n: number): number {
   for (const [lo, hi] of HUE_BANDS) { if (p < hi - lo) return lo + p; p -= hi - lo; }
   return 220;
 }
+/** A session's one identity colour on every surface (scene badge names, panel names, minimap): the scene's hue for that session id. */
+export const sessionColor = (sessionId: string, s = 0.7, l = 0.72) => `hsl(${safeHue(hash(sessionId))} ${s * 100}% ${l * 100}%)`;
 export const projectHue = (name: string) => safeHue([...name].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7));
 
 /** Shell-safe `cd` line (single quotes; embedded quotes escaped). */
