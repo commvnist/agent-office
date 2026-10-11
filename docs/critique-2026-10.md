@@ -567,7 +567,7 @@ Phase 0 re-check on the owner's live office (one page kept open across a real su
 |---|---|
 | Junction LEDs, desk activity | While the real helper worked: its screen lit, the desk glowed, its load rail showed, and its pod's junction light was on. |
 | Outcomes and wall ledger | When it handed back, the board's top line became "✓ agent-office: desk card probe …" and Recently done showed its report text as done. |
-| Desk cards | After it left, its empty desk showed the filed card in the done colour and a dark screen. A page opened after the run shows no card by design (cards are filed by the page that watched the helper). |
+| Desk cards | After it left, its empty desk showed the filed card in the done colour and a dark screen. A page opened after the run shows no card by design (cards are filed by the page that watched the helper). Observed on two separate real runs, each with the green done card on the desk the helper had just left. |
 | Mid-turn spend | Live session usage rose between hook events within one turn (about 1.1M output tokens, matching a full transcript read). |
 | Per-client level of detail | `GET /state?lod=summary` on the live daemon returned no agents and no log, plus `crew` counts (1 agent, 1 working). A daemon test connects a summary client and a full client at once and checks that each receives its own view (daemon.test.ts, "per-client level of detail"). |
 | History default | The History view opens on "Since your last visit" (Phase 2 screenshots). |
