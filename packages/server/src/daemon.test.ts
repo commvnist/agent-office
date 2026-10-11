@@ -5,7 +5,7 @@ import { mkdtempSync, writeFileSync, readFileSync, statSync, readdirSync } from 
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const MAIN = fileURLToPath(new URL("./main.ts", import.meta.url));
 const FORWARD = fileURLToPath(new URL("../../../plugin/hooks/forward.mjs", import.meta.url));
@@ -34,7 +34,7 @@ const post = (d: Awaited<ReturnType<typeof boot>>, ev: object) =>
 
 test("auth, host and origin checks; cookie grants read access", async () => {
   const d = await boot();
-  assert.equal(statSync(join(d.home, "token")).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(statSync(join(d.home, "token")).mode & 0o777, 0o600); // no POSIX modes on Windows
   assert.equal((await call(d.port, "/event", { method: "POST", body: "{}" })).status, 401);
   assert.equal((await call(d.port, "/event", { method: "POST", headers: { "x-agent-office-token": d.token, origin: "http://evil" }, body: "{}" })).status, 403);
   assert.equal((await call(d.port, "/health", { headers: { host: "evil.example" } })).status, 403);
@@ -125,7 +125,7 @@ test("forwarder: sends allowlisted payload with seq, prints only a valid reply, 
 });
 
 test("forwarder reply schema rejects extra keys and oversized text", async () => {
-  const { checkReply } = await import(FORWARD);
+  const { checkReply } = await import(pathToFileURL(FORWARD).href); // Windows: import() needs a file:// URL, not a drive path
   const ok = { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: "hi" } };
   assert.ok(checkReply(JSON.stringify(ok)));
   assert.equal(checkReply(JSON.stringify({ ...ok, extra: 1 })), undefined);

@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { planPack } from "./apply-pack.mjs";
 
 const pack = { roles: { a: { agent: "a", count: 1 } }, agents: { a: "a.md" } };
@@ -8,7 +10,7 @@ test("merges roles and keeps unrelated ones", () => {
   const p = planPack(pack, { theme: "x", roles: { b: { agent: "b", count: 2 } } }, "/p", "/out", () => false);
   assert.deepEqual(Object.keys(p.config.roles), ["b", "a"]);
   assert.equal(p.config.theme, "x");
-  assert.deepEqual(p.copies, [{ from: "/p/a.md", to: "/out/a.md" }]);
+  assert.deepEqual(p.copies, [{ from: resolve("/p", "a.md"), to: join("/out", "a.md") }]); // platform paths (Windows: drive letter, backslashes)
   assert.deepEqual(p.conflicts, []);
 });
 
@@ -33,10 +35,9 @@ test("apply-pack refuses a pack whose merged roles are not a valid office.json (
   const { spawnSync } = await import("node:child_process");
   const { mkdtempSync, writeFileSync, existsSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
-  const { join } = await import("node:path");
   const dir = mkdtempSync(join(tmpdir(), "ao-pack-")), home = mkdtempSync(join(tmpdir(), "ao-home-"));
   writeFileSync(join(dir, "pack.json"), JSON.stringify({ name: "bad", roles: { qa: { agent: "qa-engineer", count: "lots" } }, agents: {} }));
-  const r = spawnSync(process.execPath, ["--experimental-strip-types", new URL("./apply-pack.mjs", import.meta.url).pathname, dir, "--agents-dir", join(dir, "agents")], { env: { ...process.env, AGENT_OFFICE_HOME: home }, encoding: "utf8" });
+  const r = spawnSync(process.execPath, ["--experimental-strip-types", fileURLToPath(new URL("./apply-pack.mjs", import.meta.url)), dir, "--agents-dir", join(dir, "agents")], { env: { ...process.env, AGENT_OFFICE_HOME: home }, encoding: "utf8" });
   assert.equal(r.status, 1, r.stdout + r.stderr);
   assert.match(r.stderr, /invalid/);
   assert.equal(existsSync(join(home, "office.json")), false);

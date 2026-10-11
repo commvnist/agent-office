@@ -23,7 +23,7 @@ test("replay rebuilds state and sweeps ghosts", async () => {
   ];
   for (const e of evs) appendRotating(f, JSON.stringify(e));
   appendRotating(f, "not json");
-  assert.equal(statSync(f).mode & 0o777, 0o600);
+  if (process.platform !== "win32") assert.equal(statSync(f).mode & 0o777, 0o600); // no POSIX modes on Windows
   const s = replay(cfg, await loadEvents(f), now, 45 * 60_000);
   assert.deepEqual(Object.keys(s.sessions), ["live"]);
   assert.ok(s.agents.a1);
@@ -160,8 +160,10 @@ test("day files: structure and text stored apart, rejoined on read, timeline sur
   for (const e of evs) appendEvent(home, e, false);
   const dir = join(home, "events");
   assert.deepEqual(readdirSync(dir).sort(), ["2026-10-10.idx", "2026-10-10.jsonl", "2026-10-10.text.jsonl", "2026-10-11.idx", "2026-10-11.jsonl", "2026-10-11.text.jsonl"]);
-  assert.equal(statSync(dir).mode & 0o777, 0o700);
-  for (const f of readdirSync(dir)) assert.equal(statSync(join(dir, f)).mode & 0o777, 0o600, f);
+  if (process.platform !== "win32") { // no POSIX modes on Windows
+    assert.equal(statSync(dir).mode & 0o777, 0o700);
+    for (const f of readdirSync(dir)) assert.equal(statSync(join(dir, f)).mode & 0o777, 0o600, f);
+  }
   assert.ok(!readFileSync(join(dir, "2026-10-10.jsonl"), "utf8").includes("SECRET"), "structure lines carry no text");
   const r = await readEvents(home, { text: true });
   assert.deepEqual(r.events.map((e: any) => e.cwd ?? e.text ?? e.detail), ["/w/SECRET-CWD", "SECRET-PROMPT", "SECRET-CMD"]);
