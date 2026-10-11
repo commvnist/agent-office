@@ -547,3 +547,18 @@ Checks after the fixes: typecheck, 316 tests, compliance, build; perf soak (30 s
 | M2 | Done | The chip strip now uses the header's 16 px gutter. |
 | M4 | Done | E8 fixed wall slots. |
 | M5 | Verified | Pod brackets were removed (R5) and the rows share one column grid. |
+
+### Verification log (per phase)
+
+Every phase ran typecheck, `npm test`, `npm run check:compliance` and `npm run build:web`, then a throwaway-daemon screenshot matrix that was inspected (crops where pixels mattered): 3, 12 and 45 agents (100 from Phase 3 on), day and night, desktop 1245x787 and phone 390x800, each office with a helper that gave up, a lead needing permission and a lead whose turn it is.
+
+| Phase | Commit | Screenshot matrix | Notes |
+|---|---|---|---|
+| 0 | 86a6476 | 12 shots | Plus the owner's live office (real sessions) for ledger, desk cards and junction LEDs. Real-data checks: outcome text from a probe subagent's hand-back reached the ledger; the only real permission notifications were AskUserQuestion (now your turn); live spend jumped from about 155k to 918k output tokens after the restart fix; a working real helper's pod showed its lit junction; mid-turn usage events were observed rising during turns. |
+| 1 | 92d7083 | 12 shots (three passes) | Bubble/tag/flag overlap, phone Fit button, header baseline measured in the DOM (40/40 px). |
+| 2 | cda9ebb | 12 shots + Sessions, History, card | Patch frames measured on the wire (605 B vs 18 KB); `/history` on the owner's data (9,570 events, 60 ms); legacy log byte-identical. |
+| 3 | 4110c30 | 16 shots (with 100 agents) | Collapse, badges, floors; perf gate; CI made green (1bccf03, db95423, 60f824f, eb7376d). |
+| 4 | 1f4ce27, aa7b7b8 | 12 shots before/after R2, then 12 after the art pass | Wall, holo table and people crops. |
+| 5 | 26e1c5d | 16 shots + views, reviewed by 10 agents, then 16 again after the fixes | Perf soak 30 s; all CI jobs green on 26e1c5d. |
+
+Not observable here: a real GPU, a physical phone, a real tool-permission prompt and an `idle_prompt` notification (none occurred in the owner's sessions; covered by adapter and reducer tests with the documented payloads), and the Agent tool's result shape.
