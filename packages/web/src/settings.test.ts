@@ -67,3 +67,11 @@ test("scene-relative text: 1 at the reference scale, proportional above, quantiz
   assert.equal(setSceneScale(NaN), true); // bad input falls back to 1
   assert.equal(textZoom.k, 1);
 });
+
+test("stackBubbles hides a bubble that cannot rise clear instead of letting a clamp overprint it (A6)", () => {
+  const box = (o: Partial<BubbleBox>): BubbleBox => ({ x: 0, y: 100, w: 40, h: 20, prio: 2, age: 0, zone: "z", tool: false, ...o });
+  const r = stackBubbles([box({ prio: 2.5, top: 70 }), box({ age: 5, top: 70 })]);
+  assert.equal(r[0].visible, true);
+  assert.equal(r[1].visible, false, "no room above the alert bubble");
+  assert.equal(stackBubbles([box({ top: 40 }), box({ age: 5, top: 40 })])[1].y, 78, "room: it stacks");
+});

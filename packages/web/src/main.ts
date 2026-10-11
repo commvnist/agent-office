@@ -1,6 +1,6 @@
 import { Application, Container, Graphics, Sprite, Text } from "pixi.js";
 import { buildLayout, deskCount, emptyFun, findPath, seatTile, standNear, stepFun, leadId, childrenOf, parentChain, type FunEvent, type FunMemory, type Layout, type OfficeConfig, type OfficeState, type Tile } from "@agent-office/core";
-import { Actor, T, feet, layoutBubbles, layoutTags, setBubbleBlank, setFloorBounds } from "./actor.ts";
+import { Actor, T, feet, layoutBubbles, layoutTags, setBubbleBlank, setBubbleLayer, setFloorBounds } from "./actor.ts";
 import { hideText } from "./stream.ts";
 import { dropOutcome } from "./triage.ts";
 import { Scene, type SeatState } from "./scene.ts";
@@ -64,6 +64,9 @@ let SHEET = 0;
 const sideEl = document.getElementById("side")!;
 new ResizeObserver(() => { SHEET = sideEl.offsetHeight; }).observe(sideEl);
 const sheetPx = () => (matchMedia("(max-width:800px)").matches && !document.body.classList.contains("collapsed") ? SHEET : 0);
+// The meter strip and the phone's Fit button sit over the bottom of the stage: the camera fits above them, so neither covers a desk (H5).
+const sparkEl = document.getElementById("spark")!, fitEl = document.getElementById("fit")!;
+const bottomPx = () => Math.max(sheetPx(), sparkEl.offsetHeight) + (fitEl.offsetHeight ? fitEl.offsetHeight + 12 : 0);
 camera.focusSelected = () => { if (office.selected) camera.focus(office.selected); };
 // moving the window to another monitor changes the DPR: follow it (#166)
 function watchDpr() {
@@ -77,7 +80,9 @@ watchDpr();
 
 const world = new Container();
 const uiLayer = new Container();
-app.stage.addChild(world, uiLayer);
+const bubbleLayer = new Container();
+app.stage.addChild(world, uiLayer, bubbleLayer);
+setBubbleLayer(bubbleLayer);
 // "+N" for arrivals waiting at the door beyond the six drawn in the line; a count of real agents, not text from any event
 const doorTok = new Text({ text: "", style: { fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: 11, fill: 0x7fe3ff, stroke: { color: 0x0e0d16, width: 3 } } });
 doorTok.anchor.set(0.5, 1);
@@ -928,7 +933,7 @@ app.ticker.add((tk) => {
     if (e) { onEnvelope(e); fastForward(); }
   }
   wasFrozen = frozen.on;
-  const W = app.screen.width, H = app.screen.height - TOP - sheetPx();
+  const W = app.screen.width, H = app.screen.height - TOP - bottomPx();
   if (W !== vw || H !== vh) { vw = W; vh = H; viewAt = now; viewDirty = true; }
   if (viewDirty && now - viewAt >= RESIZE_DEBOUNCE_MS) {
     viewDirty = false;
@@ -936,7 +941,7 @@ app.ticker.add((tk) => {
     if (lastCfg) syncActors();
   }
   camera.minScale = 1 / dpr();
-  camera.phone = isNarrow(W, H + sheetPx()); // judged on the full stage, so opening the sheet never flips the mode
+  camera.phone = isNarrow(W, app.screen.height - TOP); // judged on the full stage, so opening the sheet never flips the mode
   if (camera.phone && !camera.fitAll && camera.autoFollow) { // default phone focus: an alert, else a working agent, else the door aisle
     const cand = [];
     for (const a of actors.values()) if (!a.leaving && !a.queued && !a.gone) cand.push({ id: a.id, x: a.pos.x, y: a.pos.y, alert: !!a.alert, working: a.working });
@@ -964,7 +969,7 @@ app.ticker.add((tk) => {
   // pips when zoomed out, or in a crowd for everyone but leads, the selected/hovered actor and alerts
   crowd = crowdLod(crowd, Object.keys(state.agents).length, displaced);
   for (const a of actors.values()) a.setLod(lod || ((crowd || (overlay && camera.phone)) && !a.lead && !a.alert && a.id !== office.selected && a.id !== hoverId));
-  const hud = { w: app.screen.width, h: app.screen.height, top: TOP };
+  const hud = { w: app.screen.width, h: app.screen.height - bottomPx(), top: TOP };
   if (setBubbleBlank(hideText())) for (const a of actors.values()) a.refreshText(); // stream-safe blanks live canvas bubbles at once
   if (setSceneScale(ui.sc)) { for (const a of actors.values()) a.refreshText(); doorTok.style.fontSize = fontPx(11); } // in-scene text keeps its size relative to the world
   if (frozen.on) { // paused: nothing advances, but pan/zoom/selection stay live (overlays re-follow the camera)

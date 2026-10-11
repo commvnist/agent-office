@@ -66,11 +66,12 @@ export function easeSpeed(v: number, remaining: number, dt: number, max: number,
   return Math.max(max * 0.25, Math.min(max, nv));
 }
 
-export type BubbleBox = { x: number; y: number; w: number; h: number; prio: number; age: number; zone: string; tool: boolean };
+export type BubbleBox = { x: number; y: number; w: number; h: number; prio: number; age: number; zone: string; tool: boolean; top?: number };
 export type BubbleOut = { y: number; alpha: number; visible: boolean };
 /**
  * Stack overlapping bubbles (x = centre, y = bottom edge, screen px). Higher prio first, then newer (smaller age).
  * Overlaps shift up; each shift fades 25% (max 50%); at most `maxTools` tool bubbles stay visible per zone.
+ * A bubble that would rise past its `top` (the floor or HUD edge) is hidden: clamping it back down would overprint (A6).
  */
 export function stackBubbles(items: BubbleBox[], maxTools = 3): BubbleOut[] {
   const out: BubbleOut[] = items.map((b) => ({ y: b.y, alpha: 1, visible: true }));
@@ -85,13 +86,14 @@ export function stackBubbles(items: BubbleBox[], maxTools = 3): BubbleOut[] {
       perZone.set(it.zone, n + 1);
     }
     const l = it.x - it.w / 2, r = it.x + it.w / 2;
-    let y = it.y, shifts = 0;
+    let y = it.top === undefined ? it.y : Math.max(it.y, it.top + it.h), shifts = 0; // start where the edge clamp would put it
     for (let guard = 0; guard < 12; guard++) {
       const hit = placed.find((p) => l < p.r && r > p.l && y - it.h < p.b && y > p.t);
       if (!hit) break;
       y = hit.t - 2;
       shifts++;
     }
+    if (shifts && it.top !== undefined && y - it.h < it.top) { out[i].visible = false; continue; }
     out[i].y = y;
     out[i].alpha = 1 - 0.25 * Math.min(2, shifts);
     placed.push({ l, r, t: y - it.h, b: y });

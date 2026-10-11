@@ -404,11 +404,9 @@ Built by the lead session and two Opus agents in parallel: A on core, server and
 |---|---|
 | C2 scrim | A scrim would hide the alerts the critique wants visible. Dialogs instead stay above the toast area. |
 | D2 persistent pod labels | The owner asked for plaques on hover only. Pod identity is in the hover plaque and the triage card. |
-| A6, A8 label overlaps near a blocked agent | They come from the lead walking over to the blocked helper. They're transient and need a label-avoidance pass. |
 | R2 value-key regrade, F1–F3 character silhouettes and poses, E1/E3/E7–E12 environment polish, L2/L4/L5 identity props | One coordinated art pass behind a palette token, not piecemeal; the art agent warns a partial regrade leaves two styles. |
 | V4 and G1–G6 session-collapse level of detail | Large, and touches allocation and the scene. Chip grouping by session and the "+N · k need you" overflow landed as the first step. |
 | P1 delta streaming, P2 per-day history, P5 floors, P6 performance gate, P7 multi-machine digest, the after-action summary, and derived signals (permission latency, tool p95) | Architectural, so they're next-phase work. |
-| B10, H5 | Header and strip baseline and canvas label clamping depend on camera sizing; left for the art and layout pass. |
 
 ## Finishing pass (October 2026)
 
@@ -426,3 +424,13 @@ Watched the owner's real Claude Code 2.1.296 sessions through the running daemon
 | Junction LEDs | The pod of a working real helper shows its lit tick. | No change. |
 
 Not observable from here: a real tool-permission prompt (this session runs without them), and `idle_prompt` (it fires after a minute at the prompt, and none was stored). Both paths are covered by adapter and reducer tests with the documented payloads.
+
+### Phase 1: honesty and layout correctness
+
+| Item | Verdict | What changed |
+|---|---|---|
+| V2 follow-up: delegation skill | Done | `office-delegation` no longer pushes fan-out: its description says it applies once you have decided to delegate, "auto" means your judgement with no push either way (matching the injected "your call" line), and only "aggressive" asks for fan-out. Plugin 0.0.3, updated through `claude plugin marketplace update` + `plugin update`. |
+| A6 | Done | Bubbles live on one layer above every actor's overlay, so a neighbour's pip, ring or tag never covers them. The stacker knows the floor/HUD top edge: a bubble starts where the clamp would put it, and one that cannot rise clear is hidden instead of being clamped back onto another. An alert's own words outrank a neighbour's speech. |
+| A8 | Done | An alert's flag and ring are fixed obstacles for other agents' tags (never its own), so a walking lead's label yields around a blocked helper. A status pip never sits on someone else's tag. |
+| B10 | Done | The panel's NEEDS YOU band is exactly the header's height, so both end on one line (measured: 40 px and 40 px, was 40 and 43). |
+| H5 | Done | Labels clamp to the visible part of the floor, so a followed or zoomed camera never cuts one at the canvas edge; off-screen agents are not stacked. The camera fits above the meter strip and the phone's Fit button, so neither covers a desk. On phones one highlight card shows at a time and a "gave up" card times out (NEEDS YOU and the pill keep it), so it no longer covers the stage where the camera frames the alert. |

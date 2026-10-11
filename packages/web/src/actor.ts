@@ -152,8 +152,9 @@ export class Actor {
   private emoteKey = "";
   private emoteBorn = 0;
   low = false; // LOD: see setLod
-  private pip = new Graphics(); // LOD status pip, screen space
+  readonly pip = new Graphics(); // LOD status pip, screen space
   demoted = false; // tag swapped for the pip because the floor was too crowded
+  onScreen = true; // after syncUi: off-screen tags are not stacked (their floor rect is not the visible one)
   private headPip = { x: 0, y: 0 };
   private pipKey = "";
   private flr: Rect = { x: 0, y: 0, w: 0, h: 0 }; // floor bounds in screen px, valid when `floor` is set
@@ -247,8 +248,8 @@ export class Actor {
   /** Re-apply settings.textScale to the tag and any live bubbles. */
   refreshText() {
     this.tag.style.fontSize = fontPx(11);
-    if (this.speech) { const o = this.speech; o.node.destroy({ children: true }); o.node = makeBubble(o.text, o.kind, o.badge); this.ui.addChild(o.node); }
-    if (this.toolBubble) { const o = this.toolBubble; o.node.destroy({ children: true }); o.node = makeBubble(o.text, "tool", "tool"); this.ui.addChild(o.node); }
+    if (this.speech) { const o = this.speech; o.node.destroy({ children: true }); o.node = makeBubble(o.text, o.kind, o.badge); bubbleHost(this.ui).addChild(o.node); }
+    if (this.toolBubble) { const o = this.toolBubble; o.node.destroy({ children: true }); o.node = makeBubble(o.text, "tool", "tool"); bubbleHost(this.ui).addChild(o.node); }
   }
   /** Pulsing ring + large distinct glyph (waiting = "!", blocked = flag + red "! " tag). null clears. Persists while leaving. */
   setAlert(a: Alert | null, kind: WaitKind = "permission") {
@@ -328,7 +329,7 @@ export class Actor {
   speak(text: string, kind: BubbleKind, ms: number, badge?: Badge) {
     this.speech?.node.destroy({ children: true });
     const node = makeBubble(text, kind, badge);
-    this.ui.addChild(node);
+    bubbleHost(this.ui).addChild(node);
     this.speech = { node, left: ms, text, kind, badge, born: this.t };
     this.noise();
   }
@@ -336,7 +337,7 @@ export class Actor {
     if (this.toolBubble?.text === text) { this.toolBubble.left = 2600; return; }
     this.toolBubble?.node.destroy({ children: true });
     const node = makeBubble(text, "tool", "tool");
-    this.ui.addChild(node);
+    bubbleHost(this.ui).addChild(node);
     this.toolBubble = { node, left: 2600, text, born: this.t };
   }
   hopNow() {
@@ -528,7 +529,16 @@ export class Actor {
     const gl = this.glitchAt ? Date.now() - this.glitchAt : 1e9;
     if (gl < 120) { this.tag.x += Math.floor(gl / 30) % 2 ? 2 : -2; this.tag.tint = Math.floor(gl / 40) % 2 ? 0x00f0ff : 0xff2bd6; }
     else if (this.tag.tint !== 0xffffff) this.tag.tint = 0xffffff;
-    if (floor) { this.flr.x = ox + floor.x * sc; this.flr.y = oy + floor.y * sc; this.flr.w = floor.w * sc; this.flr.h = floor.h * sc; this.clampTag(); }
+    if (floor) {
+      this.flr.x = ox + floor.x * sc; this.flr.y = oy + floor.y * sc; this.flr.w = floor.w * sc; this.flr.h = floor.h * sc;
+      this.onScreen = !view || (sx >= 0 && sx <= view.w && sy >= view.top && sy <= view.h);
+      if (view && this.onScreen) { // on screen: the visible floor only, so a followed or zoomed camera never clips a label at the edge (H5)
+        const r = Math.min(this.flr.x + this.flr.w, view.w), b = Math.min(this.flr.y + this.flr.h, view.h);
+        this.flr.x = Math.max(this.flr.x, 0); this.flr.y = Math.max(this.flr.y, view.top);
+        this.flr.w = Math.max(0, r - this.flr.x); this.flr.h = Math.max(0, b - this.flr.y);
+      }
+      this.clampTag();
+    }
     const couched = !!this.perch && this.perch.k >= 1; // lounging: head sits ~4px lower than standing
     const headY = dev(sy - (this.sitting ? 20 : couched ? 24 : 28) * sc - 6);
     if (this.tagAbove && this.sitting) { this.tag.y = dev(headY - this.tag.height - 1); if (floor) this.clampTag(); }
@@ -599,7 +609,13 @@ export class Actor {
   }
   /** Screen-space box of the name tag after syncUi (for label stacking); alerts keep their place. */
   tagBox(): Box {
-    return { x: this.tag.x, y: this.tag.y, w: this.tag.width, h: this.tag.height, pri: this.alert ? 1 : 0, dir: this.lead ? 1 : undefined };
+    return { x: this.tag.x, y: this.tag.y, w: this.tag.width, h: this.tag.height, pri: this.alert ? 1 : 0, dir: this.lead ? 1 : undefined, own: this };
+  }
+  /** Screen boxes of the alert flag (anchor bottom-centre) and ring (centred): other agents' tags must not cover them (A8). */
+  alertBoxes(out: Box[]) {
+    if (!this.alert || !this.glyph.visible || this.low) return;
+    const w = this.glyph.width, h = this.glyph.height, rw = this.ring.width, rh = this.ring.height;
+    out.push({ x: this.glyph.x, y: this.glyph.y - h, w, h, pri: 2, own: this }, { x: this.ring.x, y: this.ring.y - rh / 2, w: rw, h: rh, pri: 2, own: this });
   }
   /** Apply a stacking offset and redraw the dark backing plate (#F3). */
   placeTag(dy: number, hide = false) {
@@ -622,9 +638,16 @@ export class Actor {
   destroy() {
     all.delete(this);
     this.c.destroy({ children: true });
+    this.speech?.node.destroy({ children: true });
+    this.toolBubble?.node.destroy({ children: true });
     this.ui.destroy({ children: true });
   }
 }
+
+/** One layer above every actor's overlay: a bubble is never covered by a neighbour's pip, ring or tag (A6). main.ts sets it. */
+let bubbles: Container | null = null;
+export const setBubbleLayer = (c: Container) => { bubbles = c; };
+const bubbleHost = (own: Container) => bubbles ?? own;
 
 // per-frame scratch, reused so the ticker does not allocate arrays for the layout
 const bubbleBoxes: BubbleBox[] = [];
@@ -633,10 +656,12 @@ const tagList: Actor[] = [];
 const tagBoxes: Box[] = [];
 const hidden: boolean[] = [];
 
-function addBubble(a: Actor, b: { node: Container; born: number } | null, tool: boolean, zone: string) {
+function addBubble(a: Actor, b: { node: Container; born: number } | null, tool: boolean, zone: string, top: number) {
   if (!b || !b.node.visible || b.node.destroyed) return;
-  bubbleNodes.push({ node: b.node, fade: b.node.alpha, fl: a.floorPx() });
-  bubbleBoxes.push({ x: b.node.x, y: b.node.y, w: b.node.width, h: b.node.height, prio: tool ? 1 : 2, age: a.now - b.born, zone, tool });
+  const fl = a.floorPx();
+  bubbleNodes.push({ node: b.node, fade: b.node.alpha, fl });
+  // an alert's own words outrank a neighbour's chatter; neither may be clamped back down onto the other
+  bubbleBoxes.push({ x: b.node.x, y: b.node.y, w: b.node.width, h: b.node.height, prio: tool ? 1 : a.alert ? 2.5 : 2, age: a.now - b.born, zone, tool, top: Math.max(top, fl?.y ?? top) });
 }
 
 /**
@@ -649,8 +674,9 @@ export function layoutBubbles(actors: Iterable<Actor>, view?: { w: number; h: nu
   bubbleNodes.length = 0;
   for (const a of actors) {
     const zone = String(Math.floor(a.pos.x / (6 * T)));
-    addBubble(a, a.speech, false, zone);
-    addBubble(a, a.toolBubble, true, zone);
+    const top = view ? view.top + 4 : -Infinity;
+    addBubble(a, a.speech, false, zone, top);
+    addBubble(a, a.toolBubble, true, zone, top);
     if (a.low || a.demoted) continue; // no tag on screen, nothing to avoid
     const tb = a.tagBox(); // prio 3: tags place first and never move; box y is the bottom edge here
     bubbleBoxes.push({ x: tb.x, y: tb.y + tb.h, w: tb.w, h: tb.h, prio: 3, age: 0, zone, tool: false });
@@ -692,12 +718,21 @@ export function layoutTags(actors: Iterable<Actor>): number {
   for (const a of actors) {
     if (a.low) continue;
     if (a.atDoor) { a.placeTag(0, true); continue; } // not stacked: a pip until clear of the door
+    if (!a.onScreen) continue;
     tagList.push(a); tagBoxes.push(a.tagBox());
   }
+  const n = tagList.length;
+  for (const a of tagList) a.alertBoxes(tagBoxes); // fixed obstacles, placed first
   hidden.length = 0;
-  hidden.length = tagList.length; hidden.fill(false);
+  hidden.length = tagBoxes.length; hidden.fill(false);
   const dy = stackLabels(tagBoxes, tagList[0]?.floorPx() ?? undefined, hidden);
   let displaced = 0;
-  for (let i = 0; i < tagList.length; i++) { tagList[i].placeTag(dy[i], hidden[i]); if (dy[i]) displaced++; }
+  for (let i = 0; i < n; i++) { tagList[i].placeTag(dy[i], hidden[i]); if (dy[i]) displaced++; }
+  // a status pip never sits on someone else's name tag: the tag names the agent, the pip only repeats a state (A8)
+  for (const a of all) {
+    if (!a.low && !a.demoted) continue;
+    const r = a.pip.width / 2 + 1;
+    a.pip.visible = !tagList.some((o) => o !== a && o.tag.visible && Math.abs(o.tag.x - a.pip.x) * 2 < o.tag.width + 2 * r && o.tag.y < a.pip.y + r && o.tag.y + o.tag.height > a.pip.y - r);
+  }
   return displaced; // main.ts: heavy stacking switches the crowd to pips
 }

@@ -75,7 +75,9 @@ function highlight(e: FunEvent) {
   b.append(g, tx);
   if (h.dur) b.append(el("span", "k", h.dur));
   if (h.outcome === "blocked") b.setAttribute("role", "alert"); // announced at once, and kept until dismissed
-  const gone = transient($("hl"), cards, b, h.outcome === "blocked" ? 0 : HL_MS, 2);
+  // phone: cards cover the top of a short stage, where the camera frames the alert; NEEDS YOU and the pill keep it instead
+  const phone = matchMedia("(max-width:800px)").matches;
+  const gone = transient($("hl"), cards, b, h.outcome === "blocked" && !phone ? 0 : HL_MS, phone ? 1 : 2);
   b.addEventListener("click", () => { pick(e.actorId); gone(); });
 }
 

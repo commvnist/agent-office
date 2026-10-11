@@ -282,3 +282,10 @@ test("courier guard: waits for a walker within 2.2 tiles, ghosts within 1, ignor
   assert.deepEqual(courierGuard(0, 0, [{ x: 10, y: 0 }], T), { wait: true, fade: true });
   assert.deepEqual(courierGuard(0, 0, [], T), { wait: false, fade: false });
 });
+
+test("stackLabels: an alert flag pushes other tags away but not its owner's (A8)", () => {
+  const me = {}, other = {};
+  const flag = { x: 50, y: 0, w: 10, h: 10, pri: 2, own: me };
+  assert.deepEqual(stackLabels([flag, { x: 50, y: 2, w: 40, h: 8, own: me }]), [0, 0], "own tag stays put");
+  assert.ok(stackLabels([flag, { x: 50, y: 2, w: 40, h: 8, own: other }])[1] >= 9, "a neighbour's tag yields");
+});

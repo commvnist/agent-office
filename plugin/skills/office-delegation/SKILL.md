@@ -1,19 +1,19 @@
 ---
 name: office-delegation
-description: Use when a task has multiple independent parts, spans frontend/backend/tests, or the user asks for parallel, team or multi-agent work. Teaches the lead to split work into disjoint packages and fan out to office subagents concurrently.
+description: Use when you have already decided to delegate (the user asked for parallel, team or multi-agent work, or the mode is aggressive). How to split work into disjoint packages, brief office subagents and check what they hand back. Delegating is optional.
 ---
 # Office delegation
 
-You are the lead. Subagents do the work; you decompose, dispatch, and synthesize. Brief format: BRIEF_TEMPLATE.md. Details (worktrees, custom roles, models): REFERENCE.md.
+You are the lead. Doing the work yourself is the default; this skill is for when you delegate. Brief format: BRIEF_TEMPLATE.md. Details (worktrees, custom roles, models): REFERENCE.md.
 
 Roster (use names exactly): architect (plans, read-only), researcher (lookups, read-only), frontend-dev, backend-dev, devops (CI/build/config), docs-writer (docs only), qa-engineer (tests), reviewer (read-only), security-auditor (read-only). The injected session line lists seats and the active mode.
 
 ## 1. Parallelism mode and size gate
 
 The injected roster line says `Parallelism: off|auto|aggressive`.
-- off: never fan out on your own; delegate only when the user asks.
-- auto (default): fan out only for 2+ independent parts. Size gate: a task of <= 2 files or one concern is done by you or one agent; skip the architect and review waves.
-- aggressive: split as finely as ownership allows and run every wave.
+- off: never delegate on your own; delegate only when the user asks.
+- auto (default, shown as "your call"): your judgement, with no push either way. Working alone is fine. If you do delegate, independent parts can run in parallel; a task of <= 2 files or one concern needs no architect or review wave.
+- aggressive: the user opted in to fan-out: split as finely as ownership allows and run every wave.
 
 Never parallelize tightly coupled edits (same function/file) or unclear requirements; run architect/researcher first.
 

@@ -48,18 +48,18 @@ export function uniqueNames(items: { id: string; name: string; t: number }[]): M
 }
 
 /** `dir` 1 = prefer stacking downward (lead plaques: up would cover their own desk); unset = nearest spot wins. */
-export type Box = { x: number; y: number; w: number; h: number; pri?: number; dir?: 1 };
+export type Box = { x: number; y: number; w: number; h: number; pri?: number; dir?: 1; /** boxes of one owner never push each other (an agent's own flag and tag) */ own?: object };
 export type Rect = { x: number; y: number; w: number; h: number };
 /**
  * Vertical offsets that push overlapping label boxes (x = centre, y = top) clear of each other (#F1). Higher `pri` (alerts) places first and keeps its spot.
  * With a floor rect `r`, boxes are clamped first and stack inside it (down, or up from the edge); one that cannot fit sets `hide[i]` (caller shows a pip).
  */
 export function stackLabels(boxes: Box[], r?: Rect, hide?: boolean[]): number[] {
-  const dy = boxes.map(() => 0), placed: { l: number; rt: number; t: number; b: number }[] = [];
+  const dy = boxes.map(() => 0), placed: { l: number; rt: number; t: number; b: number; own?: object }[] = [];
   const order = boxes.map((_, i) => i).sort((a, b) => (boxes[b].pri ?? 0) - (boxes[a].pri ?? 0) || boxes[a].y - boxes[b].y || boxes[a].x - boxes[b].x);
   for (const i of order) {
     const k = boxes[i], c = r ? clampBox(k, r) : k, l = c.x - k.w / 2, rt = c.x + k.w / 2;
-    const clash = (y: number) => placed.some((p) => l < p.rt && rt > p.l && y < p.b && y + k.h > p.t);
+    const clash = (y: number) => placed.some((p) => (!k.own || p.own !== k.own) && l < p.rt && rt > p.l && y < p.b && y + k.h > p.t);
     // the lowest free spot at/below the start is always flush under a placed box (or the start); inside a floor also try flush above one
     const cand = [c.y];
     for (const p of placed) { cand.push(p.b + 1); if (r) cand.push(p.t - k.h - 1); }
@@ -68,7 +68,7 @@ export function stackLabels(boxes: Box[], r?: Rect, hide?: boolean[]): number[] 
     if (!ok.length && hide) { hide[i] = true; continue; }
     const y = ok.length ? ok[0] : c.y;
     dy[i] = y - k.y;
-    placed.push({ l, rt, t: y, b: y + k.h });
+    placed.push({ l, rt, t: y, b: y + k.h, own: k.own });
   }
   return dy;
 }
