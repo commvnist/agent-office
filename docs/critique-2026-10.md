@@ -586,3 +586,98 @@ Not observable here: a real GPU, a physical phone, a real tool-permission prompt
 | The rainbow wall wash | Removed (no physical source). Old stored delight events of that kind are ignored. |
 | Status colours (gave-up red, your-turn cyan) | Kept as they are; glyphs and ring shapes separate them from lights. |
 | Chime on by default (A12), OBS overlay opacity (H6) | Not added (no preference); both stay as recorded above. |
+
+## Pass 4: long-term vision on the finished build (Opus)
+
+The same five lenses as Pass 3, run again on the finished build after the finishing pass and the owner's decisions. Each agent read this document first (so it reports what is still missing, not what shipped), read the code, and verified claims by running throwaway daemons, reducer probes or the perf gate. Nothing in the repo was changed by them. **Verified** names how a claim was checked; everything else is the reviewer's judgement.
+
+**Where it stands.** The attention half of the vision has landed: permission, your turn and gave up are distinct; one pill, NEEDS YOU and the triage card answer "does anything need me" in two seconds at every scale; the trust posture holds; the platform list (deltas, per-day storage, collapse, floors, perf gate) works. The outcome half has only partly landed: outcomes exist for delegated helpers only, a lead's own result never becomes one, and a gave-up alert lives for 45 s in one page. All five agents independently land on the same gap: **"did it get there" is still missing for sessions**.
+
+### Consensus (raised by two or more agents)
+
+| Theme | Raised by | Summary |
+|---|---|---|
+| Lead results are not outcomes | P1, X3, S8 | A finished lead turn records nothing (prompt wiped at `turn_end`); solo users see no outcomes; the your-turn row says "waiting for your input" while the lead's real answer is folded away. |
+| Unknown outcome shown as success | P2, S3 | No report or no DONE/BLOCKED/PARTIAL prefix renders ✓ on the ledger, a green desk card and "Done." with a burst; under `observe` every report does. |
+| Gave-up is ephemeral | X1, S7 | 45 s, client-only (`BLOCK_HOLD_MS`); a reload or second page never shows it. |
+| Sessions view lacks goal and result | P3, X4, X5 | Tiles show counts, not the prompt or the last result; counts contradict; "gave up" vs "blocked" wording drifts. |
+| Sourceless motion left | R4, S8, P6 | Disco floor tint, the courier, combo toasts, confetti on errored turns (same class as the removed rainbow). |
+
+### Product and strategy (P)
+
+| ID | Sev | Finding | Recommendation | Cost | Verified |
+|---|---|---|---|---|---|
+| P1 | High | Outcomes are helper-only: `turn_end` clears `prompt` and logs "done" with no text; a session with no subagents adds nothing to the ledger, Recently done or ENDED. | On Stop, put the first line of `last_assistant_message` (clipped, redacted, none in privacy) on `turn_end`; the reducer files a lead outcome {prompt -> result}. | S-M | Code |
+| P2 | High | Unrecognised reports read as ✓ on the board and a done desk card (board.ts:32, main.ts:199) while the panel shows no word. | Neutral `·` mark and card; one test. | S | Code |
+| P3 | High | Sessions don't say what they are for: tiles, ENDED and badges show counts, not the prompt or result. | Add the current/last prompt and last outcome line (privacy-blanked, text kept in the sidecar). | M | Screenshots, types.ts:163 |
+| P4 | Med | No "while you were away" on the Office surface; outcomes capped at 30; desk cards only for a page that watched. | One dismissible "Since you left: N done, M gave up, K need you" block from `/history`. | M | Code |
+| P5 | Med | README still says 64 desks and "the rest queue"; tagline sells activity; demo GIF placeholder. | Fix numbers, rewrite the tagline around outcomes, record or drop the GIF. | S | README vs layout.ts |
+| P6 | Med | The fun layer still rewards activity (combos) and delight toasts sit over the stage next to alerts. | Cut combos; keep delights in-scene only, never while something needs you. | S | Screenshot, fun.ts:105 |
+| P7 | Low | First-minute jargon ("nudged"), the Stuck setting inside NEEDS YOU, the pill still truncates with free header space. | Rename the chip, move the setting, let the pill grow. | S | Screenshots |
+| P8 | Low | Surface sprawl (Present, Kiosk, Overlay, Float, Record, GIF, Share, Recap, Replay, Sample, packs, digest). | Owner call: drop GIF and Recap PNG. | M | Judgement |
+
+### Experience and information architecture (X)
+
+| ID | Sev | Finding | Recommendation | Cost | Verified |
+|---|---|---|---|---|---|
+| X1 | High | A gave-up alert lives 45 s in the open page only, then leaves NEEDS YOU, the pill and the title; cannot be snoozed. | Build gave-up rows from `state.outcomes` until seen, with a Seen button; consistent across pages. | S-M | Run (49 s wait + reload) |
+| X2 | High | History shows no ✓/✕ on real data: it parses only a message prefix; real stops carry `outcome` and no message. | `outcome ?? parsed`; one test. | S | Run, stored jsonl |
+| X3 | High | The your-turn row says "Claude is waiting for your input" while the lead's actual last message is folded in the card. | Use the lead's latest message as the reason (text shown only). | S | Run, ui.ts:64 |
+| X4 | Med | Sessions tiles omit the prompt and result the folded panel list shows. | Add them to the tile; keep one session list. | S | Run |
+| X5 | Med | Tile counts contradict ("2 agents · 3 working"); "gave up" vs "blocked" wording. | Count helpers only; "gave up" everywhere. | S | Run |
+| X6 | Med | Recently done shows 8 of 30 with no "more"; a departed helper's row only says "has left the floor". | "Show all (N)"; row opens History at that time. | S | Code |
+| X7 | Low | `n` cycles a different set than NEEDS YOU (skips "no activity", visits snoozed). | Cycle the NEEDS YOU list. | S | Code |
+| X8 | Low | Setup inside NEEDS YOU; lead breadcrumb repeats the session; "next: Nothing to do" row. | Move the setting, trim the breadcrumb, hide empty next. | S | Screenshots |
+
+### Art direction (R)
+
+| ID | Sev | Finding | Recommendation | Cost | Verified |
+|---|---|---|---|---|---|
+| R1 | High | Collapsed crews leave rows of empty coloured chairs ("top hats"), the most saturated pattern on the floor. | Hide a chair while its occupant is hidden by collapse. | S | scene.ts:551, 45/100 shots |
+| R2 | High | A your-turn lead's desk lamp pulses gold ~3 Hz for as long as it waits (breaks "your turn never pulses" and the cyan your-turn colour). | Steady lamp coloured by wait kind; pulse only the first 4 s if at all. | S | main.ts:452, scene.ts:604/907 |
+| R3 | High | The chrome is not on the value key: its own `--bg/--panel/--line` and a second set of status colours; the wordmark is hidden below 1500 px. | Write KEY and STATUS into CSS variables at boot; keep a small wordmark. | S | index.html, chrome.css |
+| R4 | Med | Effects keep a second alert palette; confetti uses status red and green; the disco floor tint has no source. | Point effects at STATUS/KEY; confetti gold and paper; disco removal is an owner call. | S | main.ts, scene.ts, theme.ts |
+| R5 | Med | Alert rings cover the face and raised hand that carry the state; the alert pulse is a vector circle at fractional scale. | Ring behind the figure; a 2-3 frame pixel pulse. | S-M | main.ts:305, actor.ts:585 |
+| R6 | Med | Pure white emotes and bubble plates are the brightest things in the lobby. | Paper-tinted emotes and plates; white for text only. | S | scene.ts:74, sprites.ts:312 |
+| R7 | Med | At scale the wall (skyline, neon, ledger) sits under the strip and header; badges look like DOM cards. | Keep a strip of wall in frame; pixel-plate badges. | M | 45/100 shots |
+| R8 | Low | People outlined on every side; one role shirt (~321°) sits next to the neon magenta. | Break the outline on the lit edge; move that shirt below ~300°. | S | pixel.ts, people.ts, theme.ts |
+
+### Platform, scale and inclusion (L)
+
+| ID | Sev | Finding | Recommendation | Cost | Verified |
+|---|---|---|---|---|---|
+| L1 | High | After a daemon restart a busy office comes back empty: boot replays only the newest 50,000 events, so session and agent starts fall outside it (100 agents became 0 after 60k tool events). | Replay starts/stops within retention first, or checkpoint state. | S-M | Run (Ltools/replay.mjs) |
+| L2 | Med | Privacy mode still stores and serves the project (folder) name; only the browser swaps it. | Pseudonym in `appendEvent` and `publicState` under privacy. | S | Run (Ltools/priv.mjs) |
+| L3 | Med | The gate passes at 100 agents but fails at 190 (update p95 17.3 ms, 4,328 objects) within the advertised 192 desks; ~1 ms headroom at 100. | Gate a second point at 190 or lower the cap; fewer objects per hidden helper. | M | `npm run perf` at 100 and 190 |
+| L4 | Med | The frame check switches itself off when the page is slow (<30 fps), so a real slowdown escapes it. | Base the exemption on the environment, not the measured run. | S | perf.mjs and a 190 run |
+| L5 | Low | CI still treats typecheck as optional though `tsc` is clean. | Drop `continue-on-error`. | S | Run |
+| L6 | Low | On Windows the auto-started daemon likely opens its own console window. | `windowsHide: true` on both spawns. | S | Judgement |
+| L7 | Low | `--purge-text` and retention skip `events.log`; `/history` backpressure leaks a `close` listener per slice. | Include it; remove the listener after drain. | S | Code, run warning |
+| L8 | Low | Header "104 WORKING" overstates work at scale; `?lod=summary` has no client. | Count from crew numbers; use summary for Float/kiosk or drop it. | S | Screenshot, grep |
+
+### Simulation and data honesty (S)
+
+| ID | Sev | Finding | Recommendation | Cost | Verified |
+|---|---|---|---|---|---|
+| S1 | High | A helper's permission prompt sticks on the lead for the helper's whole run (only a lead tool event clears it); permission latency is wrong too. | Carry `agent_id` from the Notification as `waitBy`; that agent's next event clears it and the ring goes on the helper. | S | Reducer probe |
+| S2 | High | A helper with no SubagentStart is drawn as the lead (its tool lands in `session.doing`); its stop files no outcome. | Never write a helper tool to the session; create it lazily as `recovered`. | S | Reducer probe |
+| S3 | High | "Done." is invented: an empty or unprefixed stop walks in saying Done with a ✓ and a burst. | Neutral "reported" look and "(no report)"; ✓ only for DONE. | S | Probe and code |
+| S4 | Med | AskUserQuestion is sent as `idle`, ending the turn mid-turn (lead shows idle, may stroll; helpers lose running state). | `kind: "turn"` without `idle` for questions; test. | S | Probe |
+| S5 | Med | Ghost helpers after an interrupt or a lost stop hold a desk indefinitely; stuck detection covers leads only. | Helpers stuck at 3x the threshold in NEEDS YOU; per-agent TTL in sweep. | S-M | Probe |
+| S6 | Med | The idle sweep records the sweep time as `endedAt`, inflating durations (2 h instead of 6 min). | Use `lastAt`; optionally "went quiet". | S | Probe |
+| S7 | Med | Gave-up is client-only and 45 s (same as X1). | Derive from `state.outcomes` until the next prompt or a snooze. | S | Code |
+| S8 | Low | Sourceless motion: confetti on errored turns, idle quirks on generating helpers, the courier, dead `pickPartner`. | Drop the burst on errors; quirks only when idle; courier is an owner call; delete dead code. | S | Code and probe |
+
+Derived signals proposed next (hooks only): interrupt count per session; compaction count and a "compacting" state (PreCompact); foreground vs background helpers (`run_in_background`); per-helper wait attribution and latency (from S1); a lead turn outcome (clean vs errored).
+
+### Next builds, as each agent put it
+
+| Agent | Next build |
+|---|---|
+| Product | P1 + P2: a lead's finished turn becomes an outcome; unrecognised reports stop showing as done. |
+| Experience | X1 + X3: NEEDS YOU becomes durable and says what came back. |
+| Art | R1 + R2: hide chairs of collapsed occupants; a steady lamp coloured by wait kind. |
+| Platform | L1: replay starts within retention (or checkpoint) so a restart keeps the office. |
+| Simulation | S1 + S2: attribute waits and tools to the agent that raised them. |
+
+Owner calls raised: the disco floor tint (R4), the courier (S8), dropping GIF and Recap PNG (P8), lowering the desk cap vs gating 190 agents (L3).
