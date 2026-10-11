@@ -1,4 +1,4 @@
-import { deskPos, findPath, podStyle, PODS_PER_ROW, type Layout } from "./layout.ts";
+import { deskPos, findPath, podRow, podStyle, type Layout } from "./layout.ts";
 
 /** Art pixels per tile: the unit of Line coordinates (world pixels, y includes the wall rows). */
 export const TILE_PX = 16;
@@ -76,7 +76,7 @@ export function lines(l: Layout): Line[] {
     const t = deskPos(p * 4), x = t.x * T - 4, y = t.y * T - 2, aw = POD_W * T + 8, ah = POD_H * T + 4;
     out.push({ id: `apron:${p}`, kind: "apron", pts: [{ x, y }, { x: x + aw, y }, { x: x + aw, y: y + ah }, { x, y: y + ah }, { x, y }] });
     out.push({ id: `plate:${p}`, kind: "apron", pts: [{ x: t.x * T - 2, y: (t.y + 4) * T + 10 }] });
-    const r = Math.floor(p / PODS_PER_ROW);
+    const r = podRow(p);
     rowMax.set(r, Math.max(rowMax.get(r) ?? 0, (t.x - xc0) / 4));
   }
   // Conduits: a trunk from the server bank's bottom edge down walkway column 1 (centre pixel), stepping one pod row at a time; per built row

@@ -122,6 +122,20 @@ There are no guests: every agent is a worker at a desk in one shared pool of at 
 
 See `CONTRIBUTING.md` and `docs/ARCHITECTURE.md`. License: MIT.
 
+### Performance gate
+
+`npm run build:web && npm run perf` starts a throwaway daemon, seeds 100 agents over 8 sessions with live tool traffic
+(~25 events/s), opens the built client in headless Chrome over the DevTools protocol (no extra dependency) with 4x CPU
+throttling, and samples the main-thread time per frame (update + render submit, `window.__aoPerf`) for 10 s.
+It fails when frame p95 or the live display-object count is over budget. The browser comes from `CHROME`, else the usual
+install paths, else Playwright's cache; without one it skips locally and fails in CI. Override with `PERF_P95_MS`,
+`PERF_OBJECTS`, `PERF_SECONDS`, `PERF_AGENTS`. CI runs it as the `perf` job on ubuntu-latest.
+
+Calibration (October 2026, 3 runs, 108 actors on screen, crews collapsed): p95 13.6 to 14.5 ms, p50 about 9 ms, about
+2640 objects. The gate is 16 ms p95 and 3500 objects, the main-thread number only (GPU work runs in software GL on CI and
+is not gated). `PERF_PROFILE=<file>` also writes a `.cpuprofile` of the measured window (open it in DevTools). The same run times the daemon: about 0.7 ms per sequential `POST /event` at 100 agents, 1.1 ms with
+a browser subscribed to `/stream`, so roughly 900 events/s, far above what hooks produce.
+
 ## What it shows, and what it ignores
 
 - **Your prompts, not the harness's.** Claude Code injects machine messages into a session as "user" turns (background-task notifications, system reminders, subagent hand-backs). They are not what you typed: they are never shown as "You →", never become the session prompt, and a hand-back's first report line appears as a quiet note from the lead. See `packages/core/src/clean.ts`.

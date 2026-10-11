@@ -296,3 +296,18 @@ test("longToolMs: 3x the tool's own p95 once known, floored at 10 s; 30 s before
   assert.equal(longToolMs({ n: 5, p95: 1000 }), 10_000);
   assert.equal(longToolMs({ n: 20, p95: 60_000 }), 180_000);
 });
+
+import { collapseLatch, worstState } from "./choreo.ts";
+test("session collapse: on above 12 helpers, off again at 10; worst state follows STATUS order", () => {
+  assert.equal(collapseLatch(false, 12), false);
+  assert.equal(collapseLatch(false, 13), true);
+  assert.equal(collapseLatch(true, 11), true);
+  assert.equal(collapseLatch(true, 10), false);
+  const w = (...s: ("working" | "idle" | "blocked" | "waiting" | "queued")[]) => worstState(s.map((x) => ({ s: x, wait: "turn" as const })));
+  assert.equal(w(), "idle");
+  assert.equal(w("idle", "working"), "working");
+  assert.equal(w("working", "blocked"), "blocked");
+  assert.equal(w("blocked", "waiting"), "turn");
+  assert.equal(worstState([{ s: "waiting", wait: "turn" }, { s: "waiting", wait: "permission" }]), "permission");
+  assert.equal(w("queued"), "idle");
+});

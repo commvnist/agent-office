@@ -11,6 +11,7 @@
     "build:web": "npm run build -w @agent-office/web",
     "demo": "node scripts/demo.mjs",
     "check:compliance": "node scripts/check-compliance.mjs",
+    "perf": "node scripts/perf.mjs",
     "typecheck": "tsc -p tsconfig.json",
     "setup": "node scripts/setup.mjs",
     "doctor": "node scripts/office.mjs doctor"

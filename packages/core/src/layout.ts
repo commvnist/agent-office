@@ -20,8 +20,12 @@ export type Layout = {
 
 const key = (t: Tile) => `${t.x},${t.y}`;
 
-export const MAX_DESKS = 64;
+/** Desks per floor (16 pods: pod rows of 6, 6 and 4) and floors; demand above one floor opens the next, stacked below it in the one world. */
+export const FLOOR_DESKS = 64, MAX_FLOORS = 3;
+/** 192 desks: just under the reducer's own cap (LIMITS.agents = 200), so enforceSeats and the visible queue stay reachable; a 4th floor would hold at most 8. */
+export const MAX_DESKS = FLOOR_DESKS * MAX_FLOORS;
 export const PODS_PER_ROW = 6;
+const FLOOR_ROWS = 3; // pod rows per floor
 const POD = 4; // desks per pod: a 2x2 cluster of chair+desk pairs
 const PAIR = 2 * POD; // desks per mirror pair of pods: the office only ever grows in these
 const WALL = 2, LOBBY_Y = 3, Y0 = 7, X0 = 2; // pod grid origin; pod stride is 4 wide (3 + aisle), 5 tall (4 + aisle)
@@ -29,11 +33,18 @@ const WALL = 2, LOBBY_Y = 3, Y0 = 7, X0 = 2; // pod grid origin; pod stride is 4
 /**
  * Chair tile of desk `i` (its desk is the tile below). Pure and append-only: independent of config, demand and window,
  * so a desk never moves when the office grows. Pod p = i/4 sits in row p/6 at the column podCol(p%6) (centre-out); desks go 2x2 inside it.
+ * Floor f = i/64 repeats that plan FLOOR_ROWS pod rows further down (its third row holds 4 pods, so floors read as bands).
  */
 export function deskPos(i: number): Tile {
-  const pod = Math.floor(i / POD), k = i % POD;
-  return { x: X0 + podCol(pod % PODS_PER_ROW) * 4 + (k % 2) * 2, y: Y0 + Math.floor(pod / PODS_PER_ROW) * 5 + Math.floor(k / 2) * 2 };
+  const pod = Math.floor((i % FLOOR_DESKS) / POD), k = i % POD;
+  return { x: X0 + podCol(pod % PODS_PER_ROW) * 4 + (k % 2) * 2, y: floorTop(Math.floor(i / FLOOR_DESKS)) + Math.floor(pod / PODS_PER_ROW) * 5 + Math.floor(k / 2) * 2 };
 }
+/** Tile y of floor f's first pod row (its chairs). */
+export const floorTop = (f: number) => Y0 + f * FLOOR_ROWS * 5;
+/** Pod row (0-based, counted over every floor) of pod p: the wing it belongs to. */
+export const podRow = (p: number) => Math.floor((deskPos(p * POD).y - Y0) / 5);
+/** Floors the layout has built (1 + the floor of its last desk). */
+export const floorsOf = (l: Layout) => Math.max(1, Math.ceil(l.props.length / FLOOR_DESKS));
 /** Column of the n-th pod in a row, filling outward from the door aisle (2,3,1,4,0,5): a small office stays centred and balanced. */
 const podCol = (n: number) => (n % 2 ? PODS_PER_ROW / 2 + (n - 1) / 2 : PODS_PER_ROW / 2 - 1 - n / 2);
 
@@ -41,7 +52,7 @@ export type PodStyle = "solo" | "bench" | "huddle" | "standing" | "carrel";
 /** Designed styles by pod row, then mirror pair (pods 2k and 2k+1 share a column pair about the aisle); rows past the table use the last. */
 const POD_STYLES: PodStyle[][] = [["huddle", "solo", "standing"], ["bench", "solo", "carrel"], ["bench", "solo", "solo"]];
 /** Furniture style of pod `p`. Pure of the index and equal for mirror pods p and p^1, so it never changes as the office grows. */
-export const podStyle = (p: number): PodStyle => POD_STYLES[Math.min(Math.floor(p / PODS_PER_ROW), POD_STYLES.length - 1)][Math.floor((p % PODS_PER_ROW) / 2)];
+export const podStyle = (p: number): PodStyle => { const q = p % (FLOOR_DESKS / POD); return POD_STYLES[Math.min(Math.floor(q / PODS_PER_ROW), POD_STYLES.length - 1)][Math.floor((q % PODS_PER_ROW) / 2)]; }; // every floor repeats the first
 
 export type LayoutOpts = {
   /** Ignored: the pod grid has a fixed width (kept so older callers still compile). */
@@ -71,7 +82,7 @@ export function deskCount(cfg: OfficeConfig, agents: number): number {
 export function buildLayout(cfg: OfficeConfig, opts: LayoutOpts = {}): Layout {
   // minDesks keeps every desk an agent still sits at (agents may have left, shrinking demand, while a high desk is in use)
   const total = Math.min(MAX_DESKS, Math.max(deskCount(cfg, opts.demand?.agents ?? 0), Math.ceil((opts.minDesks ?? 0) / PAIR) * PAIR));
-  const podRows = Math.ceil(total / POD / PODS_PER_ROW);
+  const podRows = podRow(Math.floor((total - 1) / POD)) + 1;
 
   const seats: Layout["seats"] = {};
   const props: Prop[] = [];
@@ -150,7 +161,7 @@ export function standNear(l: Layout, t: Tile, k = 0): Tile {
 
 /**
  * 4-neighbour BFS around blocked tiles. Returns tiles after `from`, ending at `to`; [] if unreachable.
- * shortcut: string keys, fine to ~2,000 tiles (a full 64-desk office is ~600); switch to y*cols+x indices above that.
+ * shortcut: string keys, fine to ~2,000 tiles (one 64-desk floor is ~700, three floors ~1,600); switch to y*cols+x indices above that.
  */
 export function findPath(l: Layout, from: Tile, to: Tile): Tile[] {
   const start = key(from), goal = key(to);

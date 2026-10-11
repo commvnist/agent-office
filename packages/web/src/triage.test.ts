@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { clipWords, doneRows, dropOutcome, nextStep, permLine, statusKey, statusWord, topTools, tree, waitKindOf } from "./triage.ts";
+import { aggLine, clipWords, doneRows, dropOutcome, nextStep, permLine, sessionAgg, statusKey, statusWord, topTools, tree, waitKindOf } from "./triage.ts";
 
 test("one status key per actor; waitKind wins, else the text decides", () => {
   assert.equal(statusKey("blocked"), "blocked");
@@ -49,4 +49,13 @@ test("permLine counts completed waits and the open one; topTools ranks by calls"
   assert.equal(permLine({ n: 0, totalMs: 0, since: 1000 }, 151_000, f), "permission: waiting 120s", "whole minutes, so the card is not rebuilt every second");
   const stat = (n: number) => ({ n, fail: 0, p50: 1, p95: 2 });
   assert.deepEqual(topTools({ Read: stat(3), Bash: stat(9), Edit: stat(3) }, 2).map((x) => x.tool), ["Bash", "Edit"]);
+});
+
+test("session aggregate: counts per bucket, worst by STATUS_ORDER, non-zero line", () => {
+  const a = sessionAgg(["working", "blocked", "turn", "working", "idle"]);
+  assert.deepEqual(a, { agents: 5, working: 2, waiting: 1, blocked: 1, worst: "turn" });
+  assert.equal(aggLine(a), "2 working · 1 waiting · 1 blocked");
+  assert.deepEqual(sessionAgg([]), { agents: 0, working: 0, waiting: 0, blocked: 0, worst: "idle" });
+  assert.equal(aggLine(sessionAgg(["idle"])), "");
+  assert.equal(sessionAgg(["blocked", "working"]).worst, "blocked");
 });

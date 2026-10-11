@@ -3,6 +3,7 @@
 import type { Interaction, OfficeState, Task } from "@agent-office/core";
 import type { Alert, Badge } from "./actor.ts";
 import { hash } from "./color.ts";
+import { STATUS_ORDER, type StatusKey } from "./theme.ts";
 
 export const HUDDLE_WINDOW_MS = 4000;
 export const WORKING_MS = 5000;
@@ -239,6 +240,18 @@ export function newAlerts(seen: Map<string, Alert>, cur: Map<string, Alert>): st
   seen.clear();
   for (const [id, a] of cur) seen.set(id, a);
   return out;
+}
+
+/** Session collapse latch (V4/G6): crews fold into pod badges above 12 live helpers and unfold again at 10 (hysteresis). */
+export const collapseLatch = (prev: boolean, helpers: number) => (prev ? helpers > 10 : helpers > 12);
+/** Worst state of a crew for its badge (STATUS order); a waiting status reads as its wait kind. */
+export function worstState(sts: Iterable<{ s: Status; wait: "permission" | "turn" }>): StatusKey {
+  let best = STATUS_ORDER.length - 1;
+  for (const { s, wait } of sts) {
+    const k: StatusKey = s === "waiting" ? wait : s === "blocked" ? "blocked" : s === "working" ? "working" : "idle";
+    best = Math.min(best, STATUS_ORDER.indexOf(k));
+  }
+  return STATUS_ORDER[best];
 }
 
 export type Status = "working" | "thinking" | "queued" | "waiting" | "blocked" | "idle";

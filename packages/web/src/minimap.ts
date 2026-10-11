@@ -1,6 +1,7 @@
-// Minimap (bottom-right of the stage, left of the side panel; collapsible): pods coloured by project, the viewport rectangle, click/drag to move the camera, `g` to hop wings.
+// Minimap (bottom-right of the stage, left of the side panel; collapsible): pods coloured by project, the viewport rectangle, click/drag to move the camera, `g` to hop wings,
+// PageUp/PageDown to move between floors (each floor is a numbered strip on the map).
 // Hidden while the whole office is on screen. DOM-only (no pixi), redrawn on change and at most 4 Hz.
-import { deskPos, PODS_PER_ROW, type Layout } from "@agent-office/core";
+import { deskPos, FLOOR_DESKS, floorsOf, floorTop, podRow, type Layout } from "@agent-office/core";
 import { camera, ignoreKey } from "./camera.ts";
 import { hsl } from "./color.ts";
 import { announce, store } from "./dom.ts";
@@ -30,7 +31,11 @@ export function bindMinimap(host: HTMLElement) {
   wrap.append(c, tog);
   host.append(wrap);
   const g = c.getContext("2d")!;
-  let layout: Layout | null = null, owners: string[] = [], dirty = true, drawnAt = 0, last = "", wing = -1;
+  let layout: Layout | null = null, owners: string[] = [], dirty = true, drawnAt = 0, last = "", wing = -1, viewY = 0;
+  const wingOwners = (w: number) => [...new Set(owners.filter((o, p) => o && podRow(p) === w))];
+  /** Tile rows [y0, y1) of floor f: the first floor also holds the wall and lobby, the last one the waiting row and lounge. */
+  const band = (l: Layout, f: number) => [f === 0 ? 0 : floorTop(f) - 1, f + 1 >= floorsOf(l) ? l.rows : floorTop(f + 1) - 1];
+  const floorAt = (l: Layout, y: number) => { let f = 0; while (f + 1 < floorsOf(l) && y >= band(l, f + 1)[0]) f++; return f; };
 
   const moveTo = (e: PointerEvent) => {
     if (!layout) return;
@@ -41,12 +46,21 @@ export function bindMinimap(host: HTMLElement) {
   c.addEventListener("pointermove", (e) => { if (e.buttons) moveTo(e); });
 
   addEventListener("keydown", (e) => {
-    if ((e.key !== "g" && e.key !== "G") || e.defaultPrevented || ignoreKey(e) || !layout) return;
+    if (e.defaultPrevented || ignoreKey(e) || !layout) return;
+    if (e.key === "PageUp" || e.key === "PageDown") {
+      const n = floorsOf(layout), f = Math.max(0, Math.min(n - 1, floorAt(layout, viewY) + (e.key === "PageUp" ? -1 : 1))), [y0, y1] = band(layout, f);
+      camera.centerOn((layout.cols * T) / 2, ((y0 + y1) / 2) * T);
+      const mine = [...new Set(owners.filter((o, p) => o && Math.floor((p * 4) / FLOOR_DESKS) === f))];
+      announce(`Floor ${f + 1} of ${n}: ${mine.length ? mine.join(", ") : "empty"}`);
+      e.preventDefault();
+      return;
+    }
+    if (e.key !== "g" && e.key !== "G") return;
     const n = layout.zones.length;
     wing = (wing + 1) % n;
-    const z = layout.zones[wing], mine = new Set(owners.slice(wing * PODS_PER_ROW, (wing + 1) * PODS_PER_ROW).filter(Boolean));
+    const z = layout.zones[wing], mine = wingOwners(wing);
     camera.centerOn((z.x + z.w / 2) * T, (z.y + 2) * T);
-    announce(`Wing ${wing + 1} of ${n}: ${mine.size ? [...mine].join(", ") : "empty"}`);
+    announce(`Wing ${wing + 1} of ${n}: ${mine.length ? mine.join(", ") : "empty"}`);
     e.preventDefault();
   });
 
@@ -60,13 +74,14 @@ export function bindMinimap(host: HTMLElement) {
       owners = o;
       wing = Math.min(wing, l.zones.length - 1);
       dirty = true;
-      const by = l.zones.map((_, w) => [...new Set(o.slice(w * PODS_PER_ROW, (w + 1) * PODS_PER_ROW).filter(Boolean))].join(", ") || "empty");
-      c.setAttribute("aria-label", `Office map: ${by.map((s, w) => `wing ${w + 1}: ${s}`).join("; ")}`);
+      const by = l.zones.map((_, w) => wingOwners(w).join(", ") || "empty");
+      c.setAttribute("aria-label", `Office map${floorsOf(l) > 1 ? ` (${floorsOf(l)} floors, PageUp/PageDown)` : ""}: ${by.map((s, w) => `wing ${w + 1}: ${s}`).join("; ")}`);
     },
     /** Per frame: cheap early-outs, then at most one redraw per MIN_MS. `view` is the world transform; `top`/`H`/`W` the stage viewport. */
     draw(view: { sc: number; ox: number; oy: number }, W: number, top: number, H: number, now: number, suppress: boolean) {
       if (!layout) return;
       const lw = layout.cols * T, lh = layout.rows * T;
+      viewY = ((top + H / 2 - view.oy) / view.sc) / T; // tile row at the viewport centre: PageUp/PageDown step from the floor shown
       const fits = view.ox >= -1 && view.oy >= top - 1 && view.ox + lw * view.sc <= W + 1 && view.oy + lh * view.sc <= top + H + 1;
       const hide = suppress || fits || W < MIN_STAGE_W;
       if (wrap.hidden !== hide) wrap.hidden = hide;
@@ -83,6 +98,18 @@ export function bindMinimap(host: HTMLElement) {
         const t = deskPos(p * 4), o = owners[p];
         g.fillStyle = o ? hsl(projectHue(o), 0.5, 0.55) : "#3a3850";
         g.fillRect(Math.round(t.x * T * s), Math.round(t.y * T * s), Math.max(2, Math.round(3 * T * s)), Math.max(2, Math.round(4 * T * s)));
+      }
+      const nf = floorsOf(layout);
+      if (nf > 1) { // floor strips: a rule between floors and the floor number at the left margin, the floor in view brighter
+        const cur = floorAt(layout, viewY);
+        g.font = "8px ui-monospace, monospace";
+        g.textBaseline = "top";
+        for (let f = 0; f < nf; f++) {
+          const y = Math.round(band(layout, f)[0] * T * s);
+          if (f) { g.fillStyle = "rgba(127,227,255,.45)"; g.fillRect(0, y, c.width, 1); }
+          g.fillStyle = f === cur ? "#7fe3ff" : "rgba(223,228,255,.55)";
+          g.fillText(String(f + 1), 1, y + 2);
+        }
       }
       g.strokeStyle = "#fff";
       g.lineWidth = 1;

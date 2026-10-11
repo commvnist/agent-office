@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildLayout, deskPos, findPath, MAX_DESKS, podStyle, seatTile, standNear } from "./layout.ts";
+import { buildLayout, deskPos, findPath, FLOOR_DESKS, floorsOf, floorTop, MAX_DESKS, podRow, podStyle, seatTile, standNear } from "./layout.ts";
 
 const cfg = { roles: { qa: { agent: "qa-engineer", count: 2, overflow: { max: 2 } }, fe: { agent: "frontend-dev", count: 1 } } };
 
@@ -44,8 +44,24 @@ test("pod field is landscape: 6 pods per row, positions pinned", () => {
   assert.deepEqual(deskPos(0), { x: 10, y: 7 }); // first pod sits beside the door aisle
   assert.deepEqual(deskPos(23), { x: 24, y: 9 }); // last desk of pod row 1
   assert.deepEqual(deskPos(24), { x: 10, y: 12 }); // pod 6 starts row 2, again beside the aisle
-  assert.equal(buildLayout(cfg, { demand: { agents: 500 } }).zones.length, 3); // 64 desks, 16 pods
+  assert.equal(buildLayout(cfg, { demand: { agents: 60 } }).zones.length, 3); // 64 desks, 16 pods
+  assert.equal(buildLayout(cfg, { demand: { agents: 500 } }).zones.length, 9); // 3 floors x 3 pod rows
   assert.equal(buildLayout(cfg, { demand: { agents: 20 } }).zones.length, 1); // ~20 desks: one row
+});
+
+test("floors: desk 64+i sits where desk i does, one floor (3 pod rows) lower; growing across floors only adds", () => {
+  for (let i = 0; i < FLOOR_DESKS; i++) for (const f of [1, 2]) {
+    const a = deskPos(i), b = deskPos(f * FLOOR_DESKS + i);
+    assert.deepEqual(b, { x: a.x, y: a.y + floorTop(f) - floorTop(0) });
+    assert.equal(podStyle(f * 16 + Math.floor(i / 4)), podStyle(Math.floor(i / 4)));
+  }
+  assert.equal(podRow(16), 3); // floor 2 starts a new pod row below floor 1's short third row
+  const one = buildLayout(cfg, { demand: { agents: 60 } }), two = buildLayout(cfg, { demand: { agents: 100 } }), all = buildLayout(cfg, { demand: { agents: 500 } });
+  assert.deepEqual([floorsOf(one), floorsOf(two), floorsOf(all)], [1, 2, 3]);
+  for (const [id, t] of Object.entries(one.seats)) { assert.deepEqual(two.seats[id], t); assert.deepEqual(all.seats[id], t); }
+  for (const [id, t] of Object.entries(two.seats)) assert.deepEqual(all.seats[id], t);
+  assert.equal(new Set(Object.values(all.seats).map((t) => `${t.x},${t.y}`)).size, MAX_DESKS);
+  for (const id of ["d64", "d191"]) assert.ok(findPath(all, all.door, all.seats[id]).length > 0, `${id} unreachable`);
 });
 
 test("desks sit directly below their seat; lead desks below lobby seats", () => {

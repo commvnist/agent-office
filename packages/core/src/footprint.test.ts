@@ -13,6 +13,7 @@ test("current layout is consistent for every desk total, lobby size and demand",
     const l = buildLayout(cfg, { minDesks: total, lobbySlots, demand: { agents } });
     assert.deepEqual(checkLayout(l), [], `total=${total} lobby=${lobbySlots} agents=${agents}`);
   }
+  for (const total of [72, 128, 136, 192]) assert.deepEqual(checkLayout(buildLayout(cfg, { minDesks: total, lobbySlots: 4 })), [], `floors: total=${total}`);
 });
 
 test("placements: ids are unique and every desk, chair and rack is present", () => {
@@ -44,7 +45,7 @@ test("lights come only from sconces and lamps, on their footprints", () => {
   assert.ok(sc.every((x) => placements(l).filter((o) => o.layer === "wall" && o.id !== `sconce:${x}` && o.x <= x && x < o.x + o.w && o.kind !== "door").length === 0));
 });
 
-const grow = [8, 16, 24, 32, 40, 48, 56, 64].map((n) => buildLayout(cfg, { minDesks: n, lobbySlots: 4 }));
+const grow = [8, 16, 24, 32, 40, 48, 56, 64, 72, 128, 136, 192].map((n) => buildLayout(cfg, { minDesks: n, lobbySlots: 4 }));
 const stable = (id: string) => !NOT_STABLE.some((re) => re.test(id));
 
 test("placements and lines are pure", () => {

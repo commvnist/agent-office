@@ -1,7 +1,7 @@
 // Pure helpers for the experience layer (no DOM): one status vocabulary for every DOM surface, the triage card's
 // next step and delegation tree, word-boundary clipping, the "Recently done" rows.
 import type { Session } from "@agent-office/core";
-import { STATUS, type StatusKey } from "./theme.ts";
+import { STATUS, STATUS_ORDER, type StatusKey } from "./theme.ts";
 
 type Sess = { waiting?: boolean; waitKind?: "permission" | "turn"; waitingText?: string };
 type Act = { id: string; label: string; role: string; lead: boolean; status: string; chain: string[]; children: string[] };
@@ -15,6 +15,16 @@ export function statusKey(status: string, sess?: Sess): StatusKey {
   if (status === "waiting") return waitKindOf(sess);
   return status === "working" || status === "thinking" ? "working" : "idle";
 }
+
+/** G1: one session's aggregate from its agents' status keys; worst follows STATUS_ORDER (the radar's ranking). */
+export function sessionAgg(keys: StatusKey[]) {
+  const n = (f: (k: StatusKey) => boolean) => keys.filter(f).length;
+  return { agents: keys.length, working: n((k) => k === "working"), waiting: n((k) => k === "permission" || k === "turn"), blocked: n((k) => k === "blocked"),
+    worst: STATUS_ORDER.find((k) => keys.includes(k)) ?? "idle" };
+}
+/** "2 working · 1 waiting": the non-zero counts only, "" when everyone is idle. */
+export const aggLine = (a: ReturnType<typeof sessionAgg>) =>
+  [a.working && `${a.working} working`, a.waiting && `${a.waiting} waiting`, a.blocked && `${a.blocked} blocked`].filter(Boolean).join(" · ");
 
 /** A NEEDS YOU row that is not a STATUS (a session silent mid-turn). */
 export const STUCK = { color: STATUS.idle.color, glyph: "…", label: "no activity" } as const;

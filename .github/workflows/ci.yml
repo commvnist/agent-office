@@ -16,6 +16,15 @@ jobs:
       - run: npm test
       - run: npm run check:compliance
       - run: npm run build:web
+  perf: # P6 gate: frame p95 and display objects at 100 agents, 4x CPU throttling (scripts/perf.mjs; Chrome ships on the runner)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
+      - run: npm ci
+      - run: npm run build:web
+      - run: npm run perf
   typecheck:
     runs-on: ubuntu-latest
     continue-on-error: true # non-blocking until the baseline is clean

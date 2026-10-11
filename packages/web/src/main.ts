@@ -1,11 +1,11 @@
-import { Application, Container, Graphics, Sprite, Text } from "pixi.js";
-import { buildLayout, deskCount, emptyFun, findPath, seatTile, standNear, stepFun, leadId, childrenOf, parentChain, type FunEvent, type FunMemory, type Layout, type OfficeConfig, type OfficeState, type Tile } from "@agent-office/core";
-import { Actor, T, feet, layoutBubbles, layoutTags, setBubbleBlank, setBubbleLayer, setFloorBounds } from "./actor.ts";
+import { Application, Container, Graphics, Sprite, Text, UPDATE_PRIORITY, type ContainerChild } from "pixi.js";
+import { buildLayout, deskCount, emptyFun, findPath, seatTile, standNear, stepFun, leadId, parentChain, type FunEvent, type FunMemory, type Layout, type OfficeConfig, type OfficeState, type Tile } from "@agent-office/core";
+import { Actor, T, feet, layoutBubbles, layoutTags, obstacles, pipShape, setBubbleBlank, setBubbleLayer, setFloorBounds } from "./actor.ts";
 import { hideText } from "./stream.ts";
 import { dropOutcome } from "./triage.ts";
 import { Scene, type SeatState } from "./scene.ts";
 import { courierTex, lookFor, whiteTex } from "./sprites.ts";
-import { setRoles } from "./theme.ts";
+import { setRoles, STATUS } from "./theme.ts";
 import { isDelight, pickWeather, planDelight, pushSignal, type Delight, type Weather } from "./flair.ts";
 import { Floaters } from "./flairfx.ts";
 import { bindMinimap } from "./minimap.ts";
@@ -17,10 +17,10 @@ import { bake } from "./pixel.ts";
 import { dev, setDpr } from "./snap.ts";
 import { clip, store } from "./dom.ts";
 import { ticketTex } from "./ticket.ts";
-import { hash } from "./color.ts";
-import { courierGuard, alertsFor, boardLines, crowdLod, doorHold, holds, loadLevel, newAlerts, feedItem, isWorking, longToolMs, pickPartner, pickStroller, planInteraction, sessionHue, shrinkFloor, pushCapped, courierDue, statusOf, stepHold, couchSeats, tetherAlpha, ticketEnd, ticketFor, ticketT, yieldsTo, TICKET_MS, uniqueNames, type Action, type PlanCtx, type Shrink, type StrollCand, type Ticket } from "./choreo.ts";
+import { hash, hsl } from "./color.ts";
+import { clampBox, collapseLatch, stackLabels, worstState, type Box, courierGuard, alertsFor, boardLines, crowdLod, doorHold, holds, loadLevel, newAlerts, feedItem, isWorking, longToolMs, pickPartner, pickStroller, planInteraction, sessionHue, shrinkFloor, pushCapped, courierDue, statusOf, stepHold, couchSeats, tetherAlpha, ticketEnd, ticketFor, ticketT, yieldsTo, TICKET_MS, uniqueNames, type Action, type PlanCtx, type Shrink, type StrollCand, type Ticket } from "./choreo.ts";
 import { advance, connect, newCursor, type Envelope } from "./net.ts";
-import { camera, bindPointer, isNarrow, phoneScale, pickAuto } from "./camera.ts";
+import { camera, bindPointer, isNarrow, phoneScale, pickAuto, type View } from "./camera.ts";
 import { hooks, liveIn, office, publish, pushFeed, setConnection, isPresenter, type ActorInfo, type SessionInfo } from "./api.ts";
 import { bindUi } from "./ui.ts";
 
@@ -63,10 +63,16 @@ new ResizeObserver(() => { TOP = topEl.offsetHeight; }).observe(topEl);
 let SHEET = 0;
 const sideEl = document.getElementById("side")!;
 new ResizeObserver(() => { SHEET = sideEl.offsetHeight; }).observe(sideEl);
-const sheetPx = () => (matchMedia("(max-width:800px)").matches && !document.body.classList.contains("collapsed") ? SHEET : 0);
+// Read per frame, so cached from observers: offsetHeight/matchMedia in the ticker forced a layout every frame (perf profile).
+const narrowMq = matchMedia("(max-width:800px)");
+let narrow = narrowMq.matches;
+narrowMq.addEventListener("change", (e) => { narrow = e.matches; });
+const sheetPx = () => (narrow && !document.body.classList.contains("collapsed") ? SHEET : 0);
 // The meter strip and the phone's Fit button sit over the bottom of the stage: the camera fits above them, so neither covers a desk (H5).
-const sparkEl = document.getElementById("spark")!, fitEl = document.getElementById("fit")!;
-const bottomPx = () => Math.max(sheetPx(), sparkEl.offsetHeight) + (fitEl.offsetHeight ? fitEl.offsetHeight + 12 : 0);
+let SPARK = 0, FIT = 0;
+new ResizeObserver(() => { SPARK = document.getElementById("spark")!.offsetHeight; }).observe(document.getElementById("spark")!);
+new ResizeObserver(() => { FIT = document.getElementById("fit")!.offsetHeight; }).observe(document.getElementById("fit")!);
+const bottomPx = () => Math.max(sheetPx(), SPARK) + (FIT ? FIT + 12 : 0);
 camera.focusSelected = () => { if (office.selected) camera.focus(office.selected); };
 // moving the window to another monitor changes the DPR: follow it (#166)
 function watchDpr() {
@@ -88,6 +94,12 @@ const doorTok = new Text({ text: "", style: { fontFamily: "ui-monospace, Menlo, 
 doorTok.anchor.set(0.5, 1);
 doorTok.visible = false;
 uiLayer.addChild(doorTok);
+// "+N waiting for a desk" over the last waiting spot once the queue outgrows the drawn row (every desk on every floor taken): never an invisible queue
+const queueTok = new Text({ text: "", style: { fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: 11, fill: 0xffffff, stroke: { color: 0x0e0d16, width: 3 } } });
+queueTok.anchor.set(0.5, 1);
+queueTok.visible = false;
+uiLayer.addChild(queueTok);
+let queueOver = 0;
 
 let layout: Layout;
 let scene: Scene;
@@ -488,6 +500,11 @@ function syncActors() {
     if (a.label !== want) { a.setLabel(want); gold(a); }
   }
   liveIds = live;
+  queueOver = Math.max(0, qseen + 1 - layout.zones[0].queue.length);
+  sessIdx.clear();
+  sessions.forEach((s, i) => sessIdx.set(s.id, i + 1));
+  collapsed = collapseLatch(collapsed, Object.keys(state.agents).length);
+  if (!collapsed) expanded.clear();
   scene.setSeats(seatStates);
   minimap.set(layout, scene.podOwners());
 }
@@ -904,6 +921,106 @@ function catSeat(now: number) {
   return p ? `${p.x},${p.y}` : "";
 }
 
+// ---- session collapse (V4/G6) -------------------------------------------------------------------------------
+// Above 12 live helpers each crew folds into one badge on its first pod: helpers hide (their desks keep working), except alerts,
+// the selected agent and sessions the user opened. Default, not an option. Seats stay where they are.
+let collapsed = false;
+const expanded = new Set<string>(); // sessions opened from a badge, an agent or the panel; Escape closes them all
+const sessIdx = new Map<string, number>(); // session id -> 1-based start order ("session N" when text is hidden)
+type SBadge = { c: Container; bg: Graphics; pips: Graphics; name: Text; info: Text; warn: Text; key: string; w: number; h: number };
+const badges = new Map<string, SBadge>();
+const crews = new Map<string, { pod: number; list: Actor[] }>(); // per-frame scratch
+const badgeBoxes: Box[] = [], badgeOf: SBadge[] = [], badgeHide: boolean[] = [];
+const sessOf = (id: string) => meta.get(id)?.session ?? "";
+const PIPS_SHOWN = 8;
+
+function foldCrews() {
+  for (const [id, a] of actors) a.setHidden(collapsed && !a.lead && !a.queued && !a.alert && id !== office.selected && !expanded.has(sessOf(id)));
+}
+function newBadge(sid: string): SBadge {
+  const st = (fill: number | string) => ({ fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: 10, fill, stroke: { color: 0x0e0d16, width: 2 } });
+  const bd: SBadge = { c: new Container(), bg: new Graphics(), pips: new Graphics(), name: new Text({ text: "", style: st(0xffffff) }), info: new Text({ text: "", style: st(0xc8cde0) }), warn: new Text({ text: "", style: st(0xffffff) }), key: "", w: 0, h: 0 };
+  bd.c.addChild(bd.bg, bd.pips, bd.name, bd.info, bd.warn);
+  bd.c.eventMode = "static";
+  bd.c.cursor = "pointer";
+  bd.c.on("pointertap", () => {
+    actorTapAt = Date.now(); // not a floor click: keep the selection
+    if (camera.dragged) return;
+    if (!expanded.delete(sid)) expanded.add(sid);
+  });
+  uiLayer.addChild(bd.c);
+  badges.set(sid, bd);
+  return bd;
+}
+/** Badge per collapsed session on its first pod: name in the session hue, counts, worst state (glyph + word) unless working/idle, a pip per helper. */
+function drawBadges(ui: View, W: number, H: number) {
+  obstacles.length = 0;
+  crews.clear();
+  if (collapsed) for (const b of bindings) {
+    const a = actors.get(b.id), pod = b.key.startsWith("lobby") ? -1 : scene.podOfSeat(b.key);
+    if (!a || a.leaving || pod < 0) continue;
+    const sid = sessOf(b.id), c = crews.get(sid) ?? crews.set(sid, { pod, list: [] }).get(sid)!;
+    c.pod = Math.min(c.pod, pod);
+    c.list.push(a);
+  }
+  for (const [sid, bd] of badges) if (!crews.has(sid)) { bd.c.destroy({ children: true }); badges.delete(sid); }
+  if (!crews.size) return;
+  const fs = fontPx(10), r = Math.max(3, Math.round(fs * 0.3)), pad = 4;
+  const chars = Math.max(6, Math.floor((Math.max(80, 4 * T * ui.sc - 6) - 2 * pad) / (fs * 0.62)) - 2); // name fits one pod pitch, so neighbouring badges sit side by side
+  badgeBoxes.length = badgeOf.length = 0;
+  for (const [sid, crew] of crews) {
+    const bd = badges.get(sid) ?? newBadge(sid), pr = scene.podRect(crew.pod);
+    if (!pr) { bd.c.visible = false; continue; }
+    const lead = actors.get(leadId(sid)), sts = crew.list.map((a) => ({ s: a.status, wait: a.waitKind }));
+    const worst = worstState(lead?.alert ? [...sts, { s: lead.status, wait: lead.waitKind }] : sts);
+    const working = crew.list.reduce((n, a) => n + (a.working ? 1 : 0), 0), open = expanded.has(sid);
+    const name = hideText() ? `session ${sessIdx.get(sid) ?? 0}` : clip(state.sessions[sid]?.project ?? sid, chars);
+    const key = `${name}|${working}|${worst}|${sts.map((x) => x.s + x.wait).join(",")}|${fs}|${+open}`;
+    if (key !== bd.key) {
+      bd.key = key;
+      for (const t of [bd.name, bd.info, bd.warn]) t.style.fontSize = fs;
+      bd.name.text = `${open ? "\u25be" : "\u25b8"} ${name}`;
+      bd.name.style.fill = hsl(sessionHue(sid), 0.7, 0.72);
+      bd.info.text = `${working}/${crew.list.length} working`;
+      const more = sts.length - PIPS_SHOWN, bad = worst !== "working" && worst !== "idle";
+      // rows: name / counts / a pip per helper (+N) / worst state when it needs you: narrow enough for one pod pitch
+      const row = Math.ceil(bd.name.height), shown = Math.min(PIPS_SHOWN, sts.length), py = pad + 2 * row + r + 2;
+      bd.name.position.set(pad, pad - 1);
+      bd.info.position.set(pad, pad - 1 + row);
+      bd.pips.clear();
+      for (let i = 0; i < shown; i++) pipShape(bd.pips, pad + r + 1 + i * (2 * r + 4), py, r, sts[i].s, sts[i].wait);
+      bd.warn.text = `${more > 0 ? `+${more}` : ""}${more > 0 && bad ? " " : ""}${bad ? `${STATUS[worst].glyph} ${STATUS[worst].label}` : ""}`;
+      bd.warn.style.fill = bad ? STATUS[worst].color : 0xc8cde0;
+      bd.warn.position.set(pad, py + r + 2);
+      bd.w = Math.ceil(Math.max(bd.name.width, bd.info.width, shown * (2 * r + 4), bd.warn.text ? bd.warn.width : 0)) + 2 * pad;
+      bd.h = Math.ceil(Math.max(py + r + 1, bd.warn.text ? bd.warn.y + bd.warn.height : 0)) + pad;
+      bd.bg.clear().roundRect(0, 0, bd.w, bd.h, 3).fill({ color: 0x0e0d16, alpha: 0.84 }).stroke({ width: 1, color: hsl(sessionHue(sid), 0.65, 0.6), alpha: open ? 0.4 : 0.85 });
+    }
+    const cx = ui.ox + (pr.x + pr.w / 2) * ui.sc, bot = expanded.has(sid) ? ui.oy + (pr.y - 1) * ui.sc : ui.oy + (pr.y + pr.h / 2) * ui.sc + bd.h / 2; // centred on the folded pod (the crew's place); once opened it moves above the pod so it never covers the people it revealed
+    bd.c.visible = cx >= 0 && cx <= W && bot >= TOP && bot - bd.h <= TOP + H; // off-screen pods keep their badge off-screen too
+    if (!bd.c.visible) continue;
+    badgeBoxes.push({ x: cx, y: bot - bd.h, w: bd.w, h: bd.h, pri: 3, own: bd });
+    badgeOf.push(bd);
+  }
+  // inside the visible floor, stacked clear of each other; then they are fixed obstacles for tags and bubbles (actor.ts)
+  const fx0 = Math.max(0, ui.ox), fy0 = Math.max(TOP, ui.oy + layout.wallRows * T * ui.sc);
+  const fr = { x: fx0, y: fy0, w: Math.max(0, Math.min(W, ui.ox + layout.cols * T * ui.sc) - fx0), h: Math.max(0, Math.min(TOP + H, ui.oy + layout.rows * T * ui.sc) - fy0) };
+  // an agent that needs you is never under a badge: its flag and ring are placed first (they never move)
+  const nb = badgeBoxes.length;
+  for (const a of actors.values()) if (a.alert && !a.hidden) a.alertBoxes(badgeBoxes);
+  for (let i = nb; i < badgeBoxes.length; i++) badgeBoxes[i].pri = 4;
+  badgeHide.length = 0; badgeHide.length = badgeBoxes.length; badgeHide.fill(false);
+  const dy = stackLabels(badgeBoxes, fr, badgeHide);
+  badgeBoxes.forEach((b, i) => {
+    if (i >= nb) return;
+    const bd = badgeOf[i];
+    if (badgeHide[i]) { bd.c.visible = false; return; }
+    const x = clampBox(b, fr).x, y = b.y + dy[i];
+    bd.c.position.set(dev(x - bd.w / 2), dev(y));
+    obstacles.push({ x, y, w: bd.w, h: bd.h, pri: 3 });
+  });
+}
+
 // ---- frame loop --------------------------------------------------------------------------------------------
 
 let steamT = 0;
@@ -925,6 +1042,12 @@ function dash(ax: number, ay: number, bx: number, by: number, t: number) {
 function tetherSeg(a: Actor | undefined, b: Actor | undefined, t = 0) {
   if (a && b) dash(b.pos.x, b.pos.y - 8, a.pos.x, a.pos.y - 8, t);
 }
+// Performance probe for the CI gate (scripts/perf.mjs): main-thread ms per frame (update + render submit) and live display objects.
+const perf = { ms: new Float32Array(600), n: 0, start: 0 };
+app.ticker.add(() => { perf.start = performance.now(); }, undefined, UPDATE_PRIORITY.INTERACTION);
+app.ticker.add(() => { perf.ms[perf.n++ % 600] = performance.now() - perf.start; }, undefined, UPDATE_PRIORITY.UTILITY);
+const countObjects = (c: ContainerChild): number => 1 + (c.children?.reduce((n, k) => n + countObjects(k), 0) ?? 0);
+(globalThis as { __aoPerf?: unknown }).__aoPerf = { frames: () => Array.from(perf.ms.subarray(0, Math.min(perf.n, 600))), reset: () => { perf.n = 0; }, objects: () => countObjects(app.stage), actors: () => actors.size };
 app.ticker.add((tk) => {
   if (!layout) return;
   const dt = Math.min(0.1, tk.deltaMS / 1000), now = Date.now();
@@ -945,7 +1068,7 @@ app.ticker.add((tk) => {
   camera.phone = isNarrow(W, app.screen.height - TOP); // judged on the full stage, so opening the sheet never flips the mode
   if (camera.phone && !camera.fitAll && camera.autoFollow) { // default phone focus: an alert, else a working agent, else the door aisle
     const cand = [];
-    for (const a of actors.values()) if (!a.leaving && !a.queued && !a.gone) cand.push({ id: a.id, x: a.pos.x, y: a.pos.y, alert: !!a.alert, working: a.working });
+    for (const a of actors.values()) if (!a.leaving && !a.queued && !a.gone && !a.hidden) cand.push({ id: a.id, x: a.pos.x, y: a.pos.y, alert: !!a.alert, working: a.working });
     const dp = feet(layout.door), pk = pickAuto(cand, autoId, { x: dp.x, y: dp.y + T * 2 });
     autoId = pk.id;
     camera.autoPos = pk;
@@ -969,13 +1092,16 @@ app.ticker.add((tk) => {
   lod = v.sc < (lod ? LOD_OFF : LOD_ON) * narrow;
   // pips when zoomed out, or in a crowd for everyone but leads, the selected/hovered actor and alerts
   crowd = crowdLod(crowd, Object.keys(state.agents).length, displaced);
-  for (const a of actors.values()) a.setLod(lod || ((crowd || (overlay && camera.phone)) && !a.lead && !a.alert && a.id !== office.selected && a.id !== hoverId));
+  // G3: collapsed, only leads, alerts, the selected/hovered agent and opened crews keep a name
+  for (const a of actors.values()) a.setLod(lod || ((crowd || collapsed || (overlay && camera.phone)) && !a.lead && !a.alert && a.id !== office.selected && a.id !== hoverId && !(collapsed && expanded.has(sessOf(a.id)))));
   const hud = { w: app.screen.width, h: app.screen.height - bottomPx(), top: TOP };
   if (setBubbleBlank(hideText())) for (const a of actors.values()) a.refreshText(); // stream-safe blanks live canvas bubbles at once
   if (setSceneScale(ui.sc)) { for (const a of actors.values()) a.refreshText(); doorTok.style.fontSize = fontPx(11); } // in-scene text keeps its size relative to the world
   if (frozen.on) { // paused: nothing advances, but pan/zoom/selection stay live (overlays re-follow the camera)
     minimap.draw(camera.still, W, TOP, H, frozen.since, overlay || isPresenter());
+    foldCrews();
     for (const a of actors.values()) a.syncUi(ui.ox, ui.oy, ui.sc, hud);
+    drawBadges(ui, W, H);
     displaced = layoutTags(actors.values());
     layoutBubbles(actors.values(), hud);
     scene.tick(frozen.since, ui.ox, ui.oy, ui.sc, boardText, skyT || frozen.since);
@@ -1006,6 +1132,9 @@ app.ticker.add((tk) => {
   lastV = v;
   let doorNear = false;
   const door = feet(layout.door);
+  foldCrews();
+  queueTok.visible = queueOver > 0;
+  if (queueOver) { const q = feet(layout.zones[0].queue[layout.zones[0].queue.length - 1]); queueTok.text = `+${queueOver} waiting for a desk`; queueTok.style.fontSize = fontPx(11); queueTok.position.set(dev(ui.ox + q.x * ui.sc), dev(ui.oy + (q.y - 30) * ui.sc)); }
   for (const [id, a] of actors) {
     const isRun = running.has(id);
     a.working = !a.queued && isWorking(isRun, a.busyAt, now);
@@ -1032,6 +1161,7 @@ app.ticker.add((tk) => {
       if (office.selected === id) office.select(null);
     }
   }
+  drawBadges(ui, W, H);
   displaced = layoutTags(actors.values()); // tags first: bubbles then avoid them
   layoutBubbles(actors.values(), hud);
   for (const b of bindings) {
@@ -1145,7 +1275,7 @@ setInterval(() => {
   if (w !== weather) { weather = w; scene.setWeather(w); }
   delights = delights.filter((d) => d.until > now);
   if (followDue({ mode: settings.follow, frozen: frozen.on, presenter: isPresenter(), reduced: settings.reducedMotion, now, touched: camera.touched })) {
-    const id = pickBusiest(Array.from(actors.values(), (a) => (a.leaving || a.queued ? { id: a.id, hits: [] } : { id: a.id, hits: a.recentHits })), now);
+    const id = pickBusiest(Array.from(actors.values(), (a) => (a.leaving || a.queued || a.hidden ? { id: a.id, hits: [] } : { id: a.id, hits: a.recentHits })), now);
     // retarget at most every 5 s so the camera never ping-pongs
     if (id && camera.follow !== id && now - lastFollow >= 5000) { lastFollow = now; camera.easeFocus(id); }
   }
@@ -1162,12 +1292,14 @@ let prevSel: string | null = null;
 office.onSelect((id) => {
   if (prevSel) actors.get(prevSel)?.setSelected(false);
   if (id) actors.get(id)?.setSelected(true);
+  if (id && collapsed && sessOf(id)) expanded.add(sessOf(id)); // picking an agent (canvas, panel, keyboard) opens its crew
   prevSel = id;
 });
 // Escape first closes a dialog/view/settings or leaves presenter mode (those run first or mark the event); only a bare Escape deselects.
 addEventListener("keydown", (e) => {
   if (e.key !== "Escape" || e.defaultPrevented || document.body.classList.contains("presenter")) return;
   if (document.querySelector(".dlg:not([hidden]),.view:not([hidden]),#settings:not([hidden])")) return;
+  expanded.clear(); // opened crews fold back
   office.select(null);
 });
 
@@ -1180,8 +1312,15 @@ hooks.sessions = (): SessionInfo[] =>
     id: s.id, lead: leadId(s.id), project: s.project, cwd: s.cwd, branch: s.branch, gaps: s.gaps ?? 0, recovered: !!s.recovered,
     usage: s.usage, waiting: s.waiting, startedAt: s.startedAt, agents: Object.values(state.agents).filter((a) => a.session === s.id).length,
   }));
+// Called many times per UI refresh: build once per state and reuse for 200 ms (statuses lag at most that), children in one pass (was O(n^2)).
+let actorsMemo: { st: OfficeState | null; t: number; out: ActorInfo[] } = { st: null, t: 0, out: [] };
 hooks.actors = (): ActorInfo[] => {
+  const now = performance.now();
+  if (actorsMemo.st === state && now - actorsMemo.t < 200) return actorsMemo.out;
+  const kids = new Map<string, string[]>();
+  for (const ag of Object.values(state.agents)) { const l = kids.get(ag.parent); if (l) l.push(ag.id); else kids.set(ag.parent, [ag.id]); }
   const out: ActorInfo[] = [];
+  actorsMemo = { st: state, t: now, out };
   for (const [id, a] of actors) {
     const held = blocked.has(id);
     if (a.leaving && !held) continue;
@@ -1194,7 +1333,7 @@ hooks.actors = (): ActorInfo[] => {
       lead: a.lead,
       task: ag?.task ?? (a.lead ? sess?.prompt : state.tasks?.find((t) => t.agentId === id)?.text),
       why: src?.why, confidence: ag?.confidence, doing: src?.doing, detail: src?.detail, cwd: sess?.cwd, branch: sess?.branch,
-      parent: ag?.parent, children: childrenOf(state, id).map((c) => c.id), chain: parentChain(state, id),
+      parent: ag?.parent, children: kids.get(id) ?? [], chain: parentChain(state, id),
       ...(held ? { outcome: "blocked" as const } : {}),
     });
   }

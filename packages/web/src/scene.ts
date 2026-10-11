@@ -1,5 +1,5 @@
 import { Container, Graphics, Sprite, Text, type Texture } from "pixi.js";
-import { podStyle, PODS_PER_ROW, type Layout, type Task } from "@agent-office/core";
+import { podRow, podStyle, type Layout, type Task } from "@agent-office/core";
 import { T, tagHits } from "./actor.ts";
 import { sceneGeometry, selfCheck, type SceneGeometry } from "./geometry.ts";
 import { art, dev, place } from "./snap.ts";
@@ -24,7 +24,7 @@ const CHAIR_LINGER_MS = 20_000; // how long a vacated chair stays out
 /** Zone (pod row) a seat id `d<N>` belongs to; anything else (lobby) belongs to none. */
 const wingOf = (seat: string) => {
   const n = /^d(\d+)$/.exec(seat)?.[1];
-  return n === undefined ? "" : `wing${Math.floor(Number(n) / 4 / PODS_PER_ROW) + 1}`;
+  return n === undefined ? "" : `wing${podRow(Math.floor(Number(n) / 4)) + 1}`;
 };
 const hexNum = (h: string) => parseInt(h.slice(1), 16);
 
@@ -614,6 +614,8 @@ export class Scene {
   }
   /** Pod index of a seat id (-1 for lobby seats and unknown ids). */
   podOfSeat(seat: string): number { return this.desks.get(seat)?.pod ?? -1; }
+  /** Apron rect of pod i in art px (the session badge sits on its top edge). */
+  podRect(i: number) { const p = this.pods[i]; return p ? { x: p.x, y: p.y, w: p.w, h: p.h } : null; }
   setHoverPod(i: number) { this.hoverPod = i; }
 
   setSeats(m: Map<string, SeatState>) {

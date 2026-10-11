@@ -405,8 +405,6 @@ Built by the lead session and two Opus agents in parallel: A on core, server and
 | C2 scrim | A scrim would hide the alerts the critique wants visible. Dialogs instead stay above the toast area. |
 | D2 persistent pod labels | The owner asked for plaques on hover only. Pod identity is in the hover plaque and the triage card. |
 | R2 value-key regrade, F1–F3 character silhouettes and poses, E1/E3/E7–E12 environment polish, L2/L4/L5 identity props | One coordinated art pass behind a palette token, not piecemeal; the art agent warns a partial regrade leaves two styles. |
-| V4 and G1–G6 session-collapse level of detail | Large, and touches allocation and the scene. Chip grouping by session and the "+N · k need you" overflow landed as the first step. |
-| P5 floors, P6 performance gate | Scale work (Phase 3 of the finishing pass). |
 
 ## Finishing pass (October 2026)
 
@@ -449,3 +447,19 @@ Not observable from here: a real tool-permission prompt (this session runs witho
 | P7 many machines | Done | `scripts/digest.mjs --counts` exports counts and states only (no paths or text); read-only, no listener. Daemons stay loopback-only. |
 | Derived signal 5: exact delegation matching | Skipped | The Agent tool's result shape could not be verified from here, and `SubagentStart` already carries `agent_id`; matching by delegation order stays, with "(?)" marking a guess. |
 | Found in the screenshot pass | Fixed | Opening the page on a busy office paraded every agent in through the door (about 15 s at 45 agents); a fresh snapshot now places the crowd at its desks at once. "1 errors" is now "1 error". |
+
+### Phase 3: scale as one system
+
+| Item | Verdict | What changed |
+|---|---|---|
+| V4, G6 session collapse | Done (default) | Above 12 live helpers (off again at 10) each crew folds: its helpers hide while their desks keep showing real activity. An agent with an alert, the selected agent, queued agents and opened sessions stay visible. |
+| G1 per-session aggregate | Done | Each collapsed crew has a badge on its first pod (counts, worst state with glyph and word). Sessions view tiles and panel rows read "N agents · k working · w waiting · b blocked" with the worst state's glyph and word. |
+| G2 project labels | Done | The badge names the project in the session hue ("session N" when text is hidden). |
+| G3 names at scale | Done | While collapsed, only leads, alerts, the selected or hovered agent and opened crews carry names; everyone else is a pip. |
+| G4 pips | Done | The badge shows one shape-coded pip per helper (8, then +N). |
+| G5 small office | Skipped | The room is sized to the configured team on purpose and empty pods are dimmed; auto-zooming would override Fit all and the user's own camera. |
+| Expand and collapse | Done | Click a badge to open its session (the badge moves above the pod), click again or Escape to close; selecting an agent anywhere opens its session. A badge never covers an agent that needs you, and tags, flags and bubbles treat badges as obstacles. |
+| P5 floors | Done | Up to 3 floors (192 desks, under the reducer's 200-agent limit) stacked in one world; a session stays on one floor; the minimap marks each floor and PageUp/PageDown move between them. Beyond that, a "+N waiting for a desk" label shows; never an invisible queue. `enforceSeats` denies at the new total. |
+| Seats never move | Done | Tests: desk positions are append-only across floors and no seated agent moves when a floor opens. |
+| P6 performance gate | Done | `npm run perf` (CI job `perf`): 100 agents over 8 sessions with live tool traffic, headless Chrome over the DevTools protocol (no new dependency), 4x CPU throttling, gate at 16 ms frame p95 (main thread) and 3500 display objects; `PERF_PROFILE=<file>` writes a CPU profile. The first profile found two real costs, both fixed: a per-frame forced layout (from the Phase 1 bottom-inset fix) and an O(n^2) actor list for the panel. Now p95 13.3-14.5 ms, about 2640 objects. Daemon: about 0.7-1.1 ms per event at 100 agents (~940 events/s), so the full-envelope serialization per commit is not a real cost. |
+| Found in the screenshot pass | Fixed | An off-screen lead's tag peeked in at the canvas edge and collided with others; it is now hidden until the lead is on screen. |

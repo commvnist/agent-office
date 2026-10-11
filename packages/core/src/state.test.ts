@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { emptyState, reduce, sweep, capacityFor, childrenOf, parentChain, roleFor, LIMITS } from "./state.ts";
-import { deskPos } from "./layout.ts";
+import { deskPos, FLOOR_DESKS, MAX_DESKS } from "./layout.ts";
 import type { OfficeConfig, OfficeEvent } from "./types.ts";
 
 const cfg: OfficeConfig = {
@@ -59,15 +59,38 @@ test("allocation is deterministic across replays", () => {
   assert.deepEqual(seats(run(...evs, stop("c"), start("g"))), seats(run(...evs, stop("c"), start("g"))));
 });
 
-test("the 65th agent queues and a freed desk promotes it", () => {
-  const ids = Array.from({ length: 65 }, (_, i) => `a${i}`);
+test("the agent past the last floor queues and a freed desk promotes it", () => {
+  const ids = Array.from({ length: MAX_DESKS + 1 }, (_, i) => `a${i}`);
   const s = run(...ids.map((id, i) => start(id, `s${i % 5}`)));
-  assert.equal(s.agents.a64.seat, null);
-  assert.deepEqual(s.queue, ["a64"]);
+  const last = `a${MAX_DESKS}`;
+  assert.equal(s.agents[last].seat, null);
+  assert.deepEqual(s.queue, [last]);
   assert.equal(capacityFor(cfg, s, "qa").canSpawn, false);
   const after = reduce(cfg, s, { type: "agent_stop", session: "s0", agentId: "a0", t: 0 });
-  assert.equal(after.agents.a64.seat?.id, s.agents.a0.seat?.id);
+  assert.equal(after.agents[last].seat?.id, s.agents.a0.seat?.id);
   assert.deepEqual(after.queue, []);
+});
+
+test("floors: demand past 64 desks opens floor 2 (d64..), seated agents never move, a session keeps to its floor", () => {
+  const floor = (s: ReturnType<typeof run>, id: string) => Math.floor(Number(s.agents[id].seat!.id.slice(1)) / FLOOR_DESKS);
+  // 8 sessions x 8 agents fill floor 1, then more arrive: every earlier seat stays where it was
+  const evs = Array.from({ length: 64 }, (_, i) => start(`a${i}`, `s${i % 8}`));
+  let s = run(...evs);
+  const before = Object.fromEntries(Object.values(s.agents).map((a) => [a.id, a.seat!.id]));
+  assert.ok(Object.values(before).every((d) => Number(d.slice(1)) < FLOOR_DESKS));
+  for (let i = 0; i < 12; i++) {
+    s = reduce(cfg, s, start(`b${i}`, i < 6 ? "s9" : "s0"));
+    for (const [id, d] of Object.entries(before)) assert.equal(s.agents[id].seat!.id, d, `${id} moved`);
+  }
+  for (let i = 0; i < 6; i++) assert.equal(floor(s, `b${i}`), 1, "a new session opens floor 2");
+  assert.deepEqual(new Set(Array.from({ length: 6 }, (_, i) => floor(s, `b${i}`))).size, 1);
+  // a desk frees on floor 1: the floor-2 session still grows on floor 2, a floor-1 session takes the floor-1 desk
+  s = reduce(cfg, s, { type: "agent_stop", session: "s1", agentId: "a1", t: 0 });
+  s = reduce(cfg, s, start("c0", "s9"));
+  assert.equal(floor(s, "c0"), 1);
+  s = reduce(cfg, s, start("c1", "s1"));
+  assert.equal(floor(s, "c1"), 0);
+  assert.equal(s.queue.length, 0);
 });
 
 test("session_end removes its agents and frees seats for others", () => {
@@ -173,7 +196,7 @@ test("tool_end records duration and errors and clears doing", () => {
 });
 
 test("agent timing: queue wait and report metrics", () => {
-  const fill = Array.from({ length: 64 }, (_, i) => ({ ...start(`f${i}`), t: 0 }));
+  const fill = Array.from({ length: MAX_DESKS }, (_, i) => ({ ...start(`f${i}`), t: 0 }));
   const s = run(...fill, { ...start("e"), t: 10 },
     { type: "tool", session: "s1", agentId: "e", tool: "Bash", t: 11 }, { type: "agent_stop", session: "s1", agentId: "f1", t: 50 },
     { type: "agent_stop", session: "s1", agentId: "e", message: "BLOCKED: no db", t: 90 });
@@ -243,8 +266,8 @@ test("same-file writes by two agents within the window record a possible conflic
 
 test("capacityFor, childrenOf, parentChain", () => {
   const s = run(start("a"), start("b"), start("c"));
-  assert.deepEqual(capacityFor(cfg, s, "qa"), { free: 61, total: 64, canSpawn: true });
-  assert.deepEqual(capacityFor(cfg, s, "mystery"), { free: 61, total: 64, canSpawn: true });
+  assert.deepEqual(capacityFor(cfg, s, "qa"), { free: MAX_DESKS - 3, total: MAX_DESKS, canSpawn: true });
+  assert.deepEqual(capacityFor(cfg, s, "mystery"), { free: MAX_DESKS - 3, total: MAX_DESKS, canSpawn: true });
   assert.deepEqual(childrenOf(s, "lead:s1").map((a) => a.id), ["a", "b", "c"]);
   const t = run({ type: "delegate", session: "s1", agentType: "qa-engineer", text: "x", t: 1 }, start("a"),
     { type: "delegate", session: "s1", from: "a", agentType: "qa-engineer", text: "y", t: 1 }, start("b"));
@@ -266,9 +289,9 @@ test("pod cohesion: 4 interleaved sessions x 6 same-role agents each own a pod; 
   assert.deepEqual(Object.values(run1().agents).map((a) => a.seat!.id), Object.values(s.agents).map((a) => a.seat!.id));
 });
 
-test("70 interleaved agents: 64 seated on distinct desks, 6 queued", () => {
-  const s = run(...Array.from({ length: 70 }, (_, i) => start(`a${i}`, `s${i % 5}`)));
-  assert.equal(new Set(Object.values(s.agents).filter((a) => a.seat).map((a) => a.seat!.id)).size, 64);
+test("interleaved agents past the last floor: every desk seated once, 6 queued", () => {
+  const s = run(...Array.from({ length: MAX_DESKS + 6 }, (_, i) => start(`a${i}`, `s${i % 5}`)));
+  assert.equal(new Set(Object.values(s.agents).filter((a) => a.seat).map((a) => a.seat!.id)).size, MAX_DESKS);
   assert.equal(s.queue.length, 6);
 });
 

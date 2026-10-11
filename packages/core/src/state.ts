@@ -1,4 +1,4 @@
-import { deskPos, MAX_DESKS } from "./layout.ts";
+import { deskPos, FLOOR_DESKS, MAX_DESKS } from "./layout.ts";
 import { crewName } from "./names.ts";
 import { metaSummary, stripMeta } from "./clean.ts";
 import type { Agent, Interaction, OfficeConfig, OfficeEvent, OfficeState, Run, Seat, Session, Summary, Task, Usage } from "./types.ts";
@@ -59,6 +59,7 @@ const meanDist = (i: number, ds: number[]) => ds.reduce((n, d) => n + dist(i, d)
  * Cohesion first: a pod already owned by the session, else a fully empty pod, else any pod (tier x1000). Within a tier,
  * cost is mean distance to the session's desks (none yet: the emptiest, then lowest, pod), 0.4x mean distance to
  * same-role desks (secondary), +0.5 for a pod already 3/4 full. Core-team slots (cfg names/count) only decide kind and name.
+ * Floors: a session keeps to the floor of its first desk while that floor has a free desk (any other floor costs +3000).
  */
 export function allocate(cfg: OfficeConfig, state: OfficeState, role: string, session?: string): Seat | null {
   const seated = Object.values(state.agents).filter((a) => a.seat);
@@ -78,14 +79,17 @@ export function allocate(cfg: OfficeConfig, state: OfficeState, role: string, se
   // Never beyond it: the same-role pull used to pick the pod row below a colleague, a desk the office never built.
   // The client builds every desk up to the highest one in use (buildLayout minDesks), so what is chosen here exists.
   // Every occupied pod stays a candidate wherever it is (a session's own pod may lie beyond a pod that emptied).
-  const firstEmpty = podUse.findIndex((n) => n === 0);
+  // The session's floor also offers its own first empty pod, so a crew grows on its floor instead of spilling to the first gap elsewhere.
+  const floorOf = (i: number) => Math.floor(i / FLOOR_DESKS);
+  const home = mates.length ? floorOf(Math.min(...mates)) : -1;
+  const firstEmpty = podUse.findIndex((n) => n === 0), homeEmpty = podUse.findIndex((n, p) => n === 0 && floorOf(p * 4) === home);
   for (let i = 0; i < MAX_DESKS; i++) {
     if (taken.has(i)) continue;
-    if (firstEmpty >= 0 && Math.floor(i / 4) > firstEmpty && podUse[Math.floor(i / 4)] === 0) continue; // never an empty pod past the first
     const pod = Math.floor(i / 4), use = podUse[pod];
-    // Tiers dominate every other term: own pod, then a fully empty pod, then someone else's.
+    if (use === 0 && pod !== firstEmpty && pod !== homeEmpty) continue; // never an empty pod past the first (of the office or of the session's floor)
+    // Tiers dominate every other term: own pod, then a fully empty pod, then someone else's; another floor only when the session's is full.
     const tier = session !== undefined && owner.get(pod) === session ? 0 : use === 0 ? 1 : 2;
-    const cost = tier * 1000 + (mates.length ? meanDist(i, mates) : use * 100) + (peers.length ? 0.4 * meanDist(i, peers) : 0) + (use >= 3 ? 0.5 : 0);
+    const cost = tier * 1000 + (home >= 0 && floorOf(i) !== home ? 3000 : 0) + (mates.length ? meanDist(i, mates) : use * 100) + (peers.length ? 0.4 * meanDist(i, peers) : 0) + (use >= 3 ? 0.5 : 0);
     if (cost < bestCost) { best = i; bestCost = cost; }
   }
   if (best < 0) return null;

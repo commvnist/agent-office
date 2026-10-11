@@ -57,7 +57,7 @@ test("auth, host and origin checks; cookie grants read access", async () => {
   const tk = { "x-agent-office-token": d.token };
   const sj = JSON.parse((await call(d.port, "/status?format=json&session=proj", { headers: tk })).body);
   assert.deepEqual([sj.events, sj.sessions.map((x: any) => x.project)], [1, ["proj"]]);
-  assert.deepEqual(sj.desks, { used: 0, total: 64, cap: 64 });
+  assert.deepEqual(sj.desks, { used: 0, total: 192, cap: 192 }); // 3 floors x 64 desks
   assert.equal(JSON.parse((await call(d.port, "/outcomes?days=1", { headers: tk })).body).days[0].sessions, 1);
   const h = JSON.parse((await call(d.port, "/history?limit=5", { headers: { "x-agent-office-token": d.token } })).body);
   assert.equal(h.events[0].type, "session_start");
@@ -80,7 +80,7 @@ test("bad input never kills the daemon", async () => {
 test("seat enforcement denies, then allows after 3 denials", async () => {
   const d = await boot({ roles: { qa: { agent: "qa-engineer", count: 1 } }, enforceSeats: true });
   await post(d, { hook_event_name: "SessionStart", session_id: "s" });
-  for (let i = 0; i < 64; i++) await post(d, { hook_event_name: "SubagentStart", session_id: "s", agent_id: `a${i}`, agent_type: i % 2 ? "qa-engineer" : "general-purpose" });
+  for (let i = 0; i < 192; i++) await post(d, { hook_event_name: "SubagentStart", session_id: "s", agent_id: `a${i}`, agent_type: i % 2 ? "qa-engineer" : "general-purpose" });
   const spawnTry = () => post(d, { hook_event_name: "PreToolUse", session_id: "s", tool_name: "Agent", tool_input: { subagent_type: "qa-engineer", description: "y" } });
   for (let i = 0; i < 3; i++) {
     const o = JSON.parse((await spawnTry()).body).hookSpecificOutput;
@@ -212,7 +212,7 @@ test("spend: the session total includes subagent transcripts and refreshes durin
 test("observe protocol injects no context and never denies a spawn; the envelope names the protocol", async () => {
   const d = await boot({ roles: { qa: { agent: "qa-engineer", count: 1 } }, enforceSeats: true, protocol: "observe" });
   assert.equal((await post(d, { hook_event_name: "SessionStart", session_id: "o" })).body, "");
-  for (let i = 0; i < 64; i++) await post(d, { hook_event_name: "SubagentStart", session_id: "o", agent_id: `a${i}`, agent_type: "qa-engineer" });
+  for (let i = 0; i < 192; i++) await post(d, { hook_event_name: "SubagentStart", session_id: "o", agent_id: `a${i}`, agent_type: "qa-engineer" });
   assert.equal((await post(d, { hook_event_name: "PreToolUse", session_id: "o", tool_name: "Agent", tool_input: { subagent_type: "qa-engineer", description: "y" } })).body, "");
   assert.equal((await st(d)).protocol, "observe");
   const d2 = await boot();

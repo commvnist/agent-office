@@ -4,7 +4,7 @@ import { dev } from "./snap.ts";
 import { personTex, emoteTex, ringTex, toolIconTex, type Dir, type Emote, type Expr, type Look } from "./sprites.ts";
 import { easeSpeed, fontPx, settings, stackBubbles, textZoom, type BubbleBox } from "./settings.ts";
 import { STATUS, theme } from "./theme.ts";
-import { HOP_MS, JITTER_MS, SQUASH_MS, cleanText, clampBox, hopPose, idleTier, jitterX, microPose, microSlot, sipState, popScale, quirkAt, squashY, stackLabels, statusOf, stepDrop, toolIcon, type Box, type Rect } from "./choreo.ts";
+import { HOP_MS, JITTER_MS, SQUASH_MS, cleanText, clampBox, hopPose, idleTier, jitterX, microPose, microSlot, sipState, popScale, quirkAt, squashY, stackLabels, statusOf, stepDrop, type Status, toolIcon, type Box, type Rect } from "./choreo.ts";
 import { hash } from "./color.ts";
 
 export const T = TILE_PX; // art pixels per tile
@@ -86,6 +86,20 @@ function makeBubble(text: string, kind: BubbleKind, badge?: Badge): Container {
   c.pivot.set(w / 2, h + 8);
   return c;
 }
+
+/** A status pip at (x, y): dot = working, "!" = waiting, x = blocked, square = queued, ring = idle (shape, not colour alone). */
+export function pipShape(g: Graphics, x: number, y: number, r: number, s: Status, waitKind: WaitKind): Graphics {
+  const rim = { width: 1.5, color: 0x0e0d16 };
+  if (s === "working") g.circle(x, y, r).fill(0x4ade80).stroke(rim); // dot
+  else if (s === "waiting") g.circle(x, y, r + 1).fill(Number.parseInt(STATUS[waitKind].color.slice(1), 16)).stroke(rim).rect(x - 0.8, y - r * 0.7, 1.6, r * 0.8).fill(0x1d1b2b).rect(x - 0.8, y + r * 0.3, 1.6, 1.6).fill(0x1d1b2b); // "!"
+  else if (s === "blocked") g.circle(x, y, r + 1).fill(Number.parseInt(STATUS.blocked.color.slice(1), 16)).stroke(rim).moveTo(x - r * 0.5, y - r * 0.5).lineTo(x + r * 0.5, y + r * 0.5).moveTo(x + r * 0.5, y - r * 0.5).lineTo(x - r * 0.5, y + r * 0.5).stroke({ width: 1.5, color: 0xffffff }); // x
+  else if (s === "queued") g.rect(x - r, y - r, r * 2, r * 2).fill(0xffffff).stroke(rim); // square
+  else g.circle(x, y, r).stroke({ width: 2, color: 0xaab0c8 }); // ring
+  return g;
+}
+
+/** Fixed screen boxes (x = centre, y = top) that name tags and bubbles must keep clear of: the session badges (main.ts fills it per frame). */
+export const obstacles: Box[] = [];
 
 export class Actor {
   c = new Container(); // art-space: shadow + sprite + emote
@@ -364,17 +378,22 @@ export class Actor {
     this.pip.visible = low;
     this.demoted = false;
   }
+  /** Status for the pip and the session badge: shape and colour per state. */
+  get status() { return statusOf({ blocked: this.alert === "blocked", waiting: this.alert === "waiting", queued: this.queued, working: this.working, active: false }); }
   private drawPip(r: number) {
-    const s = statusOf({ blocked: this.alert === "blocked", waiting: this.alert === "waiting", queued: this.queued, working: this.working, active: false });
+    const s = this.status;
     const key = `${s}${this.waitKind}${r}`;
     if (key === this.pipKey) return;
     this.pipKey = key;
-    const g = this.pip.clear(), rim = { width: 1.5, color: 0x0e0d16 };
-    if (s === "working") g.circle(0, 0, r).fill(0x4ade80).stroke(rim); // dot
-    else if (s === "waiting") g.circle(0, 0, r + 1).fill(Number.parseInt(STATUS[this.waitKind].color.slice(1), 16)).stroke(rim).rect(-0.8, -r * 0.7, 1.6, r * 0.8).fill(0x1d1b2b).rect(-0.8, r * 0.3, 1.6, 1.6).fill(0x1d1b2b); // "!"
-    else if (s === "blocked") g.circle(0, 0, r + 1).fill(Number.parseInt(STATUS.blocked.color.slice(1), 16)).stroke(rim).moveTo(-r * 0.5, -r * 0.5).lineTo(r * 0.5, r * 0.5).moveTo(r * 0.5, -r * 0.5).lineTo(-r * 0.5, r * 0.5).stroke({ width: 1.5, color: 0xffffff }); // x
-    else if (s === "queued") g.rect(-r, -r, r * 2, r * 2).fill(0xffffff).stroke(rim); // square
-    else g.circle(0, 0, r).stroke({ width: 2, color: 0xaab0c8 }); // ring
+    pipShape(this.pip.clear(), 0, 0, r, s, this.waitKind);
+  }
+  /** Collapsed crew (main.ts): the sprite and every overlay hide; the desk keeps showing the work. */
+  hidden = false;
+  setHidden(b: boolean) {
+    if (this.hidden === b) return;
+    this.hidden = b;
+    this.c.visible = this.ui.visible = !b;
+    if (this.speech) this.speech.node.visible = !b;
   }
 
   update(dt: number, now: number) {
@@ -547,6 +566,7 @@ export class Actor {
     // 120ms pop-in, 150ms fade-out (#109)
     const fade = (b: { left: number; born: number }) => (settings.reducedMotion ? 1 : Math.max(0, Math.min(1, (this.t - b.born) / 120, b.left / 150)));
     if (this.speech) {
+      if (this.hidden) this.speech.node.visible = false; // said while collapsed
       this.speech.node.position.set(sx, headY);
       this.speech.node.alpha = fade(this.speech);
       this.speech.node.scale.set(settings.reducedMotion ? 1 : popScale(this.t - this.speech.born));
@@ -554,7 +574,7 @@ export class Actor {
     this.headPip.x = sx; this.headPip.y = headY + 4;
     if (this.low) { this.drawPip(Math.max(3, sc * 2)); this.pip.position.set(sx, headY + 4); }
     if (this.toolBubble) {
-      this.toolBubble.node.visible = !this.speech && !this.low;
+      this.toolBubble.node.visible = !this.speech && !this.low && !this.hidden;
       this.toolBubble.node.alpha = fade(this.toolBubble);
       this.toolBubble.node.position.set(sx, toolY);
     }
@@ -596,7 +616,7 @@ export class Actor {
   }
   /** True when the centred box overlaps this actor's visible selection/hover/alert ring (ellipse bbox, 13x17 world px). */
   ringHits(cx: number, cy: number, w: number, h: number) {
-    if (!this.mark.visible && !this.ring.visible) return false;
+    if (this.hidden || (!this.mark.visible && !this.ring.visible)) return false;
     return Math.abs(this.mark.x - cx) * 2 < w + 30 * this.sc && Math.abs(this.mark.y - cy) * 2 < h + 34 * this.sc;
   }
   /** Screen-space floor rect after syncUi, or null when no floor bounds are set. */
@@ -674,6 +694,7 @@ export function layoutBubbles(actors: Iterable<Actor>, view?: { w: number; h: nu
   bubbleBoxes.length = 0;
   bubbleNodes.length = 0;
   for (const a of actors) {
+    if (a.hidden) continue;
     const zone = String(Math.floor(a.pos.x / (6 * T)));
     const top = view ? view.top + 4 : -Infinity;
     addBubble(a, a.speech, false, zone, top);
@@ -681,6 +702,10 @@ export function layoutBubbles(actors: Iterable<Actor>, view?: { w: number; h: nu
     if (a.low || a.demoted) continue; // no tag on screen, nothing to avoid
     const tb = a.tagBox(); // prio 3: tags place first and never move; box y is the bottom edge here
     bubbleBoxes.push({ x: tb.x, y: tb.y + tb.h, w: tb.w, h: tb.h, prio: 3, age: 0, zone, tool: false });
+    bubbleNodes.push({ node: null, fade: 1, fl: null });
+  }
+  for (const o of obstacles) { // session badges: fixed like tags
+    bubbleBoxes.push({ x: o.x, y: o.y + o.h, w: o.w, h: o.h, prio: 3, age: 0, zone: "", tool: false });
     bubbleNodes.push({ node: null, fade: 1, fl: null });
   }
   // shortcut: O(n^2) overlap scan per frame, fine for dozens of bubbles; use a grid if actors reach hundreds
@@ -705,6 +730,7 @@ export function layoutBubbles(actors: Iterable<Actor>, view?: { w: number; h: nu
 /** True when the centred box (cx, cy, w, h) overlaps a placed name tag or an actor's ring; valid after layoutTags. No allocation. */
 export function tagHits(cx: number, cy: number, w: number, h: number): boolean {
   for (const a of all) if (a.ringHits(cx, cy, w, h)) return true;
+  for (const o of obstacles) if (Math.abs(o.x - cx) * 2 < o.w + w && o.y < cy + h / 2 && o.y + o.h > cy - h / 2) return true;
   for (const a of tagList) {
     const t = a.tag;
     if (t.visible && Math.abs(t.x - cx) * 2 < t.width + w && t.y < cy + h / 2 && t.y + t.height > cy - h / 2) return true;
@@ -717,13 +743,14 @@ export function layoutTags(actors: Iterable<Actor>): number {
   tagList.length = 0;
   tagBoxes.length = 0;
   for (const a of actors) {
-    if (a.low) continue;
+    if (a.low || a.hidden) continue;
     if (a.atDoor) { a.placeTag(0, true); continue; } // not stacked: a pip until clear of the door
-    if (!a.onScreen) continue;
+    if (!a.onScreen) { a.placeTag(0, true); continue; } // off-screen: no tag (it would only peek in at the edge and collide); the pip stays off-screen with the agent
     tagList.push(a); tagBoxes.push(a.tagBox());
   }
   const n = tagList.length;
   for (const a of tagList) a.alertBoxes(tagBoxes); // fixed obstacles, placed first
+  for (const o of obstacles) tagBoxes.push(o);
   hidden.length = 0;
   hidden.length = tagBoxes.length; hidden.fill(false);
   const dy = stackLabels(tagBoxes, tagList[0]?.floorPx() ?? undefined, hidden);

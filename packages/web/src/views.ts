@@ -4,7 +4,7 @@ import { office } from "./api.ts";
 import { btn, el, renderIf } from "./dom.ts";
 import { MIN_SPAN, fetchHistory, historyRange, pickRange, panView, rangeStats, waterfall, zoomView, type View as Span } from "./history.ts";
 import { roleColor } from "./theme.ts";
-import { look, outcomeLook, permLine, statusKey, statusWord } from "./triage.ts";
+import { aggLine, look, outcomeLook, permLine, sessionAgg, statusKey, statusWord } from "./triage.ts";
 import { replayRange, toggleReplay } from "./modes.ts";
 import { store } from "./dom.ts";
 import { ignoreKey } from "./camera.ts";
@@ -63,19 +63,19 @@ function renderWall0(box: HTMLElement) {
   if (!e) return;
   const acts = office.actors();
   const tiles = office.sessions().map((s) => {
-    const mine = acts.filter((a) => a.session === s.id);
-    const state = mine.some((a) => a.status === "blocked") ? "blocked" : s.waiting ? statusKey("waiting", e.state.sessions[s.id])
-      : mine.some((a) => a.status === "working" || a.status === "thinking") ? "working" : "idle";
-    const errors = e.state.sessions[s.id]?.errors ?? 0;
-    const perm = permLine(e.state.sessions[s.id]?.permWait, now, fmtDur);
-    return { s, state, age: fmtAge(now - s.startedAt), tok: fmtTokens(s.usage), errors, perm };
+    const ss = e.state.sessions[s.id];
+    const agg = sessionAgg(acts.filter((a) => a.session === s.id).map((a) => statusKey(a.lead && s.waiting && a.status !== "blocked" ? "waiting" : a.status, ss)));
+    const state = s.waiting && !agg.agents ? statusKey("waiting", ss) : agg.worst;
+    const errors = ss?.errors ?? 0;
+    const perm = permLine(ss?.permWait, now, fmtDur);
+    return { s, state, age: fmtAge(now - s.startedAt), tok: fmtTokens(s.usage), errors, perm, line: aggLine(agg) };
   });
-  renderIf(box, JSON.stringify(tiles.map((x) => [x.s.id, x.s.project, x.state, x.age, x.tok, x.errors, x.s.agents, x.perm])), () =>
+  renderIf(box, JSON.stringify(tiles.map((x) => [x.s.id, x.s.project, x.state, x.age, x.tok, x.errors, x.s.agents, x.perm, x.line])), () =>
     tiles.length ? tiles.map((x) => {
       const b = el("button", "tile");
       b.type = "button";
       b.style.setProperty("--st", look(x.state).color);
-      b.append(el("b", "", x.s.project), el("span", "", statusWord(x.state)), el("span", "k", `${x.age} · ${t("agent", { n: x.s.agents })}`),
+      b.append(el("b", "", x.s.project), el("span", "", statusWord(x.state)), el("span", "k", [x.age, t("agent", { n: x.s.agents }), x.line].filter(Boolean).join(" · ")),
         el("span", "k", x.tok || "no tokens yet"), el("span", x.errors ? "er" : "k", `${x.errors} error${x.errors === 1 ? "" : "s"}`));
       if (x.perm) b.append(el("span", "k", x.perm));
       b.addEventListener("click", () => { office.select(x.s.lead); setView(""); });

@@ -7,7 +7,7 @@ import { bySession, burnHot, captionText, burnRate, cdCommand, filterFeed, fmtAg
 import { bindPanelChrome } from "./panel.ts";
 import { backToLive, bindModes, toggleSample } from "./modes.ts";
 import { STATUS, STATUS_ORDER } from "./theme.ts";
-import { clipWords, doneRows, dropOutcome, look, nextStep, outcomeLook, permLine, statusKey, statusWord, topTools, tree } from "./triage.ts";
+import { clipWords, doneRows, dropOutcome, look, nextStep, outcomeLook, permLine, sessionAgg, aggLine, statusKey, statusWord, topTools, tree } from "./triage.ts";
 import * as notify from "./notify.ts";
 import { bindFun, ringsEl } from "./fundom.ts";
 import { bindColonists } from "./colonists.ts";
@@ -279,22 +279,24 @@ function renderSessions(now: number) {
   const st = stateOf();
   const acts = office.actors();
   const list = office.sessions();
-  const rows = list.map((s) => ({ s, last: st?.sessions[s.id]?.lastAt, prompt: st?.sessions[s.id]?.prompt, perm: permLine(signals(s.id)?.permWait, now, fmtDur), u: urgency(s, acts), rate: rateOf(s.id, now), c: ringCounts(acts, s.id) }))
+  const rows = list.map((s) => ({ s, last: st?.sessions[s.id]?.lastAt, prompt: st?.sessions[s.id]?.prompt, perm: permLine(signals(s.id)?.permWait, now, fmtDur), u: urgency(s, acts), rate: rateOf(s.id, now), c: ringCounts(acts, s.id), g: sessionAgg(acts.filter((a) => a.session === s.id).map(keyOf)) }))
     .sort((a, b) => a.u - b.u || a.s.project.localeCompare(b.s.project));
   const tot = sumUsage(list.map((s) => s.usage));
   $("n-sess").textContent = rows.length ? `(${rows.length})` : "";
-  renderIf($("sessions"), JSON.stringify([rows.map((r) => [r.s, r.prompt, r.u, r.perm, r.last ? fmtAge(now - r.last) : "", Math.round(r.rate / 1000), filter.session === r.s.id, r.c]), idleOpen]), () => {
+  renderIf($("sessions"), JSON.stringify([rows.map((r) => [r.s, r.prompt, r.u, r.perm, r.last ? fmtAge(now - r.last) : "", Math.round(r.rate / 1000), filter.session === r.s.id, r.c, r.g]), idleOpen]), () => {
     if (!rows.length) return [el("div", "k pad", offline() ? "Offline: waiting for the daemon (see the banner at the top of the panel)." : "No sessions yet. Start Claude Code with the plugin.")];
-    const one = ({ s, last, prompt, perm, rate, c }: (typeof rows)[number]) => {
+    const one = ({ s, last, prompt, perm, rate, c, g }: (typeof rows)[number]) => {
       const d = el("div", c.total ? "sess hasr" : "sess");
       accent(d, s.project);
       if (c.total) d.append(ringsEl(c));
       const h = btn(s.project, "Scope the panel to this session (click again to clear) and select its lead", () => { setFilter("session", filter.session === s.id ? "" : s.id); if (filter.session) pick(s.lead); }, "sname");
       h.setAttribute("aria-pressed", String(filter.session === s.id));
       d.append(h);
+      const alert = g.worst !== "working" && g.worst !== "idle";
+      if (alert) d.append(" ", chip(g.worst)); // G1: the session's worst state, glyph + word
       if (prompt) { const p = el("div", "pr", prompt); p.title = prompt; d.append(p); }
       const quiet = last ? (now - last < 60_000 ? "active now" : `quiet ${fmtAge(now - last)}`) : "";
-      d.append(el("div", "k", [`${s.agents} agent${s.agents === 1 ? "" : "s"}`, s.branch ? `branch ${s.branch}` : "", quiet].filter(Boolean).join(" · ")));
+      d.append(el("div", "k", [`${s.agents} agent${s.agents === 1 ? "" : "s"}`, aggLine(g), s.branch ? `branch ${s.branch}` : "", quiet].filter(Boolean).join(" · ")));
       if (perm) d.append(el("div", "k", perm));
       if (s.usage) {
         const u = el("div", "k", fmtTokens(s.usage));
@@ -303,7 +305,7 @@ function renderSessions(now: number) {
       }
       if (s.recovered) { const b = el("span", "badge", "recovered"); b.title = "Joined mid-stream after a daemon restart; earlier history is unknown."; d.append(b); }
       if (s.gaps) { const b = el("span", "badge", `${s.gaps} gap${s.gaps === 1 ? "" : "s"}`); b.title = `${s.gaps} hook event${s.gaps === 1 ? " was" : "s were"} never received (sequence numbers skipped), so the picture may miss steps.`; d.append(b); }
-      if (s.waiting) d.append(el("span", "badge warn", "waiting"));
+      if (s.waiting && !alert) d.append(el("span", "badge warn", "waiting"));
       if (s.cwd) {
         const p = el("div", "cwd");
         p.append(el("span", "k", s.cwd), (() => { const b = copyBtn("copy cd", cdCommand(s.cwd), "Copy a shell cd command for this folder"); b.setAttribute("aria-label", `Copy cd command for ${s.project}`); return b; })());
