@@ -24,14 +24,14 @@ test("weather: rain on clustered errors, sun on clean done, cloud otherwise", ()
   assert.equal(a[0], 90);
 });
 
-test("delights: cat needs a free seat and is not doubled; rainbow does not stack; confetti always", () => {
+test("delights: cat needs a free seat and is not doubled; disco does not stack; confetti always", () => {
   const now = 5000;
   assert.equal(planDelight("cat-on-couch", now, [], -1), null);
   const cat = planDelight("cat-on-couch", now, [], 1)!;
   assert.deepEqual([cat.seat, cat.until], [1, now + 40_000]);
   assert.equal(planDelight("cat-on-couch", now, [cat], 0), null);
-  const rb = planDelight("rainbow", now, [])!;
-  assert.equal(planDelight("rainbow", now + 1000, [rb]), null);
-  assert.ok(planDelight("rainbow", now + 21_000, [rb]));
+  const rb = planDelight("disco-mini", now, [])!;
+  assert.equal(planDelight("disco-mini", now + 1000, [rb]), null);
+  assert.ok(planDelight("disco-mini", now + 7_000, [rb]));
   assert.ok(planDelight("confetti-gold", now, [rb, cat, rb]));
 });

@@ -51,7 +51,7 @@ export function rarity(seed: string): number {
   for (let i = 0; i < seed.length; i++) h = Math.imul(h ^ seed.charCodeAt(i), 16777619);
   return (h >>> 0) / 4294967296;
 }
-const DELIGHTS: [string, string][] = [["confetti-gold", "Golden confetti!"], ["cat-on-couch", "A cat wandered onto the couch."], ["rainbow", "A rainbow appears."], ["disco-mini", "Mini disco break!"]];
+const DELIGHTS: [string, string][] = [["confetti-gold", "Golden confetti!"], ["cat-on-couch", "A cat wandered onto the couch."], ["disco-mini", "Mini disco break!"]];
 export const DELIGHT_RARITY = 0.04;
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);

@@ -38,8 +38,8 @@ export function pushSignal(a: number[], t: number, max = 48) {
 }
 
 // ---- rare delights -------------------------------------------------------------------------------
-export type DelightKind = "confetti-gold" | "cat-on-couch" | "rainbow" | "disco-mini";
-export const DELIGHT_MS: Record<DelightKind, number> = { "confetti-gold": 1600, "cat-on-couch": 40_000, rainbow: 20_000, "disco-mini": 6000 };
+export type DelightKind = "confetti-gold" | "cat-on-couch" | "disco-mini"; // the rainbow wall wash was removed (owner, final review: no physical source)
+export const DELIGHT_MS: Record<DelightKind, number> = { "confetti-gold": 1600, "cat-on-couch": 40_000, "disco-mini": 6000 };
 export type Delight = { kind: DelightKind; until: number; seat: number };
 export const isDelight = (k: unknown): k is DelightKind => typeof k === "string" && Object.hasOwn(DELIGHT_MS, k);
 /**

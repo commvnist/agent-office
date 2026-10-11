@@ -1,5 +1,5 @@
 // Pixi side of the fun layer: pooled floating combo numbers.
-// Weather, rainbow and cat live in scene.ts (they need the window geometry). Pure rules: flair.ts.
+// Weather and cat live in scene.ts (they need the window geometry). Pure rules: flair.ts.
 import { Container, Rectangle, Sprite, Texture } from "pixi.js";
 import { Grid, bake } from "./pixel.ts";
 import { GLYPHS, labelGlyphs, labelWidth } from "./flair.ts";

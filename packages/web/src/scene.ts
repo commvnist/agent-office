@@ -67,7 +67,7 @@ const lightTex = (kind: string) => smooth(bake(32, 26, (c) => {
 }));
 const lampTex = () => smooth(bake(14, 14, (c) => radial(c, 7, 7, 7, 7, "255,216,74", 0.5)));
 // weather art (baked once, shared across scenes)
-let wxTex: { cloud: Texture; sun: Texture; rainbow: Texture } | null = null;
+let wxTex: { cloud: Texture; sun: Texture } | null = null;
 const wxTextures = () => (wxTex ??= {
   cloud: (() => {
     const g = new Grid(12, 5);
@@ -79,11 +79,6 @@ const wxTextures = () => (wxTex ??= {
     g.map(0, 0, ["..###..", ".#####.", "#######", "#######", "#######", ".#####.", "..###.."], { "#": "#ffffff" });
     return g.texture();
   })(),
-  rainbow: smooth(bake(48, 14, (c) => {
-    ["#ff5a5a", "#ffa94a", "#ffe14a", "#5be37d", "#4aa3ff", "#a56bff"].forEach((col, i) => {
-      c.strokeStyle = col; c.lineWidth = 1.6; c.beginPath(); c.arc(24, 14, 22 - i * 1.6, Math.PI, 0); c.stroke();
-    });
-  })),
 });
 const DISCO = [0xffa6ff, 0xa6ffff, 0xffffa6];
 type WxWin = { x: number; cloud: Sprite; sun: Sprite; drops: Sprite[]; flash: Sprite };
@@ -155,9 +150,6 @@ export class Scene {
   private dark = false;
   private flashUntil = 0;
   private shakeUntil = 0;
-  private rainbowS: Sprite | null = null;
-  private rainbowAt = 0;
-  private rainbowUntil = 0;
   private floorS: Sprite | null = null;
   private discoUntil = 0;
   private discoOn = false;
@@ -817,8 +809,6 @@ export class Scene {
       const drops = [0, 1, 2].map(() => { const d = mk(whiteTex()); d.tint = 0x9ad0ff; d.scale.set(1, 3); return d; });
       this.wxWins.push({ x: x * T, cloud: mk(t.cloud), sun: mk(t.sun), drops, flash });
     }
-    const rb = this.rainbowS = mk(t.rainbow);
-    rb.position.set(0, 2); rb.width = this.l.cols * T; rb.height = 24;
     this.wx.eventMode = "none";
   }
 
@@ -850,12 +840,6 @@ export class Scene {
     this.flashUntil = now + 70;
     this.shakeUntil = now + 160;
   }
-  /** Rainbow arc over the windows until `until`. */
-  rainbow(now: number, until: number) {
-    if (!burstAllowed()) return;
-    this.rainbowAt = now;
-    this.rainbowUntil = until;
-  }
   /** Floor tint cycles three colours until `until`. */
   disco(until: number) {
     if (burstAllowed()) this.discoUntil = until;
@@ -885,12 +869,6 @@ export class Scene {
     for (const w of this.wxWins) if (w.flash.visible !== flash) w.flash.visible = flash;
     const sh = anim && now < this.shakeUntil ? (Math.floor((this.shakeUntil - now) / 30) % 2 ? 1 : -1) : 0;
     if (this.sky.x !== sh) this.sky.x = this.wx.x = sh;
-    const rb = this.rainbowS;
-    if (rb) {
-      const left = this.rainbowUntil - now, show = anim && left > 0;
-      if (rb.visible !== show) rb.visible = show;
-      if (show) rb.alpha = 0.55 * Math.max(0, Math.min(1, (now - this.rainbowAt) / 1000, left / 1000));
-    }
     const disco = anim && now < this.discoUntil;
     if (disco && this.floorS) this.floorS.tint = DISCO[Math.floor(now / 400) % 3];
     else if (this.discoOn && this.floorS) this.floorS.tint = 0xffffff;

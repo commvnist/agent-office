@@ -914,7 +914,6 @@ function showDelight(d: Delight, now: number, a?: Actor) {
     const k = fxk("milestone", "confetti");
     if (k) burst(p.x, p.y - 16, scaled(30, k), [GOLD, 0xffd84a, 0xfff1b0, 0xffc24a], 55, 70);
   } else if (d.kind === "cat-on-couch") scene.setCat(scene.couchSpots()[d.seat] ?? null, d.until);
-  else if (d.kind === "rainbow") scene.rainbow(now, d.until);
   else scene.disco(d.until);
 }
 /** "x,y" of the couch seat the cat occupies, or "" . */

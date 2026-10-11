@@ -573,3 +573,12 @@ Phase 0 re-check on the owner's live office (one page kept open across a real su
 | History default | The History view opens on "Since your last visit" (Phase 2 screenshots). |
 
 Not observable here: a real GPU, a physical phone, a real tool-permission prompt and an `idle_prompt` notification (none occurred in the owner's sessions; covered by adapter and reducer tests with the documented payloads), and the Agent tool's result shape.
+
+### Owner decisions (asked after the final review)
+
+| Question | Decision |
+|---|---|
+| Private by default | No: text stays shown by default; the chip explains what is shown and stored, Private is one click. |
+| The rainbow wall wash | Removed (no physical source). Old stored delight events of that kind are ignored. |
+| Status colours (gave-up red, your-turn cyan) | Kept as they are; glyphs and ring shapes separate them from lights. |
+| Chime on by default (A12), OBS overlay opacity (H6) | Not added (no preference); both stay as recorded above. |

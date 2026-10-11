@@ -100,7 +100,7 @@ test("delights are seeded, rare, done-only", () => {
   for (let i = 0; i < 400; i++) {
     const r = stepFun(base(p), p, st([], [se()], [rep(1, "a", { stoppedAt: i })]), 2000);
     const d = r.out.filter((e) => e.kind === "delight");
-    if (d.length) { hits++; assert.ok(d[0].rare && /^(Golden|A cat|A rainbow|Mini)/.test(d[0].text)); }
+    if (d.length) { hits++; assert.ok(d[0].rare && /^(Golden|A cat|Mini)/.test(d[0].text)); }
   }
   assert.ok(hits > 0 && hits < 40, String(hits));
   const blocked = stepFun(base(p), p, st([], [se()], [rep(1, "a", { outcome: "blocked", stoppedAt: 1 })]), 2000);
