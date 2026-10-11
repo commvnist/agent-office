@@ -26,7 +26,7 @@ export function sceneGeometry(l: Layout) {
   }
   // standing desks get a floor mat under them (desk tile + fixed inset)
   for (const f of feet) if (f.id.startsWith("desk:d") && podStyle(Math.floor(Number(f.id.slice(6)) / 4)) === "standing") mats.push({ x: f.x * T + 1, y: f.y * T + 5, w: 14, h: 11 });
-  // cleaning-bot rails: one per pod row, on the aisle's upper edge between the aprons and the conduit (never on it); the dock is the first rail's park pose
+  // cleaning-bot rails: one per pod row, on the aisle's upper edge between the aprons and the conduit (never on it); no dock: the bot never parks, and a dark block with a lamp read as a second, switched-off bot
   const byRow = new Map<number, { x0: number; x1: number; y: number }>();
   for (const a of aprons) {
     const y = a.y + a.h + 1, r = byRow.get(y) ?? { x0: Infinity, x1: -Infinity, y };
@@ -34,7 +34,6 @@ export function sceneGeometry(l: Layout) {
     byRow.set(y, r);
   }
   const rails = [...byRow.values()].sort((a, b) => a.y - b.y).map((r) => ({ x0: r.x0 + 5, x1: r.x1 - 5, y: r.y })); // bot is 10 wide, centred on x
-  const dock: Rect | null = rails[0] ? { x: rails[0].x0 - 5, y: rails[0].y - 2, w: 10, h: 5 } : null; // the bot's 5 body rows
   const racks = feet.filter((f) => f.kind === "rack").sort((a, b) => a.x - b.x).map((f) => ({ id: f.id, ...rectOf(f) }));
   const bank = racks.map((r, i) => ({ x: racks[0].x + BANK_INSET + CAB_W * i, y: r.y, w: CAB_W, h: r.h }));
   // lounge rug: the couch set's bounding box plus a 4 px margin either side, framed top/bottom around the table and couch art, inside rug:lounge
@@ -43,7 +42,7 @@ export function sceneGeometry(l: Layout) {
   const lounge: Rect = { x: sx - 4, y: sy + 1, w: ex - sx + 8, h: ey - sy + 3 };
   const junctions = feet.filter((f) => f.kind === "junction").map((f) => ({ id: f.id, pod: Number(f.id.split(":")[1]), cx: f.x * T + 8, cy: f.y * T + 8 }));
   return {
-    feet, lines: ls, foot, line, rect, windows, aprons, mats, rails, dock, racks, bank, lounge, junctions,
+    feet, lines: ls, foot, line, rect, windows, aprons, mats, rails, racks, bank, lounge, junctions,
     conduits: ls.filter((x) => x.kind === "conduit"), lights: lights(l),
     sconces: feet.filter((f) => f.kind === "sconce").map((f) => ({ id: f.id, ...rectOf(f) })),
     signs: { ops: rectOf(foot.get("plate:ops")!), agent: rectOf(foot.get("plate:agent")!) },

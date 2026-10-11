@@ -20,9 +20,9 @@ one rule set in `packages/web/src/snap.ts`. The goal: nothing looks misaligned, 
 | `checkLayout(layout)` | violations, `[]` when consistent | `geometry.test.ts`, `selfCheck` |
 
 `packages/web/src/geometry.ts` `sceneGeometry(layout)` is the only bridge: it returns the registry plus pieces derived from it
-(aprons, standing mats, bot rails, charging dock, server racks and the inset `bank` cabinets, the `lounge` rug rect sized to the couch set, junction centres, sconces, signs, window columns, clock/gauge centres).
+(aprons, standing mats, bot rails, server racks and the inset `bank` cabinets, the `lounge` rug rect sized to the couch set, junction centres, sconces, signs, window columns, clock/gauge centres).
 `scene.ts` draws only from that object (`this.geo`): furniture via `geo.rect(id)`, floor print via `geo.conduits`/`geo.rugs`/
-`geo.mats`/`geo.junctions`, light pools only from `geo.lights`, the bot's path via `geo.rails` (the aisle's upper edge, never on the conduit centre line) and the dock via `geo.dock`. No tile math in `scene.ts`.
+`geo.mats`/`geo.junctions`, light pools only from `geo.lights`, the bot's path via `geo.rails` (the aisle's upper edge, never on the conduit centre line). No tile math in `scene.ts`.
 
 ### Exceptions (drawn without a registry id), and why
 
@@ -84,8 +84,7 @@ Growing the office only adds: ids not in `NOT_STABLE` never move (core test).
 
 - Small / medium / large office, day and night: no console warning from `selfCheck`.
 - Zoom a screenshot with nearest-neighbour: the trunk leaves the bank's bottom edge, every row run ends in a junction box centred
-  under its pod, nothing dead-ends or floats; sconces hang on wall tiles, lamps stand on floor tiles; the bot dock is under the
-  first apron's left edge and the bot never overlaps a conduit.
+  under its pod, nothing dead-ends or floats; sconces hang on wall tiles, lamps stand on floor tiles; the bot never overlaps a conduit.
 - Lead plaques (`name` / `> first +n`) do not overlap each other or their desk; phone 390x800 shows the toggle in the drawer's top row.
 - Presenter: the room keeps an 8 px margin; noon floor is visibly lighter than midnight.
 

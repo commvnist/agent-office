@@ -20,14 +20,13 @@ test("every desk total x lobby size: consistent, and the scene geometry is exact
     assert.equal(g.aprons.length, Math.floor(l.props.length / 4));
     g.aprons.forEach((a, p) => assert.deepEqual([a.x, a.y], [g.line.get(`apron:${p}`)!.pts[0].x, g.line.get(`apron:${p}`)!.pts[0].y]));
     for (const m of g.mats) assert.ok(g.feet.some((f) => f.kind === "desk" && f.x * T + 1 === m.x && f.y * T + 5 === m.y), `mat ${m.x},${m.y} sits on a desk`);
-    // bot rails run on the aisle's upper edge under a row's aprons, clear of the conduit centre line; the dock is the first rail's park pose
+    // bot rails run on the aisle's upper edge under a row's aprons, clear of the conduit centre line
     for (const r of g.rails) {
       const row = g.aprons.filter((a) => a.y + a.h + 1 === r.y);
       assert.ok(row.length > 0 && r.x0 === Math.min(...row.map((a) => a.x)) + 5 && r.x1 === Math.max(...row.map((a) => a.x + a.w)) - 5, "rail under aprons");
       const rowC = row[0].y + row[0].h - 2 + 8; // conduit centre line of this aisle
       assert.ok(r.y + 3 < rowC - 1, `bot sprite (to ${r.y + 3}) stays above the conduit (lit edge at ${rowC - 1})`);
     }
-    assert.deepEqual(g.dock, { x: g.rails[0].x0 - 5, y: g.rails[0].y - 2, w: 10, h: 5 });
     // conduits: every row run lies on its aisle centre line; each junction sits on the end of a run (centre pixel) and the last pod's junction ends its row
     assert.ok(g.conduits.length > 0 && g.conduits.every((c) => c.kind === "conduit"));
     for (const j of g.junctions) assert.ok(g.conduits.some((c) => c.id.startsWith("conduit:row:") && c.pts[1].x === j.cx && c.pts[1].y === j.cy), `junction ${j.id} on a conduit end`);

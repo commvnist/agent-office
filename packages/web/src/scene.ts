@@ -291,9 +291,6 @@ export class Scene {
     const seg = g.conduits.flatMap((ln) => ln.pts.slice(1).map((b, i) => { const a = ln.pts[i]; return { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y) - oy, w: Math.abs(b.x - a.x) + 1, h: Math.abs(b.y - a.y) + 1 }; }));
     c.fillStyle = rgba(D.lit, 0.85); for (const k of seg) k.w === 1 ? c.fillRect(k.x - 1, k.y, 1, k.h) : c.fillRect(k.x, k.y - 1, k.w, 1);
     c.fillStyle = rgba(E[0], 0.95); for (const k of seg) k.w === 1 ? c.fillRect(k.x, k.y, 2, k.h) : c.fillRect(k.x, k.y, k.w, 2);
-    // charging dock where the cleaning bot parks (start of its first rail)
-    const d = g.dock;
-    if (d) { c.fillStyle = rgba(E[0], 0.9); c.fillRect(d.x, d.y - oy, d.w, d.h); c.fillStyle = KEY.cyan; c.fillRect(d.x + 1, d.y + 1 - oy, 2, 1); }
   }
 
   /** A helper reported and left its desk: leave its result there as a filed card (critique R7, world memory). */
