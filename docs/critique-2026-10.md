@@ -569,7 +569,7 @@ Phase 0 re-check on the owner's live office (one page kept open across a real su
 | Outcomes and wall ledger | When it handed back, the board's top line became "✓ agent-office: desk card probe …" and Recently done showed its report text as done. |
 | Desk cards | After it left, its empty desk showed the filed card in the done colour and a dark screen. A page opened after the run shows no card by design (cards are filed by the page that watched the helper). |
 | Mid-turn spend | Live session usage rose between hook events within one turn (about 1.1M output tokens, matching a full transcript read). |
-| Per-client level of detail | `GET /state?lod=summary` on the live daemon returned no agents and no log, plus `crew` counts (1 agent, 1 working). |
+| Per-client level of detail | `GET /state?lod=summary` on the live daemon returned no agents and no log, plus `crew` counts (1 agent, 1 working). A daemon test connects a summary client and a full client at once and checks that each receives its own view (daemon.test.ts, "per-client level of detail"). |
 | History default | The History view opens on "Since your last visit" (Phase 2 screenshots). |
 
 Final build (1b02bb5): the full matrix re-run once more (3, 12, 45 and 100 agents; day and night; desktop and phone; 16 shots, 0 page errors) and inspected: the gave-up, permission and your-turn states read at every scale, crews that need you carry state-coloured badges, the pill keeps its count, and nothing covers an alert.

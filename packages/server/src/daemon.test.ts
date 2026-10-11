@@ -285,3 +285,16 @@ test("stream: full envelope on connect, then patches; summary level of detail; /
   const priv = JSON.parse((await call(d.port, "/history?private=1", { headers: tk })).body);
   assert.ok(!JSON.stringify(priv).includes("/w/proj") && !JSON.stringify(priv).includes('"ls"'));
 });
+
+test("stream: per-client level of detail: two clients connected at once each get their own view", async () => {
+  const d = await boot();
+  await post(d, { hook_event_name: "SessionStart", session_id: "s1", cwd: "/w/proj" });
+  let ready = 0; // send once both streams have their snapshot
+  const send = async () => { if (++ready === 2) await post(d, { hook_event_name: "SubagentStart", session_id: "s1", agent_id: "a1", agent_type: "qa-engineer" }); };
+  const [sum, full] = await Promise.all([frames(d, "/stream?lod=summary", 2, send), frames(d, "/stream", 2, send)]);
+  assert.deepEqual([sum[0].data.state.agents, sum[0].data.state.log], [{}, []], "summary client: no agents, no log");
+  const sumAfter = sum[1].data; // a patch on the summary stream
+  assert.ok(JSON.stringify(sumAfter).includes('"agents":1'), "summary client sees the crew count rise");
+  assert.ok(!JSON.stringify(sumAfter).includes("qa-engineer"), "summary client never receives the agent itself");
+  assert.ok(JSON.stringify(full[1].data).includes('"a1"'), "full client receives the agent");
+});
