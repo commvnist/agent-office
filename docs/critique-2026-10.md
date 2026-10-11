@@ -486,3 +486,64 @@ Not observable from here: a real tool-permission prompt (this session runs witho
 | L4 skyline | Done | A dim skyline with lit windows at night and one magenta neon district. |
 | L5 signature props | Done | Magenta neon wall signs, and a holo-map table pair beside the lead desks (registry-placed, a cool light pool). In review the map moved from a hovering projection onto the table glass: a floating projection read as debris. |
 | Checks | Pass | Perf gate frame p95 13.7 ms, update p95 7.4 ms, 2649 objects. |
+
+### Phase 5: final review
+
+Five visual critics (pixel art, lighting and colour, information hierarchy, text and layout, scale and states) and five personas (solo developer, tech lead with many sessions, platform security engineer, streamer, a user with deuteranomaly and low vision) reviewed the finished build from a full screenshot set. Fixed, where the finding held up:
+
+| Finding (reviewers) | Fix |
+|---|---|
+| Highlight cards cover the stage and repeat the panel (8 of 10) | With the panel open on desktop no card is shown (NEEDS YOU and Recently done already list it; the ticker still says it); on a phone only a helper that gave up earns one card. |
+| Header pill truncated with no count or project (5) | Count first when several wait ("! 3 need you · billing-service"), name first for one; it shrinks without pushing the toolbar off the header. |
+| Alert agents stacked on one spot (3) | A lead that waits on you returns to its desk and no longer walks over to its blocked helper, so two alert rings never stack. |
+| Badges: healthy as loud as alerts, "0/12 working", ambiguous "+4" (4) | Alert badges get a 2 px border in the state colour, healthy ones a quiet session edge; "N idle" when none work; the overflow reads "+4 more" on the pip row. |
+| Session and pod hues read as status (maroon, green, amber) (3) | Session and project hues come from one mapper limited to 64-129 and 218-315 degrees (25 degrees from every status hue, clear of the magenta neon), tested; pod tint lowered so shirts read over it. |
+| Chip strip hides alerts behind "+N"; glyphs tiny (4) | Everyone who needs you sorts first; the state glyph badge is larger with a ring of background. |
+| Phone Fit all clipped by the strip (3) | It rises above the meter strip when the ticker shows. |
+| Privacy chip unclear (2) | Its tooltip says what is shown, that text is stored only on this machine and for how many days, and what privacy mode changes. Making Private the default is the owner's call and was not changed. |
+| Ended tile red for a mixed result; "✓ 1 ~ 0 x 1" cryptic; feed time glued to the name | Red only when nothing got done; counts are labelled ("✓ 1 done"); the timestamp has a gap. |
+
+Judged and not changed: night furniture (measured on the screenshot: floor 7.5%, desk top lip 32%, body 9.6%; the top lip outlines each desk as the value key intends, and night is the hero state); pod plaques on every pod (owner decision: plaques on hover; collapsed crews have a badge); the sprite-to-desk scale (the critic flagged it as a matter of taste); the "rainbow" delight that washes the wall after a clean finish (an effect with no physical source, like the ones the owner had removed; removing a feature is the owner's call, so it is listed for them).
+
+Checks after the fixes: typecheck, 316 tests, compliance, build; perf soak (30 s, 100 agents, 4x throttle) frame p95 14.1 ms, update p95 7.6 ms, 2652 objects, daemon about 955 events/s; all CI jobs green.
+
+### Verdicts for the remaining items
+
+| Item | Verdict | Why |
+|---|---|---|
+| T1 | Done | The toolbar is Office / Sessions / History, Display and Export menus, settings and help (B1, X1-X8). |
+| T2 | Done | One STATUS map with colour, glyph and word on every surface (V3, A1, A2). |
+| T3 | Done | One header pill; NEEDS YOU in the same status colours; cards no longer repeat the open panel (Phase 5). |
+| T4 | Done | The triage card's state word, reason and "next" line ("Approve or deny it in the search-api terminal"). |
+| T5 | Done | J2 and J1: "idle, last event 3m ago", "no token data yet", real spend. |
+| T6 | Skipped | Fit all must show the whole room, so a room whose aspect differs from the window leaves margins; filling them would crop desks. |
+| T8 | Done | The "text shown/hidden" chip, Private and stream-safe (I1-I3), with a clear tooltip (Phase 5). |
+| A5 | Done | A blocked helper keeps a red 6-arc ring, an x flag, a glitch and its own bubble; a waiting lead raises a hand (F2). |
+| A11 | Done | Silence past the Stuck threshold shows "idle Nm" on the tag and a "no activity" row in NEEDS YOU, counted in the pill. |
+| A12 | Skipped | Sound and desktop notifications stay opt-in: turning them on by default changes behaviour the owner relies on, and the browser asks for permission only on a user action. |
+| D3 | Verified | Seated leads share one baseline; only a walking lead's tag moves with it. |
+| D4 | Verified | Upper-row tags sit above the head; the selection reticle marks the selected figure itself. |
+| D5 | Verified | Two deliberate registers per the style guide: the pixel sign font for signage and the wordmark, mono for data. |
+| D6 | Done | E8: one sign plate style; the signs are magenta neon (L5). |
+| D7 | Verified | Scene text keeps a scene-relative size with a 10 px floor, and the Text size setting scales it. |
+| E2 | Done | R2: a darker night key with desk and monitor glow. |
+| E4 | Verified | The spine is the entrance path to the centred door; its chevrons point at the door. |
+| E5 | Done | Phase 5: a quiet pod tint in a hue that is never a status colour. |
+| E6 | Verified | They are the conduit junction boxes; they light only on pods with working agents. |
+| F5 | Skipped | Pod styles (huddle, bench, standing, carrel) are already distinct in shape; a redraw of each style is not justified by the final review, which did not flag them. |
+| F6 | Verified | Empty desks show a dark or dim idle screen and hide their chair. |
+| F7 | Skipped | The round objects are the shared tables of huddle and bench pods (pod styles); no reviewer in the final pass flagged them. |
+| F8 | Done | Leads: portrait look plus padded blazer shoulders (Phase 4). |
+| F9 | Done | R1 pixel markers at art scale; selective outlines (Phase 4). |
+| F10 | Done | Shirts graded 30 degrees from status hues (Phase 4), with a distinctness test. |
+| H6 | Skipped | An overlay background-opacity option is a new option for OBS users; the overlay already renders the office on its own, and no reviewer in the final pass used it. |
+| H7 | Done | The caption uses display names (captionText) and the presenter bar keeps the counts. |
+| J1 | Done | Real spend (V6) and an explicit "no token data yet". |
+| J4 | Done | "handed by: a guess: several or no delegations matched this helper". |
+| L1 | Done | The panel and header share the scene's palette (R2) and pixel wordmark (L2); visible actions were cut in the IA pass. |
+| L3 | Done | The wall board is the outcomes ledger, including gave-up items (V1). |
+| L6 | Verified | Kept: leads at the door, crews at pods. |
+| M1 | Verified | Measured: every panel section starts its text 17 px from the panel edge. |
+| M2 | Done | The chip strip now uses the header's 16 px gutter. |
+| M4 | Done | E8 fixed wall slots. |
+| M5 | Verified | Pod brackets were removed (R5) and the rows share one column grid. |

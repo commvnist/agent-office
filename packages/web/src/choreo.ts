@@ -3,6 +3,7 @@
 import type { Interaction, OfficeState, Task } from "@agent-office/core";
 import type { Alert, Badge } from "./actor.ts";
 import { hash } from "./color.ts";
+import { safeHue } from "./logic.ts";
 import { STATUS_ORDER, type StatusKey } from "./theme.ts";
 
 export const HUDDLE_WINDOW_MS = 4000;
@@ -326,13 +327,11 @@ export const tetherAlpha = (lifeMs: number) => (lifeMs < TICKET_MS ? 1 : Math.ma
 /** Desk load step from tool calls in the last 30s: 0 idle, 1 light, 2 busy, 3 heavy. */
 export const loadLevel = (n: number): 0 | 1 | 2 | 3 => (n <= 0 ? 0 : n <= 2 ? 1 : n <= 5 ? 2 : 3);
 
-/** Per-session identity hue 0..359 that skips red (0-20), gold (40-60) and cyan (170-200): maps onto the 290 degrees left. */
-const HUE_BANDS: [number, number][] = [[20, 40], [60, 170], [200, 360]];
-export function sessionHue(id: string): number {
-  let p = hash(id) % 290;
-  for (const [lo, hi] of HUE_BANDS) { if (p < hi - lo) return lo + p; p -= hi - lo; }
-  return 220;
-}
+/**
+ * Per-session identity hue, at least 25 degrees from every status hue (amber 39, green 154, cyan 193, red 354) and clear of
+ * the magenta neon (~330): a maroon or green pod read as an alert or as "done" (final review). 162 degrees remain.
+ */
+export const sessionHue = (id: string): number => safeHue(hash(id));
 
 /** Client shrink ratchet: built desks only grow at once; a trailing row decays after sitting unused for `holdMs`, one step per hold. */
 export const SHRINK_HOLD_MS = 90_000;

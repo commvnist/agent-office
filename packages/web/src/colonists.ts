@@ -52,7 +52,8 @@ export function bindColonists() {
     // B7: grouped by session (most urgent session first), then by state inside it
     const all = office.actors(), urg = new Map<string, number>();
     for (const a of all) urg.set(a.session, Math.min(urg.get(a.session) ?? 9, RANK[eff(a)] ?? 9));
-    const acts = [...all].sort((a, b) => (urg.get(a.session)! - urg.get(b.session)!) || a.project.localeCompare(b.project) || (RANK[eff(a)] ?? 9) - (RANK[eff(b)] ?? 9) || a.label.localeCompare(b.label));
+    const need = (a: ActorInfo) => (eff(a) === "waiting" || eff(a) === "blocked" ? 0 : 1); // anyone who needs you comes first and is never behind "+N"
+    const acts = [...all].sort((a, b) => need(a) - need(b) || (urg.get(a.session)! - urg.get(b.session)!) || a.project.localeCompare(b.project) || (RANK[eff(a)] ?? 9) - (RANK[eff(b)] ?? 9) || a.label.localeCompare(b.label));
     const show = acts.length >= MIN_AGENTS;
     bar.hidden = !show;
     document.documentElement.style.setProperty("--cb-h", show ? `${bar.offsetHeight || 30}px` : "0px");

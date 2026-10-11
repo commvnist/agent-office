@@ -52,12 +52,12 @@ body:has(.view:not([hidden])) #top{background:var(--bg)}
   .dlg{right:8px}
 }
 /* fun layer (fundom.ts, colonists.ts, palette.ts): quiet, below dialogs (z 6) and above the canvas */
-#colony{position:absolute;inset-inline:0 var(--sw);top:var(--top-h,40px);z-index:3;display:flex;gap:4px;align-items:center;padding:4px 12px;box-sizing:border-box;overflow:hidden;background:color-mix(in srgb,var(--panel) 82%,transparent);border-bottom:1px solid var(--line)}
+#colony{position:absolute;inset-inline:0 var(--sw);top:var(--top-h,40px);z-index:3;display:flex;gap:4px;align-items:center;padding:4px 16px;box-sizing:border-box;overflow:hidden;background:color-mix(in srgb,var(--panel) 82%,transparent);border-bottom:1px solid var(--line)}
 .cb{position:relative;flex:none;display:grid;place-items:center;box-sizing:border-box;width:24px;height:24px;padding:0;border:2px solid var(--ring,var(--line));border-radius:50%;background:var(--panel);cursor:pointer}
 .cb canvas{width:18px;height:18px;image-rendering:pixelated;border-radius:50%}
 .cb.working{--ring:var(--good)} .cb.thinking{--ring:var(--acc)} .cb.waiting{--ring:var(--warn)} .cb.blocked{--ring:var(--bad)} .cb.idle{--ring:var(--line)}
 .cb.queued{--ring:var(--mute);border-style:dashed}
-.cb[data-g]:not([data-g=""])::after{content:attr(data-g);position:absolute;top:-5px;inset-inline-end:-5px;min-width:12px;height:12px;border-radius:6px;background:var(--ring);color:#14121f;font:700 9px/12px ui-monospace,monospace;text-align:center} /* A2: the status glyph, never colour alone */
+.cb[data-g]:not([data-g=""])::after{content:attr(data-g);position:absolute;top:-6px;inset-inline-end:-6px;min-width:15px;height:15px;border-radius:8px;background:var(--ring);color:#14121f;font:800 11px/15px ui-monospace,monospace;text-align:center;box-shadow:0 0 0 1.5px var(--bg)} /* A2: the status glyph, never colour alone */
 .cb[aria-pressed=true]{box-shadow:0 0 0 2px var(--acc)}
 /* hook: session identity on chips (project colour + 2-letter glyph) needs data-session/--pc on .cb in colonists.ts; the DOM only has the status ring and portrait today */
 .cb.more{width:auto;min-width:24px;padding:0 6px;border:1px solid var(--line);border-radius:12px;color:var(--soft);cursor:pointer;font-size:calc(11px * var(--ts,1));white-space:nowrap}
@@ -111,6 +111,7 @@ input[type=number],input[type=text],input:not([type]){box-sizing:border-box;padd
 /* Phone: the open panel is a bottom sheet (45% of the height, grab handle on top); the header and its Hide-panel button stay uncovered
    and the camera fits the stage above the sheet (main.ts sheetPx). #fit is the phone's "fit all / follow" toggle. */
 #fit{position:absolute;inset-inline-start:8px;bottom:36px;z-index:3}
+body.tick #fit{bottom:62px} /* the ticker lifts the meter strip by 26px: stay above both */
 body.overlay #fit,body.presenter #fit,body.kiosk #fit{display:none}
 @media (max-width:800px){
   #side{inset-inline:0;top:auto;bottom:0;width:auto;height:45dvh;border-inline-start:0;border-top:1px solid var(--line);border-radius:12px 12px 0 0;box-shadow:0 -8px 24px #0008}

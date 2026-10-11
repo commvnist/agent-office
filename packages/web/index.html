@@ -39,7 +39,7 @@ if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
   .chip:empty{display:none}
   .grow{flex:1 1 0;min-width:0}
   /* the one NEEDS YOU signal (A3/B6): a pill in the loudest status colour, glyph + word + name; LIVE chip during replay (Z6) */
-  #need{--st:var(--warn);flex:0 1 auto;min-width:18ch;max-width:40ch;min-block-size:24px;border:0;border-radius:12px;padding:0 12px;background:var(--st);color:#14121f;font-weight:700;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
+  #need{--st:var(--warn);flex:0 1 auto;min-width:20ch;max-width:min(44ch,40vw);min-block-size:24px;border:0;border-radius:12px;padding:0 12px;background:var(--st);color:#14121f;font-weight:700;letter-spacing:.04em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
   #need.live-chip{background:none;color:var(--fg);border:1px solid var(--acc)}
   #empty{display:none;position:absolute;inset-inline:0 var(--sw);top:36%;text-align:center;pointer-events:none}
   #empty .card{display:inline-block;max-width:min(420px,86%);box-sizing:border-box;padding:16px 20px;background:var(--panel);border:1px solid var(--line);border-radius:8px;color:var(--soft);line-height:1.6;pointer-events:auto}
@@ -123,7 +123,7 @@ if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
   .it .row{flex:1;text-align:start;background:none;border:0;padding:8px 16px;cursor:pointer;line-height:1.45;min-width:0}
   .it .row:hover{background:var(--raise)}
   .it .row,.r,.rd,.hf{transition:background-color .15s var(--ease)}
-  .it .who{color:var(--acc)} .it .t{color:var(--mute);font-size:calc(11px * var(--ts,1));float:inline-end;font-family:ui-monospace,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
+  .it .who{color:var(--acc)} .it .t{color:var(--mute);font-size:calc(11px * var(--ts,1));float:inline-end;margin-inline-start:8px;font-family:ui-monospace,Menlo,Consolas,monospace;font-variant-numeric:tabular-nums}
   .it .tx{color:var(--soft);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;margin-top:4px;word-break:break-word}
   .it.open .tx{-webkit-line-clamp:unset;display:block}
   .it .more,.it .mute{align-self:center;margin-inline-end:8px}

@@ -26,7 +26,15 @@ export const usageTotal = (u?: Usage) => (u ? u.input + u.output + u.cacheCreate
 /** Elapsed time for a row: "42s", then the coarse `fmtAge` form. */
 export const fmtDur = (ms: number) => (ms < 60_000 ? `${Math.max(0, Math.floor(ms / 1000))}s` : fmtAge(ms));
 /** Stable hue 0..359 per project name, for a colour accent that survives reloads. */
-export const projectHue = (name: string) => [...name].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7) % 360;
+const HUE_BANDS: [number, number][] = [[64, 129], [218, 315]];
+const HUE_SPAN = HUE_BANDS.reduce((n, [lo, hi]) => n + hi - lo, 0);
+/** Any hash onto an identity hue that is never a status hue or the magenta neon (see choreo.ts sessionHue). */
+export function safeHue(n: number): number {
+  let p = (n >>> 0) % HUE_SPAN;
+  for (const [lo, hi] of HUE_BANDS) { if (p < hi - lo) return lo + p; p -= hi - lo; }
+  return 220;
+}
+export const projectHue = (name: string) => safeHue([...name].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7));
 
 /** Shell-safe `cd` line (single quotes; embedded quotes escaped). */
 export const cdCommand = (cwd: string) => `cd '${cwd.replace(/'/g, `'\\''`)}'`;

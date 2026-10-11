@@ -631,7 +631,8 @@ function exec(a: Action, now: number) {
       if (fxk("routine", "block")) { camera.shake(); scene.lightning(now); }
       f.speak(a.text, "blocked", 6000, "report");
       const lead = a.by ? actors.get(a.by) : undefined;
-      if (lead && lead !== f) { lead.trim(3); lead.queue({ k: "walk", to: nearOf(f) }, { k: "face", toward: f.pos }); }
+      // a lead that waits on you is at its terminal (its desk): it does not walk over and stack its ring on the helper's
+      if (lead && lead !== f && lead.alert !== "waiting") { lead.trim(3); lead.queue({ k: "walk", to: nearOf(f) }, { k: "face", toward: f.pos }); }
       break;
     }
     case "celebrate": {
@@ -844,6 +845,7 @@ function onEnvelope(env: Envelope) {
     const wk = (state.sessions[meta.get(a.id)?.session ?? ""] as { waitKind?: string } | undefined)?.waitKind; // set by the daemon from notification_type
     a.setAlert(al.get(a.id) ?? null, wk === "turn" ? "turn" : "permission");
     if (a.alert !== before) {
+      if (a.lead && a.alert === "waiting" && !r.fresh) { a.steps = []; a.path = []; a.cur = null; } // back to its desk: the one place it waits for you
       gold(a);
       if (a.alert === "blocked" && !r.fresh && !settings.reducedMotion) a.glitch();
     }
@@ -927,7 +929,7 @@ function catSeat(now: number) {
 let collapsed = false;
 const expanded = new Set<string>(); // sessions opened from a badge, an agent or the panel; Escape closes them all
 const sessIdx = new Map<string, number>(); // session id -> 1-based start order ("session N" when text is hidden)
-type SBadge = { c: Container; bg: Graphics; pips: Graphics; name: Text; info: Text; warn: Text; key: string; w: number; h: number };
+type SBadge = { c: Container; bg: Graphics; pips: Graphics; name: Text; info: Text; warn: Text; more: Text; key: string; w: number; h: number };
 const badges = new Map<string, SBadge>();
 const crews = new Map<string, { pod: number; list: Actor[] }>(); // per-frame scratch
 const badgeBoxes: Box[] = [], badgeOf: SBadge[] = [], badgeHide: boolean[] = [];
@@ -939,8 +941,8 @@ function foldCrews() {
 }
 function newBadge(sid: string): SBadge {
   const st = (fill: number | string) => ({ fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: 10, fill, stroke: { color: 0x0e0d16, width: 2 } });
-  const bd: SBadge = { c: new Container(), bg: new Graphics(), pips: new Graphics(), name: new Text({ text: "", style: st(0xffffff) }), info: new Text({ text: "", style: st(0xc8cde0) }), warn: new Text({ text: "", style: st(0xffffff) }), key: "", w: 0, h: 0 };
-  bd.c.addChild(bd.bg, bd.pips, bd.name, bd.info, bd.warn);
+  const bd: SBadge = { c: new Container(), bg: new Graphics(), pips: new Graphics(), name: new Text({ text: "", style: st(0xffffff) }), info: new Text({ text: "", style: st(0xc8cde0) }), warn: new Text({ text: "", style: st(0xffffff) }), more: new Text({ text: "", style: st(0xc8cde0) }), key: "", w: 0, h: 0 };
+  bd.c.addChild(bd.bg, bd.pips, bd.name, bd.info, bd.warn, bd.more);
   bd.c.eventMode = "static";
   bd.c.cursor = "pointer";
   bd.c.on("pointertap", () => {
@@ -981,7 +983,7 @@ function drawBadges(ui: View, W: number, H: number) {
       for (const t of [bd.name, bd.info, bd.warn]) t.style.fontSize = fs;
       bd.name.text = `${open ? "\u25be" : "\u25b8"} ${name}`;
       bd.name.style.fill = hsl(sessionHue(sid), 0.7, 0.72);
-      bd.info.text = `${working}/${crew.list.length} working`;
+      bd.info.text = working ? `${working}/${crew.list.length} working` : `${crew.list.length} idle`; // "0/12 working" read as broken
       const more = sts.length - PIPS_SHOWN, bad = worst !== "working" && worst !== "idle";
       // rows: name / counts / a pip per helper (+N) / worst state when it needs you: narrow enough for one pod pitch
       const row = Math.ceil(bd.name.height), shown = Math.min(PIPS_SHOWN, sts.length), py = pad + 2 * row + r + 2;
@@ -989,12 +991,15 @@ function drawBadges(ui: View, W: number, H: number) {
       bd.info.position.set(pad, pad - 1 + row);
       bd.pips.clear();
       for (let i = 0; i < shown; i++) pipShape(bd.pips, pad + r + 1 + i * (2 * r + 4), py, r, sts[i].s, sts[i].wait);
-      bd.warn.text = `${more > 0 ? `+${more}` : ""}${more > 0 && bad ? " " : ""}${bad ? `${STATUS[worst].glyph} ${STATUS[worst].label}` : ""}`;
+      bd.warn.text = bad ? `${STATUS[worst].glyph} ${STATUS[worst].label}` : "";
       bd.warn.style.fill = bad ? STATUS[worst].color : 0xc8cde0;
       bd.warn.position.set(pad, py + r + 2);
-      bd.w = Math.ceil(Math.max(bd.name.width, bd.info.width, shown * (2 * r + 4), bd.warn.text ? bd.warn.width : 0)) + 2 * pad;
+      // overflow on the pip row itself ("+4 more"), never on the state line, where it read as "4 more need permission"
+      bd.more.text = more > 0 ? `+${more} more` : ""; bd.more.style.fontSize = fs; bd.more.position.set(pad + shown * (2 * r + 4) + 2, py - bd.more.height / 2);
+      bd.w = Math.ceil(Math.max(bd.name.width, bd.info.width, shown * (2 * r + 4) + (bd.more.text ? bd.more.width + 2 : 0), bd.warn.text ? bd.warn.width : 0)) + 2 * pad;
       bd.h = Math.ceil(Math.max(py + r + 1, bd.warn.text ? bd.warn.y + bd.warn.height : 0)) + pad;
-      bd.bg.clear().roundRect(0, 0, bd.w, bd.h, 3).fill({ color: 0x0e0d16, alpha: 0.84 }).stroke({ width: 1, color: hsl(sessionHue(sid), 0.65, 0.6), alpha: open ? 0.4 : 0.85 });
+      // the border is the loud part only when the crew needs you (state colour); otherwise a quiet session-hue edge
+      bd.bg.clear().roundRect(0, 0, bd.w, bd.h, 3).fill({ color: 0x0e0d16, alpha: 0.84 }).stroke(bad ? { width: 2, color: STATUS[worst].color, alpha: 1 } : { width: 1, color: hsl(sessionHue(sid), 0.65, 0.6), alpha: open ? 0.3 : 0.5 });
     }
     const cx = ui.ox + (pr.x + pr.w / 2) * ui.sc, bot = expanded.has(sid) ? ui.oy + (pr.y - 1) * ui.sc : ui.oy + (pr.y + pr.h / 2) * ui.sc + bd.h / 2; // centred on the folded pod (the crew's place); once opened it moves above the pod so it never covers the people it revealed
     bd.c.visible = cx >= 0 && cx <= W && bot >= TOP && bot - bd.h <= TOP + H; // off-screen pods keep their badge off-screen too

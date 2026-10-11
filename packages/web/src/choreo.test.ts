@@ -220,7 +220,8 @@ test("tether fades 600ms after the ticket lands; load and hue helpers", () => {
   assert.deepEqual([0, 1, 2, 3, 5, 6, 40].map(loadLevel), [0, 1, 1, 2, 2, 3, 3]);
   for (let i = 0; i < 400; i++) {
     const h = sessionHue(`s${i}`);
-    assert.ok(h >= 0 && h < 360 && !(h < 20) && !(h >= 40 && h < 60) && !(h >= 170 && h < 200), `hue ${h}`);
+    for (const st of [39, 154, 193, 354]) assert.ok(Math.abs(((h - st + 540) % 360) - 180) >= 25, `hue ${h} too close to status ${st}`);
+    assert.ok(!(h > 315 && h < 345), `hue ${h} is the magenta neon`);
     assert.equal(h, sessionHue(`s${i}`));
   }
 });

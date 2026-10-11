@@ -107,7 +107,8 @@ function renderPill(sim: boolean) {
   if (!first) return;
   const k = notify.kindOf(first), why = dropOutcome(first.reason ?? "");
   n.style.setProperty("--st", look(k).color);
-  n.textContent = `${statusWord(k)}: ${first.label}${items.length > 1 ? ` +${items.length - 1}` : ""}`;
+  // a squeezed header cuts the tail: the count leads when several wait (it must survive), else the name; glyph + colour say the state
+  n.textContent = items.length > 1 ? `${look(k).glyph} ${items.length} need you · ${first.label}` : `${look(k).glyph} ${first.label} · ${look(k).label}`;
   n.title = `${first.label}: ${look(k).label}${why ? ` (${why})` : ""}. ${nextStep(k, first.project)} Click to open it; n cycles.`;
 }
 
@@ -629,7 +630,9 @@ function renderStats() {
   const ptxt = hidden ? "◌ text hidden" : "◉ text shown";
   if (pc.textContent !== ptxt) pc.replaceChildren(ptxt.slice(0, 1), el("span", "pl", ptxt.slice(1)));
   pc.setAttribute("aria-pressed", String(pv));
-  pc.title = `${hidden ? "Prompts, commands and paths are hidden" : "Prompts, commands and paths are shown"}${office.privacy ? " (the daemon blanks text)" : ""}. Click to turn Private ${pv ? "off" : "on"} (reloads).`;
+  const cfg = e.config as { textHours?: number; historyHours?: number }, keep = Math.round((cfg.textHours ?? cfg.historyHours ?? 168) / 24);
+  // say what "text" covers and where it lives, not just on/off (final review: the chip read as status, not as a control)
+  pc.title = `${hidden ? "Prompts, commands, paths and reports are hidden" : "Prompts, commands, paths and reports are shown (clipped, with secrets redacted)"}${office.privacy ? ". The daemon is in privacy mode: no text is stored or sent" : `. Text is stored only on this machine (~/.agent-office) for ${keep} day${keep === 1 ? "" : "s"}; nothing leaves it`}. Click to turn Private ${pv ? "off" : "on"} (reloads).`;
   // V2: the office protocol shapes the sessions it shows: say so
   const nudged = (office.source.liveEnvelope()?.config.protocol ?? e.config.protocol ?? "office") === "office";
   $("nudge").hidden = !nudged;

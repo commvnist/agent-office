@@ -322,7 +322,7 @@ export class Scene {
     pod.owner = owner; pod.hue = hue;
     pod.g.clear().roundRect(pod.x, pod.y, pod.w, pod.h, 3);
     // the pad is the project's colour; the 1px trim at 25% alpha is the session's identity hue
-    if (owner) pod.g.fill({ color: hexNum(hsl(projectHue(owner), 0.45, 0.55)), alpha: 0.16 }).stroke({ width: 1, color: hexNum(hsl(hue >= 0 ? hue : projectHue(owner), 0.65, 0.6)), alpha: 0.25, alignment: 1 });
+    if (owner) pod.g.fill({ color: hexNum(hsl(projectHue(owner), 0.4, 0.55)), alpha: 0.09 }) // a quiet tint: shirts always beat the pod behind them.stroke({ width: 1, color: hexNum(hsl(hue >= 0 ? hue : projectHue(owner), 0.65, 0.6)), alpha: 0.25, alignment: 1 });
     else pod.g.fill({ color: DIM, alpha: 0.14 });
     if (!owner) { if (pod.plaque) pod.plaque.visible = false; return; }
     pod.plaque ??= this.ui.addChild(new Text({ text: "", style: { fontFamily: MONO, fontSize: 10, fill: 0xffffff, stroke: { color: 0x0e0d16, width: 3 } } }));

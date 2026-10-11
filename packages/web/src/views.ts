@@ -41,10 +41,11 @@ function renderEnded(box: HTMLElement) {
     const grid = el("div", "wallgrid");
     grid.append(...rows.map(({ x, ago }) => {
       const d = el("div", "tile ended"), o = x.outcomes;
-      d.style.setProperty("--st", (x.errors || o.blocked ? look("blocked") : outcomeLook("")).color);
+      // red only when the session got nothing done; mixed outcomes stay neutral and the counts carry the detail
+      d.style.setProperty("--st", (o.blocked && !o.done && !o.partial ? look("blocked") : o.done ? outcomeLook("done") : outcomeLook("")).color);
       const outs = el("span", "k", `${t("agent", { n: x.agents })} · `);
       outs.append(...([["done", o.done], ["partial", o.partial], ["blocked", o.blocked]] as const).flatMap(([k, n], i) => {
-        const g = el("span", "", `${outcomeLook(k).glyph} ${n}`);
+        const g = el("span", "", `${outcomeLook(k).glyph} ${n} ${outcomeLook(k).label}`); // "✓ 1 done", not a bare "✓ 1" (final review)
         g.title = `${n} ${outcomeLook(k).label}`;
         return i ? [" ", g] : [g];
       }));
