@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { emptyState } from "@agent-office/core";
-import { chimeGate, groupOf, holder, loopOf, podOwners, radar, spendCrossed, statusGroups, viewRect } from "./logic.ts";
-import type { ActorInfo } from "./api.ts";
+import { captionText, chimeGate, groupOf, holder, podOwners, radar, spendCrossed, statusGroups, viewRect, whoLine } from "./logic.ts";
+import type { ActorInfo, FeedItem } from "./api.ts";
 
 test("podOwners: majority project per pod, empty pods are blank", () => {
   const m = new Map([["d0", "a"], ["d1", "b"], ["d2", "b"], ["d4", "a"], ["lobby#0", "z"], ["d99", "q"]]);
@@ -22,20 +22,6 @@ test("freeze holder keeps only the newest and counts the rest", () => {
   assert.equal(h.n, 3);
   assert.equal(h.take(), 4);
   assert.deepEqual([h.n, h.take()], [0, null]);
-});
-
-test("loop episode: one radar key while the loop lasts, new key after it ends", () => {
-  const st = emptyState();
-  st.sessions.s = { id: "s", project: "p", waiting: false, startedAt: 0 } as never;
-  st.agents.a = { id: "a", session: "s", role: "qa", loop: { tool: "Bash", n: 4 } } as never;
-  const ac = [{ id: "a", label: "QA", lead: false, status: "working", project: "p" } as ActorInfo];
-  const keys = () => radar(ac, st, 1000, (_k, f) => f).filter((i) => i.kind === "loop");
-  assert.deepEqual(keys().map((i) => [i.key, i.reason]), [["loop:a", "loop ×4 · Bash"]]);
-  (st.agents.a as { loop?: unknown }).loop = { tool: "Edit", n: 9 };
-  assert.equal(keys()[0].key, "loop:a"); // tool and count change, same episode
-  delete (st.agents.a as { loop?: unknown }).loop;
-  assert.equal(keys().length, 0);
-  assert.equal(loopOf(st, "lead:s"), undefined);
 });
 
 test("status groups: order, bucket, empty groups dropped", () => {
@@ -64,4 +50,13 @@ test("chime gate dedupes keys and rate-limits globally and per kind", () => {
   assert.equal(g("waiting", "c", 1500), true);
   assert.equal(g("blocked", "d", 3000), false); // per-kind limit
   assert.equal(g("blocked", "e", 6000), true);
+});
+
+test("caption wording: plain sentences, report prefixes not repeated, lead notes read as the lead speaking", () => {
+  const f = (o: Partial<FeedItem>): FeedItem => ({ id: 1, t: 0, kind: "report", session: "s", from: "Dev", to: "shop", text: "DONE: added the model", ...o } as FeedItem);
+  assert.equal(whoLine(f({})), "Dev finished");
+  assert.equal(whoLine(f({ outcome: "blocked" })), "Dev is blocked");
+  assert.equal(captionText(f({})), "added the model");
+  assert.equal(captionText(f({ kind: "prompt", text: "DONE is a word" })), "DONE is a word");
+  assert.equal(whoLine(f({ kind: "message", from: "shop", to: "user", text: "Report: DONE: x" })), "shop says");
 });

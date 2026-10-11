@@ -1,5 +1,6 @@
 import { deskPos, MAX_DESKS } from "./layout.ts";
 import { crewName } from "./names.ts";
+import { metaSummary, stripMeta } from "./clean.ts";
 import type { Agent, Interaction, OfficeConfig, OfficeEvent, OfficeState, Seat, Session, Task, Usage } from "./types.ts";
 
 export const SCHEMA_VERSION = 1;
@@ -72,13 +73,14 @@ export function allocate(cfg: OfficeConfig, state: OfficeState, role: string, se
     if (!owner.has(p)) owner.set(p, a.session);
   }
   let best = -1, bestCost = Infinity;
-  // Compact growth: candidates are the occupied pods plus the FIRST empty pod only (a session starts a fresh pod there).
+  // Compact growth: candidates are the occupied pods plus the FIRST empty pod (a session starts a fresh pod there).
   // Never beyond it: the same-role pull used to pick the pod row below a colleague, a desk the office never built.
   // The client builds every desk up to the highest one in use (buildLayout minDesks), so what is chosen here exists.
+  // Every occupied pod stays a candidate wherever it is (a session's own pod may lie beyond a pod that emptied).
   const firstEmpty = podUse.findIndex((n) => n === 0);
-  const limit = firstEmpty < 0 ? MAX_DESKS : Math.min(MAX_DESKS, (firstEmpty + 1) * 4);
-  for (let i = 0; i < limit; i++) {
+  for (let i = 0; i < MAX_DESKS; i++) {
     if (taken.has(i)) continue;
+    if (firstEmpty >= 0 && Math.floor(i / 4) > firstEmpty && podUse[Math.floor(i / 4)] === 0) continue; // never an empty pod past the first
     const pod = Math.floor(i / 4), use = podUse[pod];
     // Tiers dominate every other term: own pod, then a fully empty pod, then someone else's.
     const tier = session !== undefined && owner.get(pod) === session ? 0 : use === 0 ? 1 : 2;
@@ -135,8 +137,6 @@ function promote(cfg: OfficeConfig | undefined, s: OfficeState, t: number): Offi
 }
 
 const WRITE_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
-/** Consecutive identical tool calls (same tool, same whitespace-normalised detail) before an agent is flagged as looping. */
-export const LOOP_MIN = 4;
 const FILES_MAX = 50, TOOLS_MAX = 24, KEY_MAX = 120;
 
 /** Count +1 for `key` in a capped counter map. Untrusted keys: own-property checks only, never inherited names. */
@@ -147,13 +147,6 @@ function bump(rec: Record<string, number> | undefined, key: string, cap: number)
     return bump(Object.fromEntries(Object.entries(r).filter(([k]) => k !== low[0])), key, cap);
   }
   return Object.fromEntries([...Object.entries(r).filter(([k]) => k !== key), [key, (Object.hasOwn(r, key) ? r[key] : 0) + 1]]);
-}
-
-/** Loop bookkeeping for one tool call: O(1) (last key + run length). */
-function loopStep(x: { loopKey?: string; loopN?: number }, tool: string, detail?: string) {
-  const loopKey = `${tool}\0${(detail ?? "").trim().replace(/\s+/g, " ")}`;
-  const loopN = x.loopKey === loopKey ? (x.loopN ?? 0) + 1 : 1;
-  return { loopKey, loopN, loop: loopN >= LOOP_MIN ? { tool, n: loopN } : undefined };
 }
 
 /** Most-edited files, per session (all sessions when `session` is omitted). Pure. */
@@ -234,6 +227,7 @@ export const outcomeOf = (m?: string): Interaction["outcome"] => {
  */
 export function sweep(state: OfficeState, now: number, ttlMs: number, cfg?: OfficeConfig) {
   let s = state;
+  if (!Number.isFinite(now)) return { state: s, removed: { sessions: [] as string[], agents: [] as string[] } }; // a bad clock must not reap everything
   const removed = { sessions: [] as string[], agents: [] as string[] };
   for (const x of Object.values(state.sessions)) {
     if (now - (x.lastAt ?? x.startedAt) <= ttlMs) continue;
@@ -260,7 +254,7 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
   }
   let gaps = sess.gaps ?? 0, lastSeq = sess.lastSeq;
   if (e.seq !== undefined) {
-    if (lastSeq !== undefined && e.seq !== lastSeq + 1) gaps++;
+    if (lastSeq !== undefined && e.seq !== lastSeq + 1 && e.seq !== lastSeq) gaps++; // a retried event (same seq) is not a gap
     lastSeq = e.seq;
   }
   s = { ...s, sessions: { ...s.sessions, [e.session]: { ...sess, lastAt: e.t, seq: (sess.seq ?? 0) + 1, gaps, lastSeq } } };
@@ -294,6 +288,8 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
     }
     case "agent_start": {
       if (s.agents[e.agentId] || Object.keys(s.agents).length >= LIMITS.agents) return s;
+      // an id that already stopped (a stop that arrived first, or a replayed start) must not come back as a ghost holding a desk
+      if (s.track!.seen.includes(`${e.session}|stopped|${e.agentId}`)) return s;
       s = filterPending(s, (j) => (j.t ?? e.t) >= e.t - LIMITS.pendingTtlMs);
       const role = roleFor(cfg, e.agentType);
       const seat = allocate(cfg, s, role, e.session);
@@ -314,6 +310,7 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
     case "agent_stop": {
       const a = s.agents[e.agentId];
       const { [e.agentId]: _, ...agents } = s.agents;
+      s = { ...s, track: { ...s.track!, seen: [...s.track!.seen, `${e.session}|stopped|${e.agentId}`].slice(-LIMITS.track) } };
       let n = promote(cfg, { ...s, agents, queue: s.queue.filter((id) => id !== e.agentId) }, e.t);
       if (a) {
         const outcome = outcomeOf(e.message);
@@ -321,7 +318,7 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
         n = patchTask(n, task, { status: outcome === "blocked" ? "blocked" : "done", endedAt: e.t });
         n = say(n, {
           t: e.t, kind: "report", session: e.session, from: a.id, to: a.parent, text: e.message ?? "",
-          outcome, stoppedAt: e.t, durationMs: a.startedAt === undefined ? undefined : e.t - a.startedAt,
+          outcome, stoppedAt: e.t, durationMs: a.startedAt === undefined ? undefined : Math.max(0, e.t - a.startedAt),
           toolCount: a.toolCount, queueWaitMs: a.queueWaitMs, usage: e.usage,
         });
       }
@@ -330,12 +327,12 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
     case "tool": {
       const a = e.agentId ? s.agents[e.agentId] : undefined;
       const sess = s.sessions[e.session];
-      const agents = a ? { ...s.agents, [a.id]: { ...a, doing: e.tool, detail: e.detail, why: e.why, busyAt: e.t, toolCount: (a.toolCount ?? 0) + 1, ...loopStep(a, e.tool, e.detail) } } : s.agents;
+      const agents = a ? { ...s.agents, [a.id]: { ...a, doing: e.tool, detail: e.detail, why: e.why, busyAt: e.t, toolCount: (a.toolCount ?? 0) + 1 } } : s.agents;
       // No agent id means the lead itself is working.
       const sessions = { ...s.sessions, [sess.id]: {
         ...sess, waiting: false, toolCounts: bump(sess.toolCounts, e.tool.slice(0, KEY_MAX), TOOLS_MAX),
         ...(e.detail && WRITE_TOOLS.has(e.tool) ? { files: bump(sess.files, e.detail.slice(0, KEY_MAX), FILES_MAX) } : {}),
-        ...(a ? {} : { doing: e.tool, detail: e.detail, why: e.why, busyAt: e.t, ...loopStep(sess, e.tool, e.detail) }),
+        ...(a ? {} : { doing: e.tool, detail: e.detail, why: e.why, busyAt: e.t }),
       } };
       const track = { ...s.track! };
       if (e.id) track.starts = lastKeys({ ...track.starts, [`${e.session}|${e.id}`]: e.t }, LIMITS.track);
@@ -366,10 +363,19 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
     }
     case "message":
       return say(s, { t: e.t, kind: "message", session: e.session, from: e.from ?? leadId(e.session), to: e.to, text: e.text });
-    case "prompt":
-      return say(patchSession(s, e.session, { prompt: e.text, waiting: false }), { t: e.t, kind: "prompt", session: e.session, from: "user", to: leadId(e.session), text: e.text });
+    case "prompt": {
+      // Machine-generated "prompts" (background-task notifications, reminders) are not what the user typed: never show
+      // them as "You ->" or keep them as the session prompt; a notification's summary becomes a quiet lead note.
+      const text = stripMeta(e.text);
+      if (!text) {
+        const sum = metaSummary(e.text);
+        const n = patchSession(s, e.session, { waiting: false });
+        return sum ? say(n, { t: e.t, kind: "message", session: e.session, from: leadId(e.session), to: "user", text: sum.slice(0, 140) }) : n;
+      }
+      return say(patchSession(s, e.session, { prompt: text, waiting: false }), { t: e.t, kind: "prompt", session: e.session, from: "user", to: leadId(e.session), text });
+    }
     case "turn_end":
-      return say(patchSession(s, e.session, { doing: undefined, detail: undefined, why: undefined, prompt: undefined, loop: undefined, loopKey: undefined, loopN: undefined, ...(e.usage ? { usage: e.usage } : {}) }), { t: e.t, kind: "done", session: e.session, from: leadId(e.session), to: "user", text: "" });
+      return say(patchSession(s, e.session, { doing: undefined, detail: undefined, why: undefined, prompt: undefined, ...(e.usage ? { usage: e.usage } : {}) }), { t: e.t, kind: "done", session: e.session, from: leadId(e.session), to: "user", text: "" });
     case "waiting":
       return patchSession(s, e.session, { waiting: true, waitingText: e.text });
   }

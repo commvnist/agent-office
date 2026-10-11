@@ -64,8 +64,8 @@ const lastId = (s: OfficeState) => s.log.length ? s.log[s.log.length - 1].id : 0
 export function stepFun(mem: FunMemory, prev: OfficeState | null, next: OfficeState, now: number): { mem: FunMemory; out: FunEvent[] } {
   const m: FunMemory = structuredClone(mem);
   const ents = (s: OfficeState) => [
-    ...Object.values(s.agents).map((a) => ({ key: a.id, session: a.session, name: nameOf(a), tools: a.toolCount ?? 0, errs: a.errors ?? 0, doing: a.doing, loop: a.loop })),
-    ...Object.values(s.sessions).map((x) => ({ key: `lead:${x.id}`, session: x.id, name: "Lead", tools: sum(x.toolCounts), errs: x.errors ?? 0, doing: x.doing, loop: x.loop })),
+    ...Object.values(s.agents).map((a) => ({ key: a.id, session: a.session, name: nameOf(a), tools: a.toolCount ?? 0, errs: a.errors ?? 0, doing: a.doing })),
+    ...Object.values(s.sessions).map((x) => ({ key: `lead:${x.id}`, session: x.id, name: "Lead", tools: sum(x.toolCounts), errs: x.errors ?? 0, doing: x.doing })),
   ];
   const cur = ents(next);
   const newSess = (): FunMemory["sessions"][string] => ({ peak: 0, tools: 0 });
@@ -85,25 +85,24 @@ export function stepFun(mem: FunMemory, prev: OfficeState | null, next: OfficeSt
     out.push({ id, kind, text, t: now, ...x });
     return true;
   };
-  const pv = new Map(ents(prev).map((e) => [e.key, e]));
   const cands: { tpl: string; actor: string; text: string; session?: string }[] = [];
 
-  // Per-entity diff: combo, edits, loops, errors.
+  // Per-entity diff: combo, edits, errors.
   for (const e of cur) {
-    const p = pv.get(e.key);
     const s = (m.agents[e.key] ??= { c: 0, t: 0, e: 0, ed: 0, edT: now });
     const d = e.tools - s.t, de = e.errs - s.e;
     s.t = e.tools; s.e = e.errs;
     const st = (m.sessions[e.session] ??= newSess());
-    if (d > 0) st.tools += d;
+    // A session's toolCounts include every agent's calls, so it alone feeds the session total, and the lead never
+    // gets combos or "on a roll" lines for work its agents did.
+    const isLead = e.key.startsWith("lead:");
+    if (d > 0 && isLead) st.tools += d;
+    if (isLead) continue;
     if (de > 0) s.c = 0; // silent reset, no event
     const before = s.c;
     s.c += Math.max(0, d - Math.max(de, 0));
     const crossed = COMBOS.filter((th) => before < th && s.c >= th);
     for (const th of crossed) push("combo", `${e.key}:${th}:${e.tools}`, `${e.name}: ${th} tool calls in a row, no errors`, { actorId: e.key, session: e.session, tier: (COMBOS.indexOf(th) + 1) as 1 | 2 | 3 });
-    if (e.loop && !p?.loop) {
-      cands.push({ tpl: "stuck", actor: e.key, session: e.session, text: `${e.name} looks stuck: ${e.loop.tool} ×${e.loop.n}` });
-    }
     // shortcut: any tool burst while the current tool is a write counts as edits, so batched steps over-count; track per-call tool names if that matters.
     if (d > 0 && e.doing && WRITE.has(e.doing)) {
       if (now - s.edT > 60_000 || s.ed === 0) { s.ed = 0; s.edT = now; }

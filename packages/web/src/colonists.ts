@@ -2,7 +2,7 @@
 // The portrait is a 12x12 canvas head painted from the same Look the scene uses, cached per look (no pixi texture needed).
 import { office, type ActorInfo } from "./api.ts";
 import { $, el, sync } from "./dom.ts";
-import { loopOf, RANK } from "./logic.ts";
+import { RANK } from "./logic.ts";
 import { lookKey } from "./lru.ts";
 import { lookFor, type Look } from "./sprites.ts";
 
@@ -56,10 +56,10 @@ export function bindColonists() {
       return b;
     });
     nodes.forEach((b, i) => {
-      const a = vis[i], s = eff(a), loop = !!(st && loopOf(st, a.id));
-      const cls = `cb ${s}${loop ? " loop" : ""}`;
+      const a = vis[i], s = eff(a);
+      const cls = `cb ${s}`;
       if (b.className !== cls) b.className = cls;
-      const label = `${a.label}, ${a.lead ? "session lead" : a.role}, ${s}${loop ? ", looping" : ""}${a.task && !priv ? `: ${a.task.slice(0, 60)}` : ""}`;
+      const label = `${a.label}, ${a.lead ? "session lead" : a.role}, ${s}${a.task && !priv ? `: ${a.task.slice(0, 60)}` : ""}`;
       if (b.title !== label) { b.title = label; b.setAttribute("aria-label", label); }
       b.setAttribute("aria-pressed", String(office.selected === a.id));
       const k = `${lookKey(lookFor(a.role, a.id, a.lead))}`;

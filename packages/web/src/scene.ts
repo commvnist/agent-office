@@ -118,6 +118,7 @@ export class Scene {
   private skyHour = -1;
   private pods: Pod[] = [];
   private born = new Map<number, number>(); // pod index -> build-in start; pods added by a growth relayout only
+  private hoverPod = -1; // the claimed pod under the pointer (or the hovered/selected agent's): only its plaque and caption show
   // fun layer: weather sits above the sky inside the window panes; every piece is a pooled baked sprite
   private wx = new Container();
   private wxWins: WxWin[] = [];
@@ -363,6 +364,18 @@ export class Scene {
     for (const p of this.pods) { p.plaque?.destroy(); p.cap?.destroy(); }
   }
 
+  /** Claimed pod containing the world point (art px), or -1. The rect includes the strip above the pod where its plaque sits. */
+  podAt(wx: number, wy: number): number {
+    for (let i = 0; i < this.pods.length; i++) {
+      const p = this.pods[i];
+      if (p.owner && p.owner !== "\0" && wx >= p.x && wx <= p.x + POD_W * T + 8 && wy >= p.y - 12 && wy <= p.y + POD_H * T + 4) return i;
+    }
+    return -1;
+  }
+  /** Pod index of a seat id (-1 for lobby seats and unknown ids). */
+  podOfSeat(seat: string): number { return this.desks.get(seat)?.pod ?? -1; }
+  setHoverPod(i: number) { this.hoverPod = i; }
+
   setSeats(m: Map<string, SeatState>) {
     this.state = m;
     const now = Date.now();
@@ -438,7 +451,7 @@ export class Scene {
     this.pods.forEach((p, i) => {
       const q = p.plaque;
       if (!q) return;
-      q.visible = !!p.owner && sc >= 1.2 && !this.born.has(i);
+      q.visible = !!p.owner && sc >= 1.2 && !this.born.has(i) && i === this.hoverPod; // hover-only: no permanent labels over every pod
       if (!q.visible) { if (p.cap) p.cap.visible = false; return; }
       const key = `${p.owner}|${pfs}|${chars}`;
       if (key !== p.key) {

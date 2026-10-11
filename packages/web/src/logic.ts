@@ -54,7 +54,7 @@ export function coverFit(cw: number, ch: number, w: number, h: number) {
 
 /** Escalation tier by how long it has waited: 0 under 5 min, 1 under 15, 2 beyond. */
 export const tierOf = (ms: number) => (ms >= 900_000 ? 2 : ms >= 300_000 ? 1 : 0);
-export type RadarItem = { key: string; kind: "blocked" | "waiting" | "loop" | "stuck"; id: string; label: string; project: string; since: number; tier: number; reason?: string };
+export type RadarItem = { key: string; kind: "blocked" | "waiting" | "stuck"; id: string; label: string; project: string; since: number; tier: number; reason?: string };
 /**
  * Things that need a human: blocked agents, waiting sessions, sessions mid-turn with no event for `stuckMs`.
  * `since(key, fallback)` returns when the condition was first seen (caller keeps the map).
@@ -71,27 +71,9 @@ export function radar(actors: ActorInfo[], state: OfficeState, now: number, sinc
     // a tool in flight (s.doing) may legitimately be silent for a long time: allow 3x
     else if (s.prompt && s.lastAt && now - s.lastAt > (s.doing ? stuckMs * 3 : stuckMs)) add({ key: `stuck:${s.id}`, kind: "stuck", id, label: s.project, project: s.project, since: s.lastAt });
   }
-  // loop episode = the key `loop:<id>` while the engine reports a loop for that actor: tool/count changes keep the same episode (one alert)
-  for (const a of actors) {
-    const l = loopOf(state, a.id);
-    if (l && !a.lead) add({ key: `loop:${a.id}`, kind: "loop", id: a.id, label: a.label, project: a.project, since: since(`loop:${a.id}`, now), reason: loopText(l) });
-  }
-  for (const s of Object.values(state.sessions)) {
-    const l = loopOf(state, `lead:${s.id}`);
-    if (l) add({ key: `loop:lead:${s.id}`, kind: "loop", id: `lead:${s.id}`, label: s.project, project: s.project, since: since(`loop:lead:${s.id}`, now), reason: loopText(l) });
-  }
-  const rank = { blocked: 0, waiting: 1, loop: 2, stuck: 3 };
+  const rank = { blocked: 0, waiting: 1, stuck: 2 };
   return out.sort((a, b) => rank[a.kind] - rank[b.kind] || a.since - b.since);
 }
-
-export type Loop = { tool: string; n: number };
-/** The engine's loop flag for an actor id (`lead:<session>` is the session). Read defensively: older daemons never send it. */
-export function loopOf(state: OfficeState, id: string): Loop | undefined {
-  const x = id.startsWith("lead:") ? state.sessions[id.slice(5)] : state.agents[id];
-  const l = (x as { loop?: Loop } | undefined)?.loop;
-  return l && typeof l.n === "number" && typeof l.tool === "string" ? l : undefined;
-}
-export const loopText = (l: Loop) => `loop ×${l.n} · ${l.tool}`;
 
 /** Tab title: `(2) waiting: api - Agent Office` (first item that needs you); unchanged when nothing does. */
 export const titleFor = (items: RadarItem[], base = "Agent Office") => {
@@ -145,10 +127,14 @@ export function rosterGroups(rows: RosterRow[], projectOf: (sid: string) => stri
 export const WHO: Record<string, (f: FeedItem) => string> = {
   prompt: (f) => `You → ${f.to}`,
   done: (f) => `${f.from} finished`,
-  report: (f) => `${f.from}${f.outcome === "blocked" ? " BLOCKED" : ""} → ${f.to}`,
+  // plain sentences for a viewer: who did what, not who-to-whom
+  report: (f) => `${f.from} ${f.outcome === "blocked" ? "is blocked" : (f.outcome as string) === "partial" ? "is partly done" : "finished"}`,
   delegate: (f) => `${f.from} → ${f.to}${f.confidence === "guess" ? " (?)" : ""}`,
+  message: (f) => (f.to === "user" ? `${f.from} says` : `${f.from} → ${f.to}`),
   conflict: (f) => `${f.from} ↔ ${f.to} (possible conflict)`,
 };
+/** The caption body: a report's "DONE:/BLOCKED:/PARTIAL:" prefix is already in the headline, so it is dropped here. */
+export const captionText = (f: FeedItem) => (f.kind === "report" ? f.text.replace(/^\s*(?:DONE|BLOCKED|PARTIAL)\b:?\s*/i, "") : f.text);
 export const whoLine = (f: FeedItem) => (WHO[f.kind] ?? ((x) => `${x.from} → ${x.to}`))(f);
 
 /** Canvas aria-label: structure only, never free text. */
@@ -226,7 +212,7 @@ export function spendCrossed(was: Map<string, boolean>, id: string, total: numbe
   return prev === false && above;
 }
 
-export type ChimeKind = "blocked" | "waiting" | "finished" | "loop";
+export type ChimeKind = "blocked" | "waiting" | "finished";
 /**
  * Pure chime scheduler: a key sounds once, at most one chime per GLOBAL_MS, and at most one per kind per KIND_MS.
  * `mark` records an accepted chime; the caller plays only when it returns true.

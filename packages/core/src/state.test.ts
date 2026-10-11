@@ -311,3 +311,34 @@ test("crew names are deterministic per project|role|slot, unique among live agen
   for (let i = 0; i < 60; i++) s = reduce(cfg, s, start(`w${i}`, `s${i % 4}`, i % 2 ? "reviewer" : "general-purpose"));
   assert.equal(new Set(Object.values(s.agents).map((a) => a.seat!.name)).size, 60);
 });
+
+test("a retried event (same forwarder seq) is not reported as a gap", () => {
+  const s = run(
+    { ...sstart, seq: 1 } as OfficeEvent,
+    { type: "turn_end", session: "s1", t: 1, seq: 2 },
+    { type: "turn_end", session: "s1", t: 2, seq: 2 }, // retry
+    { type: "turn_end", session: "s1", t: 3, seq: 3 },
+  );
+  assert.equal(s.sessions.s1.gaps ?? 0, 0);
+});
+
+test("allocator keeps a session in its own pod even when an earlier pod has emptied", () => {
+  const big: OfficeConfig = { roles: {} };
+  const mk = (id: string, session: string): OfficeEvent => ({ type: "agent_start", session, agentId: id, agentType: "general-purpose", t: 0 });
+  let s = emptyState();
+  for (let i = 0; i < 8; i++) s = reduce(big, s, mk(`a${i}`, "s1"));        // s1 fills pods 0 and 1
+  s = reduce(big, s, mk("b0", "s2"));                                        // s2 opens pod 2
+  const own = Number(s.agents.b0.seat!.id.slice(1));
+  for (let i = 4; i < 8; i++) s = reduce(big, s, { type: "agent_stop", session: "s1", agentId: `a${i}`, t: 1 } as OfficeEvent); // pod 1 empties
+  s = reduce(big, s, mk("b1", "s2"));
+  const next = Number(s.agents.b1.seat!.id.slice(1));
+  assert.equal(Math.floor(next / 4), Math.floor(own / 4), "second s2 agent shares s2's pod");
+});
+
+test("a stop that arrives before its start does not leave a ghost agent holding a desk", () => {
+  const s = run(sstart, stop("g"), start("g"));
+  assert.equal(s.agents.g, undefined);
+  const live = run(sstart, start("h"), stop("h"), start("h")); // a replayed start after the stop
+  assert.equal(live.agents.h, undefined);
+  assert.equal(capacityFor(cfg, live).free, capacityFor(cfg, run(sstart)).free, "no desk is held");
+});

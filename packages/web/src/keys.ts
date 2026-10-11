@@ -21,7 +21,7 @@ const SHORTCUTS: [string, string][] = [
   ["u", "Jump to the agent that changed most recently"],
   ["Esc", "Close the top dialog, view or presenter; then clear the selection"],
   ["0, drag, wheel", "Camera reset, pan, zoom"],
-  [".", "Freeze / resume the view (new activity waits; the chip shows how many)"],
+  [".", "Freeze / resume the live view (new activity waits; the chip shows how many). Starting Replay or Sample resumes it: they show their own data"],
   ["Ctrl/Cmd+K or :", "Command palette: jump to an agent or session, switch view, open Settings"],
   ["j / k", "Next / previous ACTIVITY item (Enter selects its agent)"],
   ["+ / - / 0 / arrows", "In the Timeline: zoom, reset, pan; drag selects a range, double-click zooms to it"],

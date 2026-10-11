@@ -49,7 +49,7 @@ const fired = new Set<string>();
 let primed = false;
 const priv = () => office.privacy || office.source.private;
 
-const CHIME_OF: Record<string, ChimeKind> = { blocked: "blocked", waiting: "waiting", fin: "finished", loop: "loop" };
+const CHIME_OF: Record<string, ChimeKind> = { blocked: "blocked", waiting: "waiting", fin: "finished" };
 function fire(key: string, text: string, session?: string) {
   if (fired.has(key)) return;
   fired.add(key);
@@ -157,8 +157,7 @@ export function update(items: RadarItem[], hot: { id: string; project: string }[
   const sess = (i: RadarItem) => office.actors().find((a) => a.id === i.id)?.session;
   for (const i of items) {
     if (i.kind === "stuck") continue;
-    fire(i.key, i.kind === "blocked" ? `${i.label} is blocked` : i.kind === "loop" ? `${i.label} is stuck in a ${i.reason}` : `${i.project} is waiting for you`, sess(i));
-    if (i.kind === "loop") continue; // one alert per loop episode: no escalation tiers
+    fire(i.key, i.kind === "blocked" ? `${i.label} is blocked` : `${i.project} is waiting for you`, sess(i));
     for (const m of tiers(i)) fire(`${i.key}@${m}`, `${i.label} is still ${i.kind === "blocked" ? "blocked" : "waiting"} after ${m} min`, sess(i));
   }
   watchState(now, hot);

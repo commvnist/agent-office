@@ -23,6 +23,8 @@ The daemon (`packages/server/src/main.ts`) speaks HTTP on `AGENT_OFFICE_HOST:AGE
 | `GET /health` | `{ok, version, pid, schema, warning?}`; `warning` when a forwarder speaks another protocol. |
 | `POST /shutdown` | Token required; stops the daemon. |
 
+**Prompts and narration.** `UserPromptSubmit` text is stripped of harness markup before it is clipped (`<task-notification>`, `<system-reminder>`, `[Subagent hand-back]` and friends); a pure machine message produces an empty `prompt` event, plus a `message` event with its one-line summary when it has one. For the session's lead the daemon also reads new assistant `text` blocks from `transcript_path` (and Stop's `last_assistant_message`) and emits them as `message` events to `user`, at most every 1.5 s per session, 3 per hook, de-duplicated. Config edits to `office.json` are pushed to clients on the next 2 s tick or request, whichever sees them first. `GET /status?session=<x>` returns 404 `{error:"no such session"}` for an unknown session. On boot the last 50,000 events of the 24 h window are replayed.
+
 `?private=1` on `/state`, `/stream`, `/history` (or `"privacy": true` in office.json) blanks free text: prompts, tool detail/why, task text, final messages, waiting text, errors, cwd/branch. Structure and tool names remain.
 
 ## Envelope
@@ -34,7 +36,7 @@ The daemon (`packages/server/src/main.ts`) speaks HTTP on `AGENT_OFFICE_HOST:AGE
   "config": { "roles": {} } }
 ```
 
-Derived fields (from tool events only; the daemon never prompts or controls Claude): `agents[id].loop` / `sessions[id].loop` = `{ tool, n }` when the same tool and target repeated 4+ times in a row; `sessions[id].files` = edit counts per file path (Edit/Write/MultiEdit/NotebookEdit, top 50, absent in privacy mode); `sessions[id].toolCounts` = calls per tool name. Digest `--json` is `{ days, topTools, topFiles, errorsByAgent }`.
+Derived fields (from tool events only; the daemon never prompts or controls Claude): `sessions[id].files` = edit counts per file path (Edit/Write/MultiEdit/NotebookEdit, top 50, absent in privacy mode); `sessions[id].toolCounts` = calls per tool name. Digest `--json` is `{ days, topTools, topFiles, errorsByAgent }`.
 
 `epoch` changes on every daemon start: reset cursors and caches when it differs. `rev` increases on every change (including dropped events), so equal `rev` within an epoch means nothing changed. `configError` is present while office.json is invalid (the last good config stays active).
 

@@ -85,7 +85,6 @@ if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
   .badge.warn{color:var(--warn-ink);border-color:var(--warn)}
   .cwd{display:flex;gap:8px;align-items:center;word-break:break-all}
   #roster{list-style:none;margin:0;padding:4px 0}
-  .rdw.loop{border-color:var(--warn)} #card .lp,.r .lp{color:var(--warn-ink);font-weight:700} .r .lp:empty{display:none}
   #roster .gh{display:block;width:100%;text-align:start;background:none;border:0;border-top:1px solid var(--line);padding:8px 16px;font:inherit;font-size:calc(12px * var(--ts,1));letter-spacing:.1em;text-transform:uppercase;color:var(--mute);cursor:pointer}
   #files{padding:4px 0} .hf{display:flex;gap:8px;align-items:baseline;width:100%;text-align:start;background:none;border:0;border-inline-start:3px solid var(--pc,transparent);padding:4px 16px;cursor:pointer;min-width:0}
   .hf:hover{background:var(--raise)} .hf .dir{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap} .hf .n{color:var(--soft)}
@@ -130,7 +129,7 @@ if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
   #px{position:fixed;top:10px;inset-inline-end:10px;z-index:30;opacity:.55}
   #px:hover,#px:focus-visible{opacity:1}
   body.presenter #px{display:block}
-  body.overlay,body.overlay html{background:transparent}
+  body.overlay,html:has(body.overlay){background:transparent} /* OBS browser source: html is not inside body, so it needs :has() */
   body.overlay #caption{font-size:36px}
   .b:disabled{opacity:.45;cursor:not-allowed}
   @media (max-width:800px){
@@ -158,7 +157,7 @@ if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
   }
 </style></head>
 <body>
-<div id="stage"></div>
+<div id="stage" role="main" aria-label="Agent Office"></div>
 <div id="top"><span class="live" id="live" role="img" aria-label="connected" title="connected"></span><b class="wm">AGENT<span class="wm2"> OFFICE</span></b><span id="stats" role="img"></span><span id="badge" hidden></span><button id="stop-sample" class="b sm" type="button" hidden>Stop sample</button></div>
 <button id="tg" class="b" type="button" aria-controls="side" aria-expanded="true">Hide panel</button>
 <button id="px" class="b" type="button" hidden>Exit presenter (Esc / P)</button>

@@ -28,7 +28,7 @@ export function planPack(pack, existing, packDir, agentsDir, exists = existsSync
 
 const PACKS = fileURLToPath(new URL("../plugin/packs/", import.meta.url));
 
-function main() {
+async function main() {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: { "agents-dir": { type: "string" }, force: { type: "boolean" }, "dry-run": { type: "boolean" }, list: { type: "boolean" }, undo: { type: "boolean" } } });
   if (values.list) {
     for (const n of readdirSync(PACKS)) try { const p = JSON.parse(readFileSync(join(PACKS, n, "pack.json"), "utf8")); console.log(`${n}: ${p.description ?? ""}`); } catch { /* not a pack */ }
@@ -54,6 +54,9 @@ function main() {
     }
     return;
   }
+  // The merged config must be a valid office.json before anything is written (a pack's roles are untrusted input).
+  try { const { validateConfig } = await import("../packages/server/src/config.ts"); validateConfig(plan.config, {}); }
+  catch (e) { throw new Error(`pack roles are invalid: ${e.message}`); }
   if (plan.conflicts.length && !values.force) throw new Error(`would overwrite: ${plan.conflicts.join(", ")} (use --force)`);
   console.log(`${dry}pack ${pack.name}: ${Object.keys(pack.roles).length} roles -> ${cfgPath}; ${plan.copies.length} agents -> ${agentsDir}`);
   if (values["dry-run"]) return;
@@ -68,5 +71,5 @@ function main() {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  try { main(); } catch (e) { console.error(e.message); process.exit(1); }
+  try { await main(); } catch (e) { console.error(e.message); process.exit(1); }
 }

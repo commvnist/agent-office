@@ -77,3 +77,14 @@ test("hook envelope tags are stripped from shown text", () => {
   assert.equal(clip("<my-component>x</my-component>", 100), "<my-component>x</my-component>");
   assert.equal(clip("a<b-c && d>e", 100), "a<b-c && d>e");
 });
+
+test("UserPromptSubmit: harness notifications are not user prompts; their summary becomes a lead note", () => {
+  const note = '<task-notification><task-id>a1</task-id><tool-use-id>t1</tool-use-id><output-file>/tmp/x</output-file><summary>Agent "Build" finished</summary></task-notification>';
+  const out = adapt({ hook_event_name: "UserPromptSubmit", session_id: "s", prompt: note }, 5);
+  assert.deepEqual(out, [{ type: "prompt", session: "s", text: "", t: 5 }, { type: "message", session: "s", to: "user", text: 'Agent "Build" finished', t: 5 }]);
+  // text the user typed next to the markup is kept, markup and its content are not
+  const mixed = adapt({ hook_event_name: "UserPromptSubmit", session_id: "s", prompt: `${note} now add tests` }, 6);
+  assert.deepEqual(mixed, [{ type: "prompt", session: "s", text: "now add tests", t: 6 }]);
+  // a plain prompt is untouched
+  assert.deepEqual(adapt({ hook_event_name: "UserPromptSubmit", session_id: "s", prompt: "fix the header" }, 7), [{ type: "prompt", session: "s", text: "fix the header", t: 7 }]);
+});

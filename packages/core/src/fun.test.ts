@@ -65,7 +65,8 @@ test("session finish: shipped commentary, session memory dropped", () => {
   let r = stepFun(m, run, st(three, [se()], []), 1500);
   m = r.mem;
   const logs = three.map((a, i) => rep(i + 1, a.id));
-  const toolled = st(three.map((a) => ag(a.id, { toolCount: 2 })), [se()], []);
+  // the session's toolCounts include every agent's calls (the reducer bumps them for all tool events)
+  const toolled = st(three.map((a) => ag(a.id, { toolCount: 2 })), [se({ toolCounts: { Edit: 6 } })], []);
   r = stepFun(m, run, toolled, 2000);
   r = stepFun(r.mem, toolled, st([], [], logs), 3000); // session ended
   assert.ok(r.out.some((e) => e.kind === "commentary" && /proj shipped: 3 agents, 6 tool calls/.test(e.text)));
@@ -73,20 +74,15 @@ test("session finish: shipped commentary, session memory dropped", () => {
 });
 
 test("commentary rate limit and per-actor repeat window", () => {
-  const loopy = (n: number) => st([ag("a", { loop: { tool: "Bash", n } }), ag("b", { loop: undefined })]);
-  const m = base(st([ag("a"), ag("b")]));
-  let r = stepFun(m, st([ag("a"), ag("b")]), loopy(4), 10_000);
+  const roll = (n: number) => st([ag("a", { doing: "Edit", toolCount: n })]);
+  let r = stepFun(base(roll(0)), roll(0), roll(5), 10_000);
   assert.equal(r.out.filter((e) => e.kind === "commentary").length, 1);
-  assert.match(r.out[r.out.length - 1].text, /A looks stuck: Bash ×4/);
-  const clear = st([ag("a"), ag("b")]);
-  r = stepFun(r.mem, loopy(4), clear, 12_000);
-  r = stepFun(r.mem, clear, loopy(5), 13_000); // within 6s
+  assert.match(r.out[r.out.length - 1].text, /A is on a roll/);
+  r = stepFun(r.mem, roll(5), roll(10), 13_000); // within 6s
   assert.ok(!kinds(r).includes("commentary"));
-  r = stepFun(r.mem, loopy(5), clear, 20_000);
-  r = stepFun(r.mem, clear, loopy(6), 21_000); // >6s but same template+actor <60s
+  r = stepFun(r.mem, roll(10), roll(15), 21_000); // >6s but same template+actor <60s
   assert.ok(!kinds(r).includes("commentary"));
-  r = stepFun(r.mem, loopy(6), clear, 70_000);
-  r = stepFun(r.mem, clear, loopy(7), 71_000);
+  r = stepFun(r.mem, roll(15), roll(20), 71_000);
   assert.ok(kinds(r).includes("commentary"));
 });
 
@@ -124,4 +120,12 @@ test("memory stays bounded and caps output", () => {
   r = stepFun(mem, p, p, 3000);
   assert.ok(r.mem.seen.length <= 200 || r.mem.seen.length === mem.seen.length);
   assert.deepEqual(JSON.parse(JSON.stringify(r.mem)), r.mem);
+});
+
+test("the lead gets no combos or 'on a roll' lines for work its agents did", () => {
+  const s0 = st([ag("a", { toolCount: 0 })], [se({ toolCounts: {} })]);
+  const s1 = st([ag("a", { toolCount: 25 })], [se({ toolCounts: { Read: 25 }, doing: "Edit" })]);
+  const r = stepFun(base(s0), s0, s1, 10_000);
+  assert.ok(r.out.every((e) => !/^Lead/.test(e.text)), JSON.stringify(r.out));
+  assert.ok(r.out.some((e) => e.kind === "combo" && /^A:/.test(e.text))); // the agent itself still gets its combo
 });

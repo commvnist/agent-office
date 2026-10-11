@@ -156,6 +156,7 @@ function buildTimeline(root: HTMLElement) {
   // pointer: drag selects, two pointers pinch, wheel zooms (shift/horizontal pans)
   const ptrs = new Map<number, number>();
   let drag: number | null = null, pinch: { d: number; v: Span; c: number } | null = null, moved = false;
+  let cleared: { sel: { t0: number; t1: number }; at: number } | null = null; // the selection a plain click just cleared (dblclick zooms to it)
   cv.style.touchAction = "none";
   cv.addEventListener("pointerdown", (e) => {
     const x = e.clientX - cv.getBoundingClientRect().left;
@@ -184,7 +185,7 @@ function buildTimeline(root: HTMLElement) {
   const up = (e: PointerEvent) => {
     ptrs.delete(e.pointerId);
     if (ptrs.size < 2) pinch = null;
-    if (drag !== null && !moved && tl?.sel) { tl.sel = null; draw(); } // a plain click clears the selection
+    if (drag !== null && !moved && tl?.sel) { cleared = { sel: tl.sel, at: Date.now() }; tl.sel = null; draw(); } // a plain click clears the selection
     if (!ptrs.size) drag = null;
   };
   cv.addEventListener("pointerup", up);
@@ -193,7 +194,9 @@ function buildTimeline(root: HTMLElement) {
     if (!tl) return;
     const x = e.clientX - cv.getBoundingClientRect().left;
     if (x < plot().l) return;
-    if (tl.sel && tl.sel.t1 - tl.sel.t0 > 0) set(zoomView({ t0: tl.sel.t0, t1: tl.sel.t1 }, 1, 0, tl.full), null);
+    // the first click of a double-click has just cleared the selection: zoom to what it was
+    const sel = tl.sel ?? (cleared && Date.now() - cleared.at < 500 ? cleared.sel : null);
+    if (sel && sel.t1 - sel.t0 > 0) set(zoomView({ t0: sel.t0, t1: sel.t1 }, 1, 0, tl.full), null);
     else zoom(2, timeAt(x));
   });
   cv.addEventListener("wheel", (e) => {

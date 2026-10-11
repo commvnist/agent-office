@@ -129,3 +129,16 @@ test("lookFor never yields an undefined field for any id (hash high bit)", async
     assert.ok(l.hair && l.skin && l.acc && l.style >= 0 && l.style <= 5, `agent-${i}`);
   }
 });
+
+test("leads are variations of one portrait: curly dark hair, aviators, light blazer, stocky; varied by id; nothing clipped", () => {
+  const looks = Array.from({ length: 24 }, (_, i) => lookFor("lead", `lead-${i}`, true));
+  assert.ok(looks.every((l) => l.build === 1 && l.lead), "stocky, with the portrait variant");
+  assert.ok(new Set(looks.map((l) => l.lead!.jacket)).size >= 4, "blazer colours vary");
+  assert.ok(new Set(looks.map((l) => l.lead!.lens)).size >= 3, "lens tints vary");
+  assert.ok(new Set(looks.map((l) => l.lead!.beard)).size >= 2, "beard styles vary");
+  for (const l of looks) for (const dir of ["down", "side", "up"] as const) for (const [pose, frame] of [["walk", 0], ["walk", 1], ["sit", 0]] as const) {
+    const g = person(l, dir, pose, frame, {});
+    g.outline("#171421");
+    for (let x = 0; x < 16; x++) { const c = g.cells[x]; assert.ok(c === null || c === "#171421", `top row clipped: ${dir} ${pose} f${frame}`); }
+  }
+});

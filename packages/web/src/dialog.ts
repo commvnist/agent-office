@@ -1,11 +1,17 @@
 // Focus management for the small popover dialogs (#162): focus in, Tab trap, Escape / outside click close, focus restored.
 const FOCUSABLE = "button,input,select,textarea,a[href],[tabindex]:not([tabindex='-1'])";
 
+/** Open dialogs, oldest first: only the newest (top layer) reacts to Escape, so one Esc never closes two. */
+const stack: (() => void)[] = [];
+
 export function modal(dlg: HTMLElement, trigger: HTMLElement, onOpen?: () => void) {
   dlg.tabIndex = -1;
   const items = () => Array.from(dlg.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((x) => !x.hasAttribute("disabled"));
   const onKey = (e: KeyboardEvent) => {
-    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); return; } // top layer only: the Esc stops here
+    if (e.key === "Escape") {
+      if (stack[stack.length - 1] !== close) return; // a dialog opened after this one is on top and gets the Esc
+      e.preventDefault(); e.stopPropagation(); close(); return;
+    }
     if (e.key !== "Tab") return;
     const f = items();
     if (!f.length) { e.preventDefault(); return; }
@@ -20,6 +26,7 @@ export function modal(dlg: HTMLElement, trigger: HTMLElement, onOpen?: () => voi
   function open() {
     onOpen?.();
     dlg.hidden = false;
+    stack.push(close);
     document.addEventListener("keydown", onKey);
     document.addEventListener("pointerdown", onDown);
     (items()[0] ?? dlg).focus({ preventScroll: true });
@@ -27,6 +34,8 @@ export function modal(dlg: HTMLElement, trigger: HTMLElement, onOpen?: () => voi
   function close() {
     if (dlg.hidden) return;
     dlg.hidden = true;
+    const at = stack.indexOf(close);
+    if (at >= 0) stack.splice(at, 1);
     document.removeEventListener("keydown", onKey);
     document.removeEventListener("pointerdown", onDown);
     trigger.focus();

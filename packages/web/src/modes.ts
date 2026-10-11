@@ -70,7 +70,11 @@ async function startReplay(since: number, until: number, status: HTMLElement, on
     loaded = events;
     marks = markers(events);
     onLoaded();
-    if (!events.length) { status.textContent = "No stored events in that range. Pick a wider range, or run a session first."; return; }
+    if (!events.length) {
+      if (office.source.mode === "replay") stop(); // do not leave the previous replay running under an "empty" message
+      status.textContent = "No stored events in that range. Pick a wider range, or run a session first.";
+      return;
+    }
     manual = true;
     begin("replay", new Playback(cfgNow(), events));
     playing = true; vpos = 0;

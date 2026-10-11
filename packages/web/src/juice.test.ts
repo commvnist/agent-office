@@ -61,3 +61,9 @@ test("couchSeats: one centred seat per tile", () => {
   assert.deepEqual(couchSeats({ x: 4, y: 10, w: 2 }, 16), [{ x: 72, y: 175 }, { x: 88, y: 175 }]);
   assert.equal(couchSeats({ x: 4, y: 10 }, 16).length, 1);
 });
+
+test("the lead's own words (a message to the user) become a bubble at its desk, not a visit", () => {
+  const a = planInteraction(it({ kind: "message", from: "lead:s", to: "user", text: "Fixing the header now." }), ctx([], ["lead:s"]));
+  assert.deepEqual(a, [{ k: "say", id: "lead:s", text: "Fixing the header now." }]);
+  assert.deepEqual(planInteraction(it({ kind: "message", from: "lead:s", to: "user", text: "" }), ctx([], ["lead:s"])), []);
+});

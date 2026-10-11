@@ -41,7 +41,6 @@ body:has(.view:not([hidden])) #top{background:var(--bg)}
 .cb canvas{width:18px;height:18px;image-rendering:pixelated;border-radius:50%}
 .cb.working{--ring:var(--good)} .cb.thinking{--ring:var(--acc)} .cb.waiting{--ring:var(--warn)} .cb.blocked{--ring:var(--bad)} .cb.idle{--ring:var(--line)}
 .cb.queued{--ring:var(--mute);border-style:dashed}
-.cb.loop::after{content:"";position:absolute;top:-3px;inset-inline-end:-3px;width:7px;height:7px;border-radius:50%;background:var(--warn);border:1px solid var(--bg)}
 .cb[aria-pressed=true]{box-shadow:0 0 0 2px var(--acc)}
 .cb.more{width:auto;min-width:24px;padding:0 4px;border:0;border-radius:3px;color:var(--mute);cursor:default;font-size:calc(11px * var(--ts,1))}
 #hl{position:absolute;inset-inline-end:calc(var(--sw) + 12px);top:calc(var(--top-h,40px) + var(--cb-h,0px) + 8px);z-index:3;display:flex;flex-direction:column;gap:8px;align-items:flex-end;pointer-events:none}
@@ -77,5 +76,19 @@ body.overlay #colony,body.overlay #toasts,body.overlay #hl{display:none}
 #filters label{display:inline-flex;align-items:center;gap:4px;min-block-size:24px}
 input[type=range]{min-block-size:24px}
 input[type=number],input[type=text],input:not([type]){box-sizing:border-box;padding:4px;min-block-size:24px}
-.srow{min-block-size:24px}
+.srow{min-block-size:24px;flex-shrink:0} /* a dialog scrolls (max-height + overflow:auto): rows must not squash to their min height */
+.dlg > *,#settings > *{flex-shrink:0}
 #help{width:min(420px,92vw)} #help kbd{white-space:normal}
+
+/* The side panel sits above the stage overlays (colony strip, minimap, highlights): on a phone it is a drawer over them,
+   and the header's Hide-panel button gets its own row at the top of the open drawer instead of covering the first toolbar row. */
+#side{z-index:4}
+@media (max-width:800px){
+  body:not(.collapsed) #pbody{padding-top:44px}
+}
+
+/* Phones: the wordmark collapses to its tick so the status counts get the room (they were truncated to "20 WO…"). */
+@media (max-width:800px){
+  #top .wm{font-size:0;gap:0}
+  #stats{letter-spacing:0;font-size:calc(11px * var(--ts,1))}
+}

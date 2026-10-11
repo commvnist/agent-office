@@ -5,7 +5,7 @@ import { $, btn, el, store } from "./dom.ts";
 import { enableDesktop, mutes, prefs, spendLimit } from "./notify.ts";
 import { chimePrefs, testChime } from "./chime.ts";
 import { settings, setAmbientPaused } from "./settings.ts";
-import { whoLine } from "./logic.ts";
+import { captionText, whoLine } from "./logic.ts";
 import { modal } from "./dialog.ts";
 import { group } from "./toolbar.ts";
 import { bindKeys } from "./keys.ts";
@@ -102,7 +102,7 @@ function bindPresenter() {
     if (!body.classList.contains("presenter") && !OVERLAY) return;
     const cap = $("caption");
     $("cap-who").textContent = whoLine(f);
-    $("cap-text").textContent = hideText() ? "" : f.text; // stream-safe / private: names only
+    $("cap-text").textContent = hideText() ? "" : captionText(f); // stream-safe / private: names only
     cap.hidden = false;
     clearTimeout(capTimer);
     capTimer = setTimeout(() => { $("cap-who").textContent = $("cap-text").textContent = ""; cap.hidden = !body.classList.contains("presenter"); }, 7000);
@@ -168,9 +168,11 @@ function bindSettings(tools: HTMLElement) {
       const r = el("div", "srow"), on = mutes.active(s.id);
       const set = (until: number) => () => { mutes.set(s.id, until); fillMutes(); };
       r.append(el("span", "", s.project));
-      if (on) r.append(btn("Unmute", "Alert for this session again", set(0), "b sm"));
-      else r.append(btn("Snooze 30m", "No alerts from this session for 30 minutes", set(Date.now() + 30 * 60_000), "b sm"),
-        btn("Mute", "No alerts from this session", set(Number.MAX_SAFE_INTEGER), "b sm"));
+      // the visible label repeats per session, so the accessible name carries the project
+      const named = (b: HTMLButtonElement) => (b.setAttribute("aria-label", `${b.textContent} ${s.project}`), b);
+      if (on) r.append(named(btn("Unmute", "Alert for this session again", set(0), "b sm")));
+      else r.append(named(btn("Snooze 30m", "No alerts from this session for 30 minutes", set(Date.now() + 30 * 60_000), "b sm")),
+        named(btn("Mute", "No alerts from this session", set(Number.MAX_SAFE_INTEGER), "b sm")));
       return r;
     }));
   };
@@ -199,7 +201,6 @@ const LEGEND: [string, string][] = [
   ["gold name", "Session lead; \"waiting on\" lists its active helpers."],
   ["board on the wall", "Tasks: pending, running, done, blocked."],
   ["thin line", "Lead to active helper; highlighted for the selected agent's chain."],
-  ["loop ×N · tool", "Amber text: the same tool call repeated N times in a row (roster, selected card, NEEDS YOU)."],
   ["Frozen · N new", "The view is held on purpose (key .); Resume applies the newest state."],
   ["spark", "Two agents edited the same file: a possible conflict."],
 ];

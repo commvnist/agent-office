@@ -9,6 +9,7 @@ export const WORKING_MS = 5000;
 
 export type Action =
   | { k: "user"; id: string; text: string }
+  | { k: "say"; id: string; text: string }
   | { k: "notice"; id: string; emote: "exclaim" | "check"; ms: number; hop?: boolean }
   | { k: "visit"; from: string; to: string; text: string; badge: Badge }
   | { k: "huddle"; id: string; text: string; badge: Badge; members: string[] }
@@ -165,6 +166,8 @@ export function planInteraction(it: Interaction, c: PlanCtx): Action[] {
     }
     case "message": {
       const target = c.resolve(it.to);
+      // The lead talking to the person watching (its own narration or a task note): a bubble at its desk, no visit.
+      if (c.has(it.from) && it.text && (it.to === "user" || !target)) return [{ k: "say", id: it.from, text: it.text }];
       if (!c.has(it.from) || !target || target === it.from || !it.text) return [];
       return [{ k: "visit", from: it.from, to: target, text: it.text, badge: "message" }, { k: "notice", id: target, emote: "exclaim", ms: 2000 }];
     }

@@ -42,6 +42,15 @@ const overlay = new URLSearchParams(location.search).get("overlay") === "1"; // 
 await app.init({ resizeTo: host, background: 0x14121f, backgroundAlpha: overlay ? 0 : 1, antialias: false, resolution: dpr(), autoDensity: true, roundPixels: true });
 host.appendChild(app.canvas);
 bindPointer(app.canvas);
+// A plain click on the floor (not an actor, not the end of a drag) clears the selection. The actor's own tap handler
+// stamps `actorTapAt` first (Pixi's pointertap fires on pointerup, before the DOM click), so a click on an actor is left alone.
+let actorTapAt = 0;
+let pointerAt: { x: number; y: number } | null = null; // canvas-local CSS px; null when the pointer is outside the stage
+app.canvas.addEventListener("pointermove", (e) => { pointerAt = { x: e.offsetX, y: e.offsetY }; });
+app.canvas.addEventListener("pointerleave", () => { pointerAt = null; });
+app.canvas.addEventListener("click", () => {
+  if (!camera.dragged && Date.now() - actorTapAt > 60 && office.selected) office.select(null);
+});
 const minimap = bindMinimap(host);
 const topEl = document.getElementById("top")!;
 new ResizeObserver(() => { TOP = topEl.offsetHeight; }).observe(topEl);
@@ -131,8 +140,6 @@ const doneAt: number[] = [], errAt: number[] = []; // weather inputs: finished-o
 let weather: Weather = "cloudy";
 let delights: Delight[] = [];
 let floaters: Floaters;
-/** Agent/lead loop state for the panel (api.ts is not ours): `loopOf(id)` is { tool, n } while the same call repeats. */
-export const loopOf = (id: string): { tool: string; n: number } | undefined => state.agents[id]?.loop ?? state.sessions[actors.get(id)?.lead ? meta.get(id)?.session ?? "" : ""]?.loop;
 const TRAY_STEP = 8; // shortcut: lead desk clutter has no report counter, so one returned report = one clutter level step (8 "tool calls"); upgrade with a real in-tray prop
 
 const route = (a: Tile, b: Tile) => findPath(layout, a, b);
@@ -310,6 +317,7 @@ function ensure(id: string, label: string, role: string, lead: boolean, home: Ti
     const act = a;
     gold(act);
     act.c.on("pointertap", () => {
+      actorTapAt = Date.now();
       if (camera.dragged) return;
       const t = Date.now();
       if (lastTap.id === id && t - lastTap.t < 350) { // double-click: focus the desk (the canvas dblclick must not reset the view)
@@ -472,6 +480,10 @@ function exec(a: Action, now: number) {
       const t = actors.get(a.id);
       t?.speak(a.text, "user", 5000, "prompt");
       t?.showEmote("exclaim", 1500);
+      break;
+    }
+    case "say": {
+      actors.get(a.id)?.speak(a.text, "say", 6000, "message");
       break;
     }
     case "notice": {
@@ -653,6 +665,8 @@ function onEnvelope(env: Envelope) {
   const now = Date.now(), hidden = document.hidden;
   if (r.fresh) for (const it of env.state.log) if (it.kind === "report" && it.outcome === "done" && now - it.t < 600_000) pushSignal(doneAt, it.t);
   stepFunLayer(env, prevState, r.fresh, now, hidden);
+  // On first load the feed starts from the daemon's recent log (no effects: history is not news), so a refresh keeps context.
+  if (r.fresh) for (const it of env.state.log.slice(-30)) if (it.kind !== "done" || it.text) pushFeed(feedItem(it, nameOf));
 
   for (const it of r.items) {
     if (it.kind === "report" && it.outcome === "done") pushSignal(doneAt, it.t);
@@ -688,7 +702,6 @@ function onEnvelope(env: Envelope) {
   }
   const edges = newAlerts(seenAlerts, al);
   if (!r.fresh) for (const id of edges) if (actors.has(id)) alertFocus(id, al.get(id)!);
-  for (const a of actors.values()) a.setLoop(!!loopOf(a.id));
   const lines = boardLines(state.tasks);
   if (lines.join("\n") !== boardText.join("\n")) boardText = lines;
   // prune per-actor maps of everything that left (#40)
@@ -794,6 +807,13 @@ app.ticker.add((tk) => {
   world.scale.set(v.sc);
   world.position.set(v.ox, v.oy);
   const ui = camera.still; // text and plaques ride the un-shaken view: a shake moves the world only (rubric B7)
+  { // pod plaques show only for a claimed pod the pointer is over (or the hovered agent's); touch has no hover, so the selected agent's pod
+    let pod = -1;
+    const who = hoverId ?? (matchMedia("(hover: none)").matches ? office.selected : null);
+    if (who) { const bd = bindings.find((b) => b.id === who); if (bd) pod = scene.podOfSeat(bd.key); }
+    if (pod < 0 && pointerAt) pod = scene.podAt((pointerAt.x - ui.ox) / ui.sc, (pointerAt.y - ui.oy) / ui.sc);
+    scene.setHoverPod(pod);
+  }
   const narrow = W < 520 ? 1.25 : 1; // a phone fits the whole floor at ~0.8: tags would pile up, so pips take over sooner
   lod = v.sc < (lod ? LOD_OFF : LOD_ON) * narrow;
   // pips when zoomed out, or in a crowd for everyone but leads, the selected/hovered actor and alerts

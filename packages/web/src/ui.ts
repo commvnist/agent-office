@@ -3,7 +3,7 @@
 import { office, type ActorInfo, type FeedItem } from "./api.ts";
 import { hotFiles, leadId } from "@agent-office/core";
 import { $, announce as domAnnounce, btn, clip, copy, el, renderIf, store, sync } from "./dom.ts";
-import { bySession, burnHot, burnRate, cdCommand, filterFeed, fmtAge, fmtDur, fmtTokens, loopOf, loopText, projectHue, quietBefore, radar, rosterGroups, sanitizeFilters, statusGroups, summary, sumUsage, urgency, usageTotal, whoLine, type FeedFilter, type RadarItem } from "./logic.ts";
+import { bySession, burnHot, burnRate, cdCommand, filterFeed, fmtAge, fmtDur, fmtTokens, projectHue, quietBefore, radar, rosterGroups, sanitizeFilters, statusGroups, summary, sumUsage, urgency, usageTotal, whoLine, type FeedFilter, type RadarItem } from "./logic.ts";
 import { bindPanelChrome } from "./panel.ts";
 import { bindModes } from "./modes.ts";
 import * as notify from "./notify.ts";
@@ -49,9 +49,9 @@ function renderRadar(now: number) {
   for (const [k, u] of snoozed) if (u <= now || !keys.has(k)) { snoozed.delete(k); changed = true; }
   if (changed) store.set("snooze", JSON.stringify(Object.fromEntries(snoozed)));
   items = all.filter((i) => !snoozed.has(i.key));
-  for (const i of items) if (!radarKeys.has(i.key) && i.kind !== "stuck") announce(i.kind === "blocked" ? `${i.label} is blocked` : i.kind === "loop" ? `${i.label} is looping, ${i.reason}` : `${i.project} is waiting for you`, true);
+  for (const i of items) if (!radarKeys.has(i.key) && i.kind !== "stuck") announce(i.kind === "blocked" ? `${i.label} is blocked` : `${i.project} is waiting for you`, true);
   radarKeys = new Set(items.map((i) => i.key));
-  const LABEL = { blocked: "blocked", waiting: "waiting for you", loop: "looping", stuck: "no activity" };
+  const LABEL = { blocked: "blocked", waiting: "waiting for you", stuck: "no activity" };
   const why = (i: RadarItem) => clip(i.reason ?? (i.kind === "blocked" ? lastReport(i.id) ?? "" : ""), 90);
   renderIf($("radar-list"), items.map((i) => `${i.key}|${fmtAge(now - i.since)}|${why(i)}`).join(","), () =>
     items.length
@@ -63,7 +63,6 @@ function renderRadar(now: number) {
         b.type = "button";
         b.append(el("b", "", i.label), el("span", "", ` ${LABEL[i.kind]}${i.tier ? " (escalated)" : ""} · ${fmtAge(now - i.since)}`));
         if (why(i)) b.append(el("span", "why", why(i)));
-        if (i.kind === "loop") b.title = "The same tool call repeated several times in a row";
         b.addEventListener("click", () => pick(i.id));
         w.append(b);
         if (i.kind !== "blocked") w.append(btn("Snooze", "Hide this for 30 minutes", () => { snoozed.set(i.key, Date.now() + SNOOZE_MS); store.set("snooze", JSON.stringify(Object.fromEntries(snoozed))); refresh(); }, "b sm"));
@@ -121,8 +120,6 @@ function renderCard() {
   if (!a) { c.dataset.sig = ""; return; }
   const rows: [string, string][] = [["role", a.lead ? "session lead" : a.role], ["session", a.project], ["status", effStatus(a)]];
   if (a.doing) rows.push(["last tool", `${a.doing}${a.detail ? " · " + a.detail : ""}`]);
-  const lp = stateOf() && loopOf(stateOf()!, a.id);
-  if (lp) rows.push(["warning", loopText(lp)]);
   if (a.why) rows.push(["why", a.why]);
   if (a.task) rows.push(["task", a.task]);
   if (a.confidence === "guess") rows.push(["attribution", "guess (several or no matching delegations)"]);
@@ -152,7 +149,7 @@ function renderCard() {
     if (al) out.push(el("div", `al tx ${al[0]}`, al[1]));
     const md = [`## ${a.label}`, ...rows.map(([k, v]) => `- ${k}: ${v}`), ...(al ? [`- ${al[1]}`] : []), ...full.map(([k, v]) => `\n### ${k}\n${v}`)].join("\n");
     out.push(btn("Clear", "Deselect this agent", () => office.select(null), "b sm"), copyBtn("Copy summary", md, "Copy this agent's state as markdown"));
-    for (const [k, v] of rows) { const d = el("div", k === "warning" ? "lp" : ""); d.append(el("span", "k", k + "  "), document.createTextNode(v)); d.title = a.why ?? ""; out.push(d); }
+    for (const [k, v] of rows) { const d = el("div", ""); d.append(el("span", "k", k + "  "), document.createTextNode(v)); d.title = a.why ?? ""; out.push(d); }
     out.push(toolList(calls, hide));
     full.forEach(([k, v], n) => {
       const d = el("details", "full");
@@ -212,7 +209,7 @@ function renderSessions(now: number) {
       if (s.waiting) d.append(el("span", "badge warn", "waiting"));
       if (s.cwd) {
         const p = el("div", "cwd");
-        p.append(el("span", "k", s.cwd), copyBtn("copy cd", cdCommand(s.cwd), "Copy a shell cd command for this folder"));
+        p.append(el("span", "k", s.cwd), (() => { const b = copyBtn("copy cd", cdCommand(s.cwd), "Copy a shell cd command for this folder"); b.setAttribute("aria-label", `Copy cd command for ${s.project}`); return b; })());
         d.append(p);
       }
       return d;
@@ -274,7 +271,7 @@ function renderRoster(now: number) {
       const id = key.slice(2), b = el("button", "r");
       b.type = "button";
       b.dataset.id = id;
-      b.append(el("span", "m"), el("span", "sub"), el("span", "lp"));
+      b.append(el("span", "m"), el("span", "sub"));
       b.addEventListener("click", () => office.select(office.selected === id ? null : id));
       b.addEventListener("focus", () => { rover = id; });
       b.addEventListener("mouseenter", () => document.dispatchEvent(new CustomEvent("ao:hover", { detail: id })));
@@ -308,15 +305,13 @@ function renderRoster(now: number) {
       if (e.key === "idle") { if (t.textContent !== e.text) t.textContent = e.text!; li.className = ""; } else { li.className = e.key === "none" ? "k pad" : "h"; if (li.textContent !== e.text) li.textContent = e.text!; }
       return;
     }
-    const b = li.firstChild as HTMLButtonElement, [m, sub, lp] = Array.from(b.children) as HTMLElement[];
-    const lo = st && loopOf(st, a.id), lpt = lo ? loopText(lo) : "";
-    if (lp.textContent !== lpt) lp.textContent = lpt;
+    const b = li.firstChild as HTMLButtonElement, [m, sub] = Array.from(b.children) as HTMLElement[];
     const started = a.lead ? st?.sessions[a.session]?.startedAt : st?.agents[a.id]?.startedAt;
     const t = `${a.label}: ${a.lead ? "session lead" : a.role}, ${e.st}${started ? ` · ${fmtDur(now - started)}` : ""}`;
     if (m.textContent !== t) m.textContent = t;
     const task = clip(a.task ?? "", 80);
     if (sub.textContent !== task) sub.textContent = task;
-    b.className = `r ${e.st}${lo ? " looping" : ""}`;
+    b.className = `r ${e.st}`;
     b.title = a.why ?? a.task ?? "";
     b.setAttribute("aria-pressed", String(office.selected === a.id));
     b.tabIndex = a.id === rover ? 0 : -1;
@@ -522,7 +517,7 @@ function renderStats() {
   const full = `${ns} session${ns === 1 ? "" : "s"} · ${as.length} agent${as.length === 1 ? "" : "s"}${q ? ` · ${q} queued` : ""}${items.length ? ` · ${items.length} need you` : ""}${e.configError ? " · config error" : ""}`;
   const pill = $("stats"), short = ns ? `${working} working · ${items.length} need you` : "";
   pill.textContent = short + (e.configError ? " · config error" : "");
-  pill.setAttribute("aria-label", full);
+  pill.setAttribute("aria-label", short ? `${short}. ${full}` : full); // the visible numbers first, then the totals
   pill.title = `${full}. Agents include each session's lead`;
   $("cap-stats").textContent = short;
   $("empty").style.display = ns || office.source.mode !== "live" ? "none" : "block";

@@ -64,7 +64,7 @@ Re-read on change, no restart needed. Without the file, the built-in roster (arc
 | `spendAlarmTokens` | Integer 0-1000000000 (0 or absent = off): the client warns when a session's token total (input + output + cache creation) crosses it |
 | `theme` | Ignored: there is one built-in look. Still accepted so old files keep loading |
 
-Loop flag and hot files (observer-only, derived from hook tool events): an agent or lead repeating the same tool with the same target 4+ times in a row gets a `loop` flag until something else happens; `Edit`/`Write`/`MultiEdit`/`NotebookEdit` calls are counted per file path per session (top 50) as "hot files". Paths are hidden in privacy mode.
+Hot files (observer-only, derived from hook tool events): `Edit`/`Write`/`MultiEdit`/`NotebookEdit` calls are counted per file path per session (top 50) as "hot files". Paths are hidden in privacy mode.
 
 Some of these options are defined in the types before every consumer ships; see `docs/improvements.md` for status. Ready-made rosters live in `plugin/packs` (`node scripts/apply-pack.mjs --list`, then `node scripts/apply-pack.mjs heist --dry-run`; agents go to `./.claude/agents` unless `--agents-dir` is given, `*.bak` backups are kept and `--undo` restores them).
 
@@ -93,6 +93,13 @@ There are no guests: every agent is a worker at a desk in one shared pool of at 
 ## Develop
 
 See `CONTRIBUTING.md` and `docs/ARCHITECTURE.md`. License: MIT.
+
+## What it shows, and what it ignores
+
+- **Your prompts, not the harness's.** Claude Code injects machine messages into a session as "user" turns (background-task notifications, system reminders, subagent hand-backs). They are not what you typed: they are never shown as "You →", never become the session prompt, and a hand-back's first report line appears as a quiet note from the lead. See `packages/core/src/clean.ts`.
+- **The lead's own words.** What the lead says between tool calls is shown as a bubble at its desk and in the activity feed. It is read from the session's transcript file (only `assistant` `text` blocks; never tool inputs, tool results or your messages; only a `.jsonl` under `~/.claude/projects` or the session's cwd; history before the daemon first saw the session is skipped), redacted, clipped to 160 characters and blank in privacy mode. The turn's final message also comes from the Stop hook's `last_assistant_message`.
+- **Leads** look like variations of one portrait: curly dark hair, aviators in a tint that varies per session, a light blazer, a beard, an open patterned collar and sometimes a gold chain. Crew members without a configured name get a person's name, seeded by project, role and slot, so the same project has the same people every run.
+- **Pod labels on hover.** A claimed pod's project name and last prompt appear while the pointer is over it (on touch: for the selected agent's pod). A click on the empty floor clears the selection.
 
 ## Fun engine (`packages/core/src/fun.ts`)
 

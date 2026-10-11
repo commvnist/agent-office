@@ -26,8 +26,6 @@ export type OfficeConfig = {
 
 /*
  * Web contract (derived from hook tool events only; observer-only, read-side):
- * - Agent.loop / Session.loop: { tool, n } while the same tool+detail repeated n >= LOOP_MIN (4) times in a row; cleared on a different call, agent stop, or lead turn end.
- *   (loopKey/loopN are reducer bookkeeping, not for display.)
  * - Session.files: edit counts per file path (Edit/Write/MultiEdit/NotebookEdit), <= 50 paths. Blanked (undefined) in privacy mode.
  * - Session.toolCounts: calls per tool name, <= 24 names.
  * - Helpers from core: hotFiles(state, session?, limit=8) -> {path,count,session}[]; topTools(state, n=5) -> {tool,count}[]; usageTotalOf(session) -> number.
@@ -112,9 +110,6 @@ export type Agent = {
   errors?: number;
   lastError?: string;
   lastDurationMs?: number; // duration of the last finished tool
-  loop?: { tool: string; n: number };
-  loopKey?: string;
-  loopN?: number;
 };
 
 export type Session = {
@@ -142,9 +137,6 @@ export type Session = {
   lastDurationMs?: number;
   /** Token usage of the lead's transcript as of the last turn end. */
   usage?: Usage;
-  loop?: { tool: string; n: number };
-  loopKey?: string;
-  loopN?: number;
   files?: Record<string, number>;
   toolCounts?: Record<string, number>;
 };

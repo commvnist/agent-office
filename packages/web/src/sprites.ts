@@ -16,7 +16,14 @@ export type Accessory = "none" | "glasses" | "headphones" | "cap" | "tie" | "bun
 /** Face/pose overlay chosen by the actor's state or idle quirk. Part of the texture key. */
 export type Expr = "neutral" | "focus" | "stuck" | "happy" | "worry" | "yawn" | "stretch" | "phone";
 /** style: 0 plain, 1 long sides, 2 spikes, 3 top-knot, 4 bob, 5 long-back. build: 1 = stocky. head: 1 = 1px shorter head. */
-export type Look = { skin: string; hair: string; shirt: string; pants: string; style: 0 | 1 | 2 | 3 | 4 | 5; build: 0 | 1; head: 0 | 1; acc: Accessory; accColor: string; badge: number; team?: number };
+export type Look = { skin: string; hair: string; shirt: string; pants: string; style: 0 | 1 | 2 | 3 | 4 | 5; build: 0 | 1; head: 0 | 1; acc: Accessory; accColor: string; badge: number; team?: number; lead?: LeadLook };
+/** The session lead's portrait variant: curly dark hair, beard, tinted aviators, light blazer over an open patterned shirt, gold chain. */
+export type LeadLook = { jacket: string; lens: string; beard: 0 | 1 | 2; chain: 0 | 1; dot: string };
+const LEAD_JACKETS = ["#e8dcc0", "#d6bf94", "#c9ccd6", "#b6cde0", "#e6c1b8", "#cfd8c4"];
+const LEAD_LENS = ["#ff9a3c", "#ffc040", "#ff6b8a", "#4fd6c8", "#c58bff"];
+const LEAD_HAIR = ["#4a3528", "#3f3350", "#34404f", "#523a2e"]; // near-black, but bright enough that the contrast lift leaves them alone
+const LEAD_DOTS = ["#a63a3a", "#c9a227", "#3a7ca5", "#7a4fa3"];
+const LEAD_BEARD: (0 | 1 | 2)[] = [0, 0, 0, 1, 2]; // mostly full beards, some stubble, some goatees
 /** Team colour buckets (30 degrees of hue each): the session's repo hue shows on the hem and badge halo so a team reads as a team. */
 export const TEAMS = 12;
 export const teamColor = (b: number) => hsl(b * 30 + 15, 0.6, 0.5);
@@ -56,16 +63,17 @@ export function lookFor(role: string, id: string, lead = false, team?: number): 
   const gi = ROLE_GLYPH.find(([re]) => re.test(role))?.[1] ?? 9 + (hash(role) % 3);
   return {
     skin: th.skins[h % th.skins.length],
-    hair: th.hairs[(h >>> 3) % th.hairs.length],
-    shirt: lead ? "#2d3a66" : roleColor(role),
+    hair: lead ? LEAD_HAIR[(h >>> 3) % LEAD_HAIR.length] : th.hairs[(h >>> 3) % th.hairs.length],
+    shirt: lead ? LEAD_JACKETS[(h >>> 4) % LEAD_JACKETS.length] : roleColor(role),
     badge: lead ? -1 : gi, // the lead wears a tie, lapels and a star instead
     pants: lead ? "#1d2444" : "#33384d",
-    style: ((h >>> 6) % 6) as Look["style"],
-    build: ((h >>> 12) & 1) as 0 | 1,
-    head: ((h >>> 13) & 1) as 0 | 1,
+    style: lead ? 0 : (((h >>> 6) % 6) as Look["style"]),
+    build: lead ? 1 : (((h >>> 12) & 1) as 0 | 1),
+    head: lead ? 0 : (((h >>> 13) & 1) as 0 | 1),
     acc: lead ? "suit" : ROLE_ACC[role] ?? (["none", "glasses", "cap"] as Accessory[])[(h >>> 9) % 3],
     accColor: hsl((hash(role) + 40) % 360, 0.6, 0.45),
     ...(team === undefined ? {} : { team: ((Math.trunc(team) % TEAMS) + TEAMS) % TEAMS }),
+    ...(lead ? { lead: { jacket: LEAD_JACKETS[(h >>> 4) % LEAD_JACKETS.length], lens: LEAD_LENS[(h >>> 7) % LEAD_LENS.length], beard: LEAD_BEARD[(h >>> 10) % LEAD_BEARD.length], chain: ((h >>> 20) & 1) as 0 | 1, dot: LEAD_DOTS[(h >>> 22) % LEAD_DOTS.length] } } : {}),
   };
 }
 
@@ -133,10 +141,17 @@ export function person(look0: Look, dir: Dir, pose: Pose, frame: number, o: Pose
   const team = look.team === undefined ? null : teamColor(look.team);
   g.rect(bx, Y(15) - bob, bw, 1, team ?? shade(look.shirt, -0.12)); // hem and badge halo: the team colour when the session has one
   if (look.badge >= 0 && bd !== "up") stamp(g, look.acc === "tie" && bd === "down" ? 4 : 6, Y(10), GLYPHS[look.badge], "#ffffff", team ? shade(team, -0.3) : "#171421"); // badge halo carries the team hue
-  if (look.acc === "tie" || look.acc === "suit") {
+  const L = look.lead;
+  if (L && bd === "down") { // portrait lead: open collar V over a dark shirt, lapel edges, optional gold chain + pendant
+    const inner = "#1a1722";
+    g.rect(5, Y(10), 6, 1, inner); g.rect(6, Y(11), 4, 1, inner); g.rect(7, Y(12), 2, 3, inner);
+    g.set(7, Y(11), L.dot);
+    g.rect(bx + 1, Y(10), 1, 4, shade(look.shirt, -0.16)); g.rect(bx + bw - 2, Y(10), 1, 4, shade(look.shirt, -0.16));
+    if (L.chain) { g.set(5, Y(10), GOLD); g.set(6, Y(11), GOLD); g.set(7, Y(12), GOLD); g.set(10, Y(10), GOLD); g.set(9, Y(11), GOLD); g.set(8, Y(12), GOLD); g.rect(7, Y(13), 2, 1, GOLD); }
+  } else if (!L && (look.acc === "tie" || look.acc === "suit")) {
     if (bd === "down") { g.rect(7, Y(10), 2, 5, look.acc === "suit" ? "#c23b4a" : look.accColor); g.rect(7, Y(10), 2, 1, "#f2f2f2"); }
   }
-  if (look.acc === "suit" && bd === "down") { // lead: gold lapels + star badge
+  if (!L && look.acc === "suit" && bd === "down") { // lead: gold lapels + star badge
     g.rect(bx + 1, Y(10), 1, 3, GOLD); g.rect(bx + bw - 2, Y(10), 1, 3, GOLD);
     g.map(bx + bw - 3, Y(11), [".#.", "###", ".#."], { "#": GOLD });
   }
@@ -188,6 +203,21 @@ export function person(look0: Look, dir: Dir, pose: Pose, frame: number, o: Pose
       else { g.rect(3, H(4), 2, 9, look.hair); g.rect(11, H(4), 2, 9, look.hair); g.rect(12, H(7), 1, 5, acc); }
     }
   }
+  if (L) { // curly hair: bumps along the crown and curls down the sides to the ears
+    for (const x of side ? [4, 6, 8] : [4, 6, 8, 10]) g.set(x, HT(1), look.hair);
+    if (dir === "down") { g.rect(4, H(5), 1, 3, look.hair); g.rect(11, H(5), 1, 3, look.hair); }
+    if (dir !== "up") { // a forehead under the curls, then the beard on the jaw (rows 8-9) with a lip pixel
+      g.rect(dir === "down" ? 5 : 8, H(4), dir === "down" ? 6 : 4, 1, look.skin);
+      const bc = shade(look.hair, 0.02), stub = shade(look.skin, -0.2), lip = "#b5655b";
+      if (dir === "down") {
+        if (L.beard === 0) { g.rect(4, H(8), 8, 2, bc); g.set(4, H(7), bc); g.set(11, H(7), bc); g.rect(7, H(8), 2, 1, lip); }
+        else if (L.beard === 1) { g.rect(4, H(8), 8, 2, stub); g.rect(7, H(8), 2, 1, lip); }
+        else { g.rect(5, H(7), 6, 1, bc); g.rect(6, H(8), 4, 2, bc); g.rect(7, H(8), 2, 1, lip); }
+      } else if (L.beard === 0) { g.rect(6, H(8), 6, 2, bc); g.rect(9, H(7), 3, 1, bc); }
+      else if (L.beard === 1) g.rect(7, H(8), 5, 2, stub);
+      else { g.rect(8, H(7), 3, 1, bc); g.rect(9, H(8), 3, 2, bc); }
+    }
+  }
   // rim light: a lit crown edge (plus a parting from behind) so the head reads as a head against any shirt or floor
   const lit = shade(look.hair, 0.14), hairDark = shade(look.hair, -0.12);
   if (dir === "up") { g.rect(5, HT(2), 6, 1, lit); g.rect(7, HT(3), 2, 4, hairDark); }
@@ -200,6 +230,11 @@ export function person(look0: Look, dir: Dir, pose: Pose, frame: number, o: Pose
     if (look.acc === "glasses") g.rect(8, H(6), 3, 1, DARK);
   }
   if (dir !== "up") face(g, expr, dir === "down" ? [6, 9] : [9], dir === "down" ? 6 : 8, H, look.skin);
+  if (L && dir !== "up") { // tinted aviators over the eyes (after the face so the eyes stay hidden)
+    const lens = L.lens, glint = shade(lens, 0.25);
+    if (dir === "down") { g.rect(5, H(5), 2, 2, lens); g.rect(9, H(5), 2, 2, lens); g.rect(7, H(5), 2, 1, DARK); g.set(4, H(5), DARK); g.set(11, H(5), DARK); g.set(5, H(5), glint); g.set(9, H(5), glint); }
+    else { g.rect(8, H(5), 3, 2, lens); g.rect(5, H(5), 3, 1, DARK); g.set(11, H(5), DARK); g.set(8, H(5), glint); }
+  }
   if (look.acc === "headphones") { g.rect(4, HT(1), 8, 1, acc); g.rect(3, H(4), 1, 4, acc); g.rect(12, H(4), 1, 4, acc); }
   if (think && dir === "down") g.rect(9, H(8), 3, 2, look.skin); // hand on chin
   if (look.acc === "cap") { g.rect(4, HT(1), 8, 3, acc); if (dir !== "up") g.rect(side ? 8 : 4, HT(4), side ? 4 : 8, 1, shade(acc, -0.15)); }
@@ -451,14 +486,6 @@ const TOOL_ICONS: Record<ToolIconName, string[]> = {
   lens: [".###...", "#...#..", "#...#..", "#...#..", ".###...", "....#..", ".....#."],
 };
 export const toolIconTex = (k: ToolIconName) => memoRaw(`tool:${k}`, () => { const g = new Grid(7, 7); g.map(0, 0, TOOL_ICONS[k], { "#": "#ffffff" }); return g; });
-
-// 11x11 amber "loop" glyph: top half drawn, the bottom half is its 180 degree rotation (two circular arrows)
-const LOOP_TOP = ["...xxxx....", "..x....x...", ".x......x..", ".x....xxxxx", ".x.....xxx.", ".x......x.."];
-export const loopTex = () => memoRaw("loop", () => {
-  const g = new Grid(11, 11);
-  LOOP_TOP.forEach((row, y) => [...row].forEach((c, x) => { if (c === "x") { g.set(x, y, "#ffb020"); g.set(10 - x, 10 - y, "#ffb020"); } }));
-  return g.outline("#1d1b2b");
-});
 
 export const whiteTex = () => memoRaw("white", () => { const g = new Grid(1, 1); g.set(0, 0, "#ffffff"); return g; });
 

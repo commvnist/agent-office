@@ -87,3 +87,35 @@ at 8x, plus code review for timings. Headless software GL: visuals judged, not f
 ## Known-item checks
 
 (1) fixed. (2) fixed. (3) fixed. (4) Shift+F toggles follow, plain f unchanged (s6). (5) seen: follow, attention rings, rainbow, cat, disco, confetti, rain, sunny, lightning, tier-3 combo; glitch jitter not distinguishable in stills (UNVERIFIED). (6) done above. (7) done: C8. (8) neon theme: removed. (9) fixed except 7. (10) tab order and focus return verified for palette, Settings, Help; toast focus pause by code only.
+
+## Pass 2: six Haiku QA agents, every finding verified by the orchestrator
+
+Areas: core, daemon/CLI, canvas, panel UI, views and tools, accessibility/responsive/long-run. A finding counts only after it was reproduced or proven from the code; each result below is the orchestrator's verdict, not the agent's claim.
+
+| ID | Finding | Verdict |
+|---|---|---|
+| Q5-1 | OBS overlay page opaque (`body.overlay html` can never match) | Fixed: `html:has(body.overlay)` |
+| Q1-1 | Allocator skipped a session's own pod when an earlier pod emptied | Reproduced, fixed, test |
+| Q1-2 | Retried event (same forwarder seq) reported as a gap | Fixed, test |
+| Q1-3 | Lead combos and "on a roll" counted its agents' calls; session totals double counted | Fixed, test |
+| Q1-5/6 | NaN clock reaped every session; negative durations | Fixed |
+| Q2-1 | office.json edit not pushed when a request noticed it first | Fixed (`refreshConfig`) |
+| Q2-2 | Boot replay kept only 5,000 events | Raised to 50,000 |
+| Q2-4 | apply-pack wrote unvalidated roles | Fixed (validates the merged config) |
+| Q2-5 | cwd `/` made any `.jsonl` readable | Fixed (roots must be 2+ segments, not home) |
+| Q2-6 | plugin-version matched another plugin's Version line | Fixed, test |
+| Q2-7 | `/status?session=<missing>` returned 200 empty | Now 404 |
+| Q4-1 | Esc closed Help and the palette together | Fixed (dialog stack) |
+| Q4-2 | Dialog rows squashed when content exceeded 80vh | Fixed (`flex-shrink:0`) |
+| Q4-3 | Activity feed empty after reload | Fixed (hydrates from the daemon's log) |
+| Q5-2 | Timeline double-click ignored the selection | Fixed |
+| Q5-4 | Failed Replay load left the old replay running | Fixed |
+| Q6-1/2 | Phone drawer covered by header/colony; toggle over status | Fixed |
+| Q6-3 | Status counts truncated on phones | Fixed (wordmark collapses to its tick) |
+| Q6-4/5 | Repeated button names; no main landmark; stats label hid the need-you count | Fixed |
+| Q3-1/2 | Plaques overprint each other at 16/60 agents | Fixed by hover-only plaques |
+| Q5-3 | Starting Replay or Sample ends Freeze | By design (held frames would make a replay look frozen); now stated in the Help row for Freeze |
+| Q1-4 | Stop before Start (or a replayed start after a stop) left a ghost agent holding a desk | Fixed: stopped ids are remembered (bounded) and a later start for them is ignored; test added |
+| Q2-3 | CLI falls back to port 4747 when `AGENT_OFFICE_PORT=0` | Not fixed: a test-only configuration, the default fallback is by design |
+| Q4-4 | White strip under dialogs | Headless-Chromium compositing artifact (see the header workaround) |
+| Q6-6 | GPU texture count grew in a 5 minute soak | Not a leak: in a 12 minute soak the live texture count was flat at 527 from minute 2 to 12 (0 deletions needed), heap 13-23 MB sawtooth, 0 page errors. The DOM node count rose only while the activity feed filled to its cap (807 after the first burst, then 807-815 through 840 more events). Headless software GL; GPU memory itself was not measured. |

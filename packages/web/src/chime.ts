@@ -11,12 +11,11 @@ export const chimePrefs = {
   get volume() { const v = Number(store.get("chime.vol") ?? 50); return Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : 50; },
   set volume(v: number) { store.set("chime.vol", String(Math.max(0, Math.min(100, Math.round(v))))); },
 };
-// Distinct shapes: blocked falls and buzzes, waiting asks (two rising), finished resolves (three rising), loop is a flat double tick.
+// Distinct shapes: blocked falls and buzzes, waiting asks (two rising), finished resolves (three rising).
 const TONES: Record<ChimeKind, { f: number[]; type: OscillatorType }> = {
   blocked: { f: [392, 262], type: "square" },
   waiting: { f: [523, 659], type: "sine" },
   finished: { f: [523, 659, 784], type: "triangle" },
-  loop: { f: [440, 440], type: "sine" },
 };
 let ctx: AudioContext | null = null;
 const wake = () => { try { ctx ??= new AudioContext(); } catch { /* no WebAudio: silent */ } };

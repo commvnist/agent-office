@@ -1,6 +1,6 @@
 import { Container, Graphics, Sprite, Text } from "pixi.js";
 import type { Tile } from "@agent-office/core";
-import { personTex, emoteTex, loopTex, toolIconTex, type Dir, type Emote, type Expr, type Look } from "./sprites.ts";
+import { personTex, emoteTex, toolIconTex, type Dir, type Emote, type Expr, type Look } from "./sprites.ts";
 import { easeSpeed, fontPx, settings, stackBubbles, type BubbleBox } from "./settings.ts";
 import { theme } from "./theme.ts";
 import { HOP_MS, JITTER_MS, SQUASH_MS, cleanText, clampBox, hopPose, jitterX, popScale, quirkAt, squashY, stackLabels, statusOf, stepDrop, toolIcon, type Box, type Rect } from "./choreo.ts";
@@ -126,9 +126,6 @@ export class Actor {
   private ring = new Graphics(); // alert pulse, screen space (UI layer sits above the night overlay)
   private mark = new Graphics(); // hover / selection outline, screen space
   private glyph = new Sprite(); // enlarged alert emote, screen space
-  private loopGlyph = new Sprite(); // amber 'loop' icon above the head while the agent repeats one call
-  private loopRing = new Graphics(); // amber ring at the desk, same state
-  looping = false;
   private hover = false;
   private selected = false;
   private plateW = -1;
@@ -189,11 +186,7 @@ export class Actor {
     this.glyph.texture = emoteTex("exclaim");
     this.ring.visible = this.mark.visible = this.glyph.visible = false;
     this.pip.visible = false;
-    this.loopGlyph.anchor.set(0.5, 1);
-    this.loopGlyph.texture = loopTex();
-    this.loopRing.ellipse(0, 0, 16, 20).stroke({ width: 2, color: 0xffb020 });
-    this.loopRing.visible = this.loopGlyph.visible = false;
-    this.ui.addChild(this.loopRing, this.loopGlyph, this.ring, this.mark, this.prog, this.glyph, this.edge, this.plate, this.tag, this.pip);
+    this.ui.addChild(this.ring, this.mark, this.prog, this.glyph, this.edge, this.plate, this.tag, this.pip);
     uiLayer.addChild(this.ui);
   }
 
@@ -249,7 +242,6 @@ export class Actor {
     this.ring.visible = this.glyph.visible = !!a;
     this.refreshTag();
   }
-  setLoop(on: boolean) { this.looping = on; this.loopRing.visible = this.loopGlyph.visible = on; }
   setHover(b: boolean) { this.hover = b; this.drawMark(); }
   setSelected(b: boolean) { this.selected = b; this.drawMark(); }
   private drawMark() {
@@ -514,15 +506,6 @@ export class Actor {
     this.ring.scale.set(sc * pulse);
     this.mark.position.set(sx, sy - 12 * sc);
     this.mark.scale.set(sc);
-    if (this.looping) {
-      const lp = settings.reducedMotion ? 1 : 0.65 + 0.35 * Math.sin(this.t / 250); // static under reduced motion
-      this.loopRing.position.set(sx, sy - 12 * sc);
-      this.loopRing.scale.set(sc);
-      this.loopRing.alpha = lp;
-      this.loopGlyph.scale.set(Math.max(1.5, sc * 1.2));
-      this.loopGlyph.position.set(sx, headY - 2);
-      this.loopGlyph.alpha = lp;
-    }
     const gs = Math.max(2, sc * 1.6);
     this.glyph.scale.set(gs);
     this.glyph.position.set(sx + 14 * sc, sy - (this.sitting ? 18 : couched ? 22 : 26) * sc);

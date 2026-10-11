@@ -8,12 +8,12 @@ import {
   emptyState, reduce, sweep, capacityFor, roleFor, leadRoster, introFor, SCHEMA_VERSION,
   type OfficeConfig, type OfficeEvent, type OfficeState,
 } from "@agent-office/core";
-import { adapt } from "./adapter.ts";
+import { adapt, clip } from "./adapter.ts";
 import { validateConfig, unknownKeys } from "./config.ts";
 import { summarize } from "./digest.ts";
 import { appendRotating, loadEvents, replay } from "./store.ts";
 import { publicState } from "./snapshot.ts";
-import { readUsage } from "./usage.ts";
+import { readNarration, readUsage } from "./usage.ts";
 
 const PORT = Number(process.env.AGENT_OFFICE_PORT ?? 4747);
 const HOST = process.env.AGENT_OFFICE_HOST || "127.0.0.1";
@@ -66,8 +66,11 @@ reloadConfig();
 
 // State: rebuilt from the stored event log, then swept so quiet sessions do not come back.
 const EVENTS = join(DIR, "events.jsonl");
-let state: OfficeState = replay(cfg, loadEvents(EVENTS, Date.now() - 24 * 3600_000), Date.now(), ttlMs());
+// shortcut: replay the last 50k events of the 24 h window (a busy hour can exceed the 5k default and drop session starts); raise it if sessions come back as "recovered"
+let state: OfficeState = replay(cfg, loadEvents(EVENTS, Date.now() - 24 * 3600_000, 50_000), Date.now(), ttlMs());
 let rev = 0, events = 0, lastEventAt = 0;
+/** Re-read office.json; a change must reach clients (and the envelope cache) whichever request noticed it first. */
+const refreshConfig = () => { if (!reloadConfig()) return false; rev++; push(); return true; };
 let lastProto: unknown;
 type Client = { priv: boolean };
 const clients = new Map<ServerResponse, Client>();
@@ -121,10 +124,52 @@ const strip = (e: OfficeEvent) => Object.fromEntries(Object.entries(e).filter(([
 const cleanContext = (s: string) => s.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "").slice(0, 2000);
 const denials = new Map<string, number>();
 
+// What the lead says between tool calls, read from its own transcript (assistant `text` blocks only; see usage.ts).
+// Per session: ids already shown (a session's history is never replayed on first sight), a throttle, and recent texts
+// so a turn's final message (also sent as `last_assistant_message` on Stop) is shown once.
+const narrated = new Map<string, { seen: Set<string>; primed: boolean; at: number; texts: string[] }>();
+const NARRATE_EVERY_MS = 1500, NARRATE_MAX_SESSIONS = 64, NARRATE_MAX_IDS = 200;
+function narrationEvents(payload: any, now: number): OfficeEvent[] {
+  const hook = String(payload?.hook_event_name);
+  if (!["PreToolUse", "PostToolUse", "Stop", "UserPromptSubmit"].includes(hook) || payload?.agent_id) return []; // the lead only
+  const session = typeof payload?.session_id === "string" ? payload.session_id : "";
+  if (!session || session.length > 64) return [];
+  let st = narrated.get(session);
+  if (!st) {
+    if (narrated.size >= NARRATE_MAX_SESSIONS) narrated.delete(narrated.keys().next().value as string);
+    narrated.set(session, (st = { seen: new Set(), primed: false, at: 0, texts: [] }));
+  }
+  if (hook !== "Stop" && now - st.at < NARRATE_EVERY_MS) return [];
+  st.at = now;
+  const items = readNarration(payload.transcript_path, payload.cwd);
+  const out: OfficeEvent[] = [];
+  const push = (raw: string) => {
+    const text = clip(raw, 160);
+    if (!text || st!.texts.includes(text)) return;
+    st!.texts.push(text);
+    if (st!.texts.length > 32) st!.texts.shift();
+    out.push({ type: "message", session, to: "user", text, t: now });
+  };
+  if (!st.primed) { // first sight: remember what is already there, show only what comes next
+    for (const it of items) st.seen.add(it.id);
+    st.primed = true;
+  } else {
+    for (const it of items) {
+      if (st.seen.has(it.id)) continue;
+      st.seen.add(it.id);
+      if (st.seen.size > NARRATE_MAX_IDS) st.seen.delete(st.seen.values().next().value as string);
+      push(it.text);
+    }
+  }
+  if (hook === "Stop" && typeof payload.last_assistant_message === "string") push(payload.last_assistant_message);
+  return out.slice(-3);
+}
+
 function onEvent(payload: any, res: ServerResponse) {
   if (payload && payload.ao_proto !== undefined) lastProto = payload.ao_proto;
-  const c = (reloadConfig(), cfg);
+  const c = (refreshConfig(), cfg);
   const evs = adapt(payload);
+  evs.unshift(...narrationEvents(payload, Date.now())); // the lead's words come before the tool call they introduce
   if (evs.length) { events++; lastEventAt = Date.now(); }
   for (const e of evs) {
     if (e.type === "agent_stop") e.usage = readUsage(payload.agent_transcript_path, payload.cwd);
@@ -201,10 +246,10 @@ function handle(req: IncomingMessage, res: ServerResponse, allowedHosts: Set<str
   if (path === "/state" || path === "/stream" || path === "/history" || path === "/status" || path === "/outcomes") {
     if (!canRead(req)) return void res.writeHead(401).end();
     const priv = u.searchParams.get("private") === "1" || !!cfg.privacy;
-    if (path === "/state") { reloadConfig(); return void res.writeHead(200, { "content-type": "application/json" }).end(envelope(priv)); }
+    if (path === "/state") { refreshConfig(); return void res.writeHead(200, { "content-type": "application/json" }).end(envelope(priv)); }
     if (path === "/stream") {
       if (clients.size >= MAX_CLIENTS) return void res.writeHead(503).end();
-      reloadConfig();
+      refreshConfig();
       res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
       // A reconnecting client that already has this revision gets no duplicate snapshot.
       if (req.headers["last-event-id"] !== `${EPOCH}-${rev}`) write(res, `id: ${EPOCH}-${rev}\ndata: ${envelope(priv)}\n\n`);
@@ -234,6 +279,7 @@ function handle(req: IncomingMessage, res: ServerResponse, allowedHosts: Set<str
         return { session: x.id, project: x.project, state: x.waiting ? "waiting" : x.doing || own.some((a) => a.doing) ? "working" : "idle",
           agents: own.length, errors: x.errors ?? 0, lastAt: x.lastAt, tokens: x.usage ? x.usage.input + x.usage.output : undefined };
       });
+      if (q && !per.length) return json(res, 404, { error: "no such session" });
       if (u.searchParams.get("format") === "json") return json(res, 200, q ? { ...s, sessions: per } : { ...s, detail: per });
       if (q) return void res.writeHead(200, { "content-type": "text/plain; charset=utf-8" }).end(per.map((x) => `${x.project} ${x.state} ${x.agents} agents ${x.errors} errors`).join("\n") + "\n");
       return void res.writeHead(200, { "content-type": "text/plain; charset=utf-8" }).end(`${s.working} working, ${s.waiting} waiting, ${s.queued} queued\n`);
@@ -277,7 +323,7 @@ server.listen(PORT, HOST, () => {
   for (const s of ["SIGINT", "SIGTERM"]) process.on(s, () => process.exit(0));
   if (!["127.0.0.1", "localhost", "::1"].includes(HOST)) log(`WARNING: bound to ${HOST}, not loopback. Anyone who can reach it and has the token can send events; hooks and browser must use this host.`);
   console.log(`agent-office listening on http://${HOST}:${port}`);
-  setInterval(() => { if (reloadConfig()) { rev++; push(); } }, 2000).unref();
+  setInterval(() => { refreshConfig(); }, 2000).unref();
   setInterval(() => {
     const r = sweep(state, Date.now(), ttlMs(), cfg);
     if (r.removed.sessions.length) { log("swept idle sessions:", r.removed.sessions.join(","), "agents:", r.removed.agents.length); commit(r.state); }

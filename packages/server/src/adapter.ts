@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import type { OfficeEvent, SourceAdapter } from "@agent-office/core";
-import { safeId } from "@agent-office/core";
+import { safeId, stripMeta, metaSummary } from "@agent-office/core";
 
 const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b./g;
 const INVISIBLE = /[​-‏‪-‮⁠-⁩﻿؜]/g; // zero-width, bidi marks/overrides/isolates
@@ -99,7 +99,17 @@ function events(p: Record<string, unknown>, session: string, agentId: string | u
     case "SubagentStop":
       return agentId ? [{ type: "agent_stop", session, agentId, message: clip(p.last_assistant_message, 220) || undefined, t }] : [];
     case "UserPromptSubmit":
-      return [{ type: "prompt", session, text: clip(p.prompt, 140), t }];
+      {
+        // Harness markup (task notifications, reminders) is removed WITH its content before clipping, so a long
+        // notification cannot crowd real text out. A pure notification is not a user prompt: it flips the session
+        // back to working (empty prompt) and keeps its one-line summary as a quiet lead note.
+        const raw = typeof p.prompt === "string" ? p.prompt : "";
+        const text = clip(stripMeta(raw), 140);
+        const sum = text ? "" : clip(metaSummary(raw), 120);
+        return sum
+          ? [{ type: "prompt", session, text: "", t }, { type: "message", session, to: "user", text: sum, t }]
+          : [{ type: "prompt", session, text, t }];
+      }
     case "Stop":
       return [{ type: "turn_end", session, t }];
     case "Notification":
