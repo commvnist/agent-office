@@ -48,6 +48,10 @@ export const setTextScale = (n: number) => { settings.textScale = Math.max(0.8, 
  */
 export const REF_SC = 2.4;
 export const textZoom = { k: 1 };
+/** Scale for text rasterised at `px` screen px so it shows at its exact world-relative size (`base` at REF_SC) at world scale `sc`.
+ * Applied every frame: between re-raster steps text grows and shrinks with the room (a pinch is continuous) instead of holding
+ * still and then jumping. Layout that depends on text (chars per line, rows) is computed in world units, never from `sc`. */
+export const textFit = (base: number, px: number, sc: number) => (px > 0 && sc > 0 && Number.isFinite(sc) ? (base * settings.textScale * sc) / REF_SC / px : 1);
 /** Feed the current world scale; true when the quantized factor changed (callers re-style their text). */
 export const setSceneScale = (sc: number): boolean => {
   const k = Number.isFinite(sc) && sc > 0 ? Math.max(0.125, Math.min(6, Math.round((sc / REF_SC) * 8) / 8)) : 1; // eighths: steps fine enough to track the world when zoomed out

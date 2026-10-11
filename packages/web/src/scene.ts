@@ -9,7 +9,7 @@ import { KEY, theme, STATUS } from "./theme.ts";
 import { office } from "./api.ts";
 import { boardModel, COLS, ledgerLines, SUMMARY_MS, type Board, type Col, type Memo } from "./board.ts";
 import { podOwners, projectHue } from "./logic.ts";
-import { ambientOn, burstAllowed, fontPx, settings } from "./settings.ts";
+import { ambientOn, burstAllowed, fontPx, REF_SC, settings, textFit, textZoom } from "./settings.ts";
 import type { Weather } from "./flair.ts";
 import { cleanText, couchSeats, skyAt, toolKind } from "./choreo.ts";
 import { promptCaption } from "./pod.ts";
@@ -744,8 +744,10 @@ export class Scene {
     }
     // plaques ride the pod's back edge, clipped to the pod width; text only re-set when the size class changes
     const pfs = fontPx(10), cfs = fontPx(9); // scene-relative: bigger when zoomed in
-    const chars = Math.max(3, Math.floor(((this.pods[0] ? this.pods[0].w - 8 : 3 * T) * sc) / (pfs * 0.62)));
-    const cchars = Math.max(8, Math.min(28, Math.floor(((this.pods[0] ? this.pods[0].w + 4 : 4 * T) * sc) / (cfs * 0.6)))); // caption may spill into the aisle, up to one pod pitch
+    // what fits is measured in art px (a 10 px font at REF_SC is 10 / REF_SC art px), so a pinch never re-cuts the text; the size follows the room per frame
+    const pk = textFit(10, pfs, sc), ck = textFit(9, cfs, sc), pw = (10 * settings.textScale) / REF_SC, cw = (9 * settings.textScale) / REF_SC;
+    const chars = Math.max(3, Math.floor((this.pods[0] ? this.pods[0].w - 8 : 3 * T) / (pw * 0.62)));
+    const cchars = Math.max(8, Math.min(28, Math.floor((this.pods[0] ? this.pods[0].w + 4 : 4 * T) / (cw * 0.6)))); // caption may spill into the aisle, up to one pod pitch
     this.pods.forEach((p, i) => {
       const q = p.plaque;
       if (!q) return;
@@ -761,7 +763,8 @@ export class Scene {
       }
       const priv = office.privacy || office.source.private, capOn = sc >= 2 && !!p.prompt && !priv && !this.born.has(i);
       const cx = dev(ox + (p.x + p.w / 2) * sc);
-      q.position.set(cx, dev(oy + (p.y - 7) * sc - (capOn ? Math.round(pfs * 0.7) : 0))); // gaps scale with the fonts, so plaque and caption never overprint (R3)
+      q.scale.set(pk);
+      q.position.set(cx, dev(oy + (p.y - 7) * sc - (capOn ? Math.round(pfs * pk * 0.7) : 0))); // gaps scale with the fonts, so plaque and caption never overprint (R3)
       if (tagHits(q.x, q.y, q.width, q.height)) q.visible = false; // a name tag or selection ring wins over the plaque
       // last-prompt caption under the plaque: small, muted, only when zoomed in; text re-set only when its inputs change
       if (!capOn) { if (p.cap) p.cap.visible = false; return; }
@@ -775,7 +778,8 @@ export class Scene {
         cap.alpha = 0.75;
         cap.eventMode = "none";
       }
-      cap.position.set(cx, dev(oy + (p.y - 7) * sc + Math.round(cfs * 0.7)));
+      cap.scale.set(ck);
+      cap.position.set(cx, dev(oy + (p.y - 7) * sc + Math.round(cfs * ck * 0.7)));
       cap.visible = !tagHits(cap.x, cap.y, cap.width, cap.height);
     });
     const dt = new Date(clockT); // replay passes the recorded time (#105)
@@ -947,8 +951,10 @@ export class Scene {
     const outs = office.getEnvelope()?.state.outcomes ?? [], ledger = outs.length > 0;
     const bd = this.board!, any = tasks.length > 0 && !ledger;
     if (ledger) for (const c of this.cards) if (c.visible) c.visible = false;
-    const fs = Math.max(1, Math.floor(sc * 5)); // world-relative both ways (O3): the board text keeps its size relative to the board
-    const colW = (b.w * T - 6) / 4, chars = Math.floor((colW * sc) / (fs * 0.72)); // 0.72: headroom so a header never runs into the next column's text
+    // world-relative (O3): board text is 5 art px tall. Rasterised at the quantized zoom and scaled to the exact size every frame;
+    // what fits (chars, rows) is measured in art px, so a pinch never re-cuts or re-wraps it
+    const fs = Math.max(1, Math.round(5 * REF_SC * textZoom.k)), bk = (5 * sc) / fs;
+    const colW = (b.w * T - 6) / 4, chars = Math.floor(colW / (5 * 0.72)); // 0.72: headroom so a header never runs into the next column's text
     const key = `${fs}|${chars}|${any}|${ledger ? `${outs[0].t}.${outs.length}` : ""}`;
     if (key !== this.colKey) {
       this.colKey = key;
@@ -961,10 +967,11 @@ export class Scene {
         tx.style.fill = c === "blocked" && n ? STATUS.blocked.color : KEY.text.fg;
       });
       this.boardText.style.fontSize = fs;
-      const rows = Math.max(1, Math.min(4, Math.floor((20 * sc) / (fs * 1.25)))), wide = Math.floor(((b.w * T - 8) * sc) / (fs * 0.62));
+      const rows = Math.max(1, Math.min(4, Math.floor(20 / (5 * 1.25)))), wide = Math.floor((b.w * T - 8) / (5 * 0.62));
       this.boardText.text = ledger ? ledgerLines(outs, rows, wide).join("\n") : bd.summary || "Finished work is posted here";
     }
     this.boardText.visible = !any;
+    for (const t of [this.boardText, ...this.colText]) t.scale.set(bk);
     this.colText.forEach((t, i) => { t.visible = any; t.position.set(dev(ox + (b.x * T + 3 + i * colW + 1) * sc), dev(oy + 4 * sc)); });
     this.boardText.position.set(dev(ox + (b.x * T + 5) * sc), dev(oy + (ledger ? 5 : 8) * sc));
     this.boardMask.clear().rect(dev(ox + (b.x * T + 2) * sc), dev(oy + 3 * sc), dev((b.w * T - 4) * sc), dev(24 * sc)).fill(0xffffff);

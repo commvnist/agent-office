@@ -96,3 +96,16 @@ test("stackBubbles: fixed obstacles overlapping each other stay put and still bl
   assert.deepEqual([r[0].y, r[1].y], [100, 110], "obstacles never shift");
   assert.ok(r[2].y <= 78, "the bubble clears both");
 });
+
+test("textFit: on-screen text size tracks the room exactly at any zoom, between re-raster steps too (a pinch never drifts then jumps)", async () => {
+  const { setSceneScale, fontPx, textFit, REF_SC, settings } = await import("./settings.ts");
+  for (const sc of [0.9, 1.37, 2.4, 2.61, 3.05, 5.5]) {
+    setSceneScale(sc);
+    for (const base of [9, 10, 11]) {
+      const px = fontPx(base), shown = px * textFit(base, px, sc);
+      assert.ok(Math.abs(shown - (base * settings.textScale * sc) / REF_SC) < 1e-9, `${base} at ${sc}`);
+    }
+  }
+  setSceneScale(REF_SC);
+  assert.equal(textFit(11, 0, 2), 1, "no raster yet: unscaled");
+});

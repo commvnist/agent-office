@@ -2,7 +2,7 @@ import { Container, Graphics, Sprite, Text } from "pixi.js";
 import { TILE_PX, type Tile } from "@agent-office/core";
 import { dev } from "./snap.ts";
 import { personTex, emoteTex, ringTex, arcTex, ARC_STEPS, toolIconTex, badgeIconTex, pipTex, PIP, type Dir, type Emote, type Expr, type Look } from "./sprites.ts";
-import { easeSpeed, fontPx, REF_SC, settings, stackBubbles, textZoom, type BubbleBox } from "./settings.ts";
+import { easeSpeed, fontPx, REF_SC, settings, stackBubbles, textFit, textZoom, type BubbleBox } from "./settings.ts";
 import { KEY, STATUS, theme } from "./theme.ts";
 import { HOP_MS, JITTER_MS, SQUASH_MS, cleanText, clampBox, hopPose, idleTier, jitterX, microPose, microSlot, sipState, popScale, quirkAt, squashY, stackLabels, statusOf, stepDrop, type Status, toolIcon, type Box, type Rect } from "./choreo.ts";
 import { hash } from "./color.ts";
@@ -568,6 +568,8 @@ export class Actor {
   /** Position the crisp text overlay using the world's current transform. */
   syncUi(ox: number, oy: number, sc: number, view?: { w: number; h: number; top: number }) {
     this.sc = sc;
+    this.tag.scale.set(textFit(11, Number(this.tag.style.fontSize), sc)); // exact world size every frame: no drift and jump on a pinch
+    const bs = sc / (REF_SC * textZoom.k); // bubbles were built at the quantized zoom: the rest follows the room continuously
     // neighbouring desks stagger their tool bubbles so they do not sit on top of each other
     const stagger = this.sitting ? (Math.round(this.pos.x / (T * 2)) % 2) * 26 : 0;
     const sx = dev(ox + Math.round(this.pos.x) * sc), sy = dev(oy + Math.round(this.pos.y) * sc); // the sprite sits on whole art px; overlays on whole device px
@@ -598,7 +600,7 @@ export class Actor {
       if (this.hidden) this.speech.node.visible = false; // said while collapsed
       this.speech.node.position.set(sx, headY);
       this.speech.node.alpha = fade(this.speech);
-      this.speech.node.scale.set(settings.reducedMotion ? 1 : popScale(this.t - this.speech.born));
+      this.speech.node.scale.set(bs * (settings.reducedMotion ? 1 : popScale(this.t - this.speech.born)));
     }
     this.headPip.x = sx; this.headPip.y = headY + 4;
     if (this.low) { this.drawPip(Math.max(3, sc * 2)); placePip(this.pip, sx, headY + 4); }
@@ -606,6 +608,7 @@ export class Actor {
       this.toolBubble.node.visible = !this.speech && !this.low && !this.hidden;
       this.toolBubble.node.alpha = fade(this.toolBubble);
       this.toolBubble.node.position.set(sx, toolY);
+      this.toolBubble.node.scale.set(bs);
     }
     // the alert glyph lives in screen space so the night overlay never dims it; the ring is in the world, behind the figure
     // alerts move only for their first 4 s (then hold still); "your turn" never pulses: it is calm, not urgent. The pulse is two

@@ -9,7 +9,7 @@ import { KEY, setRoles, STATUS } from "./theme.ts";
 import { isDelight, pickWeather, planDelight, pushSignal, type Delight, type Weather } from "./flair.ts";
 import { Floaters } from "./flairfx.ts";
 import { bindMinimap } from "./minimap.ts";
-import { ambientOn, burstAllowed, fontPx, frozen, setSceneScale, setTextScale, settings } from "./settings.ts";
+import { ambientOn, burstAllowed, fontPx, frozen, REF_SC, setSceneScale, setTextScale, settings, textFit, textZoom } from "./settings.ts";
 import { FxBudget, scaled, type FxClass } from "./fx.ts";
 import { followDue, pickBusiest } from "./follow.ts";
 import { projectHue, sessionColor, sessionTone } from "./logic.ts";
@@ -950,9 +950,11 @@ function drawBadges(ui: View, W: number, H: number) {
       bd.bg.clear().rect(0, 0, bd.w, bd.h).fill({ color: KEY.env[0], alpha: 0.84 }).stroke(bad ? { width: 2, color: STATUS[worst].color, alpha: 1, alignment: 1 } : { width: 1, color: sessionColor(sid, 0.65, 0.6), alpha: open ? 0.3 : 0.5, alignment: 1 });
     }
     const cx = ui.ox + (pr.x + pr.w / 2) * ui.sc, bot = ui.oy + (pr.y - 1) * ui.sc; // above the pod: the plate never covers the desks it stands for
-    bd.c.visible = cx >= 0 && cx <= W && bot >= TOP && bot - bd.h <= TOP + H; // off-screen pods keep their badge off-screen too
+    const bk = ui.sc / (REF_SC * textZoom.k), bw = bd.w * bk, bh = bd.h * bk; // built at the quantized zoom, shown at the room's exact scale
+    bd.c.scale.set(bk);
+    bd.c.visible = cx >= 0 && cx <= W && bot >= TOP && bot - bh <= TOP + H; // off-screen pods keep their badge off-screen too
     if (!bd.c.visible) continue;
-    badgeBoxes.push({ x: cx, y: bot - bd.h, w: bd.w, h: bd.h, pri: 3, own: bd });
+    badgeBoxes.push({ x: cx, y: bot - bh, w: bw, h: bh, pri: 3, own: bd });
     badgeOf.push(bd);
   }
   // inside the visible floor, stacked clear of each other; then they are fixed obstacles for tags and bubbles (actor.ts)
@@ -969,8 +971,8 @@ function drawBadges(ui: View, W: number, H: number) {
     const bd = badgeOf[i];
     if (badgeHide[i]) { bd.c.visible = false; return; }
     const x = clampBox(b, fr).x, y = b.y + dy[i];
-    bd.c.position.set(dev(x - bd.w / 2), dev(y));
-    obstacles.push({ x, y, w: bd.w, h: bd.h, pri: 3 });
+    bd.c.position.set(dev(x - b.w / 2), dev(y));
+    obstacles.push({ x, y, w: b.w, h: b.h, pri: 3 });
   });
 }
 
@@ -1075,14 +1077,14 @@ app.ticker.add((tk) => {
     if (a.yielding && atDoor) { a.lineX = (line % LINE_SHOWN) * 5; if (++line > LINE_SHOWN) lineMax = line; }
   }
   doorTok.visible = lineMax > 0;
-  if (lineMax > 0) { doorTok.text = `+${lineMax - LINE_SHOWN}`; doorTok.position.set(dev(ui.ox + doorPos.x * ui.sc), dev(ui.oy + (doorPos.y - 14) * ui.sc)); }
+  if (lineMax > 0) { doorTok.text = `+${lineMax - LINE_SHOWN}`; doorTok.scale.set(textFit(11, Number(doorTok.style.fontSize), ui.sc)); doorTok.position.set(dev(ui.ox + doorPos.x * ui.sc), dev(ui.oy + (doorPos.y - 14) * ui.sc)); }
   let active = viewDirty || !!camera.follow || v.sc !== lastV.sc || v.ox !== lastV.ox || v.oy !== lastV.oy;
   lastV = v;
   let doorNear = false;
   const door = feet(layout.door);
   foldCrews();
   queueTok.visible = queueOver > 0;
-  if (queueOver) { const q = feet(layout.zones[0].queue[layout.zones[0].queue.length - 1]); queueTok.text = `+${queueOver} waiting for a desk`; queueTok.style.fontSize = fontPx(11); queueTok.position.set(dev(ui.ox + q.x * ui.sc), dev(ui.oy + (q.y - 30) * ui.sc)); }
+  if (queueOver) { const q = feet(layout.zones[0].queue[layout.zones[0].queue.length - 1]); queueTok.text = `+${queueOver} waiting for a desk`; queueTok.style.fontSize = fontPx(11); queueTok.scale.set(textFit(11, Number(queueTok.style.fontSize), ui.sc)); queueTok.position.set(dev(ui.ox + q.x * ui.sc), dev(ui.oy + (q.y - 30) * ui.sc)); }
   for (const [id, a] of actors) {
     const isRun = running.has(id);
     a.working = !a.queued && isWorking(isRun, a.busyAt, now);
@@ -1177,6 +1179,7 @@ app.ticker.add((tk) => {
     t.visible = true;
     t.text = `+${n}`;
     if (t.style.fontSize !== fontPx(10)) t.style.fontSize = fontPx(10); // world-relative like every in-scene text (O3)
+    t.scale.set(textFit(10, Number(t.style.fontSize), ui.sc));
     t.position.set(dev(ui.ox + (b.pos.x + 7) * ui.sc), dev(ui.oy + (b.pos.y - 22) * ui.sc));
   }
   for (let i = movers.length - 1; i >= 0; i--) {
