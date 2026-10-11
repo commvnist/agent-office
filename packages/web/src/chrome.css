@@ -155,3 +155,10 @@ body.tick #mm{bottom:58px} /* the ticker lifts the meter strip: the minimap stay
 @media (max-width:800px){body:not(.collapsed) #spark,body:not(.collapsed) #ticker{display:none}} /* phone sheet open: the strip would cover its last card */
 .tilew{display:flex;flex-direction:column;gap:4px} .tilew>.tile{flex:1} .tilew>.b{align-self:flex-start}
 #wall h2 .b{margin-inline-start:12px;text-transform:none;letter-spacing:normal}
+/* S9: a calm "your turn" (a finished turn): outlined, not the loud fill; its NEEDS YOU row keeps a thinner stripe */
+#need.calm{background:none;color:var(--fg);border:1px solid var(--st)}
+.rdw.calm{border-inline-start-width:1px}
+/* X10: the pairing address is typed on the phone: as large as the code */
+.lanpair .purl{font-size:calc(17px * var(--ts,1));font-weight:700;color:var(--fg);overflow-wrap:anywhere}
+#stale a{color:inherit}
+.it.gaveup{border-color:var(--bad)} .it.gaveup .who{color:var(--bad-ink)}

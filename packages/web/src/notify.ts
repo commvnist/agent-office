@@ -8,15 +8,15 @@ import { chime, chimePrefs } from "./chime.ts";
 import { KEY, STATUS } from "./theme.ts";
 import { look, waitKindOf } from "./triage.ts";
 
-/** A radar item's STATUS key, read from the live state (waiting -> permission or your turn). */
-export const kindOf = (i: RadarItem) => i.kind === "waiting" ? waitKindOf((office.source.liveEnvelope() ?? office.getEnvelope())?.state.sessions[i.session ?? ""]) : i.kind;
+/** A radar item's STATUS key: its own wait (a question is your turn), else read from the live state. */
+export const kindOf = (i: RadarItem) => i.kind !== "waiting" ? i.kind : i.wait ? (i.wait === "permission" ? "permission" : "turn") : waitKindOf((office.source.liveEnvelope() ?? office.getEnvelope())?.state.sessions[i.session ?? ""]);
 
 /** X8: "Stuck after" lives in Settings; NEEDS YOU reads it on every refresh. */
 export const STUCK_MIN = [1, 2, 5, 10];
 export const stuckMin = () => (STUCK_MIN.includes(Number(store.get("stuck"))) ? Number(store.get("stuck")) : 2);
 
 const flag = (k: string) => ({ get: () => store.get(k) === "1", set: (b: boolean) => store.set(k, b ? "1" : "0") });
-export const prefs = { desktop: flag("alert.desktop"), sound: flag("alert.sound"), focused: flag("alert.focused") };
+export const prefs = { desktop: flag("alert.desktop"), sound: flag("alert.sound"), focused: flag("alert.focused"), vibrate: flag("alert.vibrate") };
 
 // #188: per-session snooze/mute, {session: until-ms} in the browser. Permanent mute = MAX_SAFE_INTEGER.
 const readMutes = (): Record<string, number> => { try { return JSON.parse(store.get("mutes") ?? "{}"); } catch { return {}; } };
@@ -65,6 +65,7 @@ function fire(key: string, text: string, session?: string) {
   if (session && mutes.active(session)) return;
   const ck = CHIME_OF[key.split(":")[0]];
   if (ck) chime(ck, key); // an explicit opt-in: sounds even while the tab is focused
+  if (ck && ck !== "finished" && prefs.vibrate.get()) navigator.vibrate?.([120, 80, 120]); // P2: a paired phone's opt-in
   if (document.hasFocus() && !prefs.focused.get()) return;
   if (prefs.desktop.get() && typeof Notification !== "undefined" && Notification.permission === "granted") {
     try { new Notification("Agent Office", { body: priv() ? "A session needs you" : text, tag: key }); } catch { /* some browsers require a service worker */ }
@@ -155,7 +156,7 @@ function watchState(now: number, hot: { id: string; project: string }[]) {
 /** Called with the LIVE radar every refresh (sorted loudest first by ui.ts). */
 export function update(items: RadarItem[], hot: { id: string; project: string }[] = []) {
   const now = Date.now();
-  const long = items.some((i) => i.kind !== "stuck" && now - i.since >= TIERS[1] * 60_000);
+  const long = items.some((i) => i.kind !== "stuck" && !i.soft && now - i.since >= TIERS[1] * 60_000);
   document.title = (office.connection.state === "retrying" ? "(offline) " : "") + (long ? "! " : "") + titleFor(items, base);
   favicon(items.length, items[0] && look(kindOf(items[0])).color);
   const keys = new Set(items.map((i) => i.key));
@@ -163,7 +164,7 @@ export function update(items: RadarItem[], hot: { id: string; project: string }[
   const tiers = (i: RadarItem) => TIERS.filter((m) => now - i.since >= m * 60_000);
   if (!primed) { primed = true; for (const i of items) { fired.add(i.key); for (const m of tiers(i)) fired.add(`${i.key}@${m}`); } return; } // what was already waiting at load is not news
   for (const i of items) {
-    if (i.kind === "stuck") continue;
+    if (i.kind === "stuck" || i.soft) continue; // S9: a finished turn is listed, calm: no chime, no notification
     const word = look(kindOf(i)).label;
     fire(i.key, `${i.label}: ${word}`, i.session);
     for (const m of tiers(i)) fire(`${i.key}@${m}`, `${i.label}: still ${word} after ${m} min`, i.session);

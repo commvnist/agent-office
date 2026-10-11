@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { emptyState, type OfficeState } from "@agent-office/core";
 import { Playback, demoScript, virtualTimes, FALLBACK_CFG } from "./sim.ts";
-import { BURN_HOT, bySession, coverFit, sustained, burnHot, burnRate, cdCommand, filterFeed, fmtAge, fmtDur, fmtTokens, posterModel, projectHue, quietBefore, radar, rosterGroups, sanitizeFilters, summary, sumUsage, tierOf, titleFor, urgency } from "./logic.ts";
+import { BURN_HOT, bySession, sustained, burnHot, burnRate, cdCommand, filterFeed, fmtAge, fmtDur, fmtTokens, projectHue, quietBefore, radar, rosterGroups, sanitizeFilters, summary, sumUsage, tierOf, titleFor, urgency, sessionState, canClear } from "./logic.ts";
 import type { ActorInfo, FeedItem, SessionInfo } from "./api.ts";
 
 test("virtualTimes caps idle gaps", () => {
@@ -76,12 +76,7 @@ test("formatting", () => {
   assert.equal(cdCommand("/a/it's"), `cd '/a/it'\\''s'`);
 });
 
-test("poster carries counts and names only", () => {
-  const p = new Playback(FALLBACK_CFG, demoScript());
-  p.seek(p.events.findIndex((e) => e.type === "waiting"), 10 * 60_000);
-  const m = posterModel(p.state, 10 * 60_000);
-  assert.ok(m.agents.length > 0 && m.minutes >= 0);
-  assert.ok(!JSON.stringify(m).includes("discount"));
+test("canvas summary with no sessions", () => {
   assert.match(summary([], []), /no sessions/);
 });
 
@@ -102,19 +97,17 @@ test("burn hot is strictly above BURN_HOT", () => {
   assert.equal(burnHot(BURN_HOT + 1), true);
 });
 
-test("poster tokens count cache writes like usageTotal, not cache reads", () => {
-  const st: OfficeState = emptyState();
-  st.sessions.a = { id: "a", project: "pa", waiting: false, startedAt: 0, lastAt: 1, usage: { input: 1, output: 2, cacheRead: 100, cacheCreate: 4 } } as OfficeState["sessions"][string];
-  assert.equal(posterModel(st, 60_000).tokens, 7);
-});
-
 test("session urgency, roster order and feed gaps", () => {
   const ses = (o: Partial<SessionInfo>) => ({ id: "s", lead: "L", project: "p", waiting: false, ...o }) as SessionInfo;
   const act = (o: Partial<ActorInfo>) => ({ id: "x", label: "X", role: "dev", session: "s", project: "p", status: "working", lead: false, children: [], chain: [], ...o }) as ActorInfo;
-  assert.equal(urgency(ses({}), [act({ status: "blocked" })]), 0);
-  assert.equal(urgency(ses({ waiting: true }), []), 1);
-  assert.equal(urgency(ses({}), [act({ id: "L", status: "working", lead: true })]), 2);
-  assert.equal(urgency(ses({}), [act({ id: "L", status: "idle", lead: true })]), 3);
+  // S10: the STATUS_ORDER worst state: permission, your turn, gave up, working, idle
+  const u = (s: Partial<SessionInfo> & { waitKind?: string }, acts: ActorInfo[], gave = 0) => urgency(sessionState("s", acts, s as never, gave));
+  assert.equal(u({ waiting: true, waitKind: "permission" }, [act({ status: "blocked" })]), 0);
+  assert.equal(u({ waiting: true }, []), 1);
+  assert.equal(u({}, [act({ status: "blocked" })]), 2);
+  assert.equal(u({}, [act({ id: "L", status: "working", lead: true })]), 3);
+  assert.equal(u({}, [act({ id: "L", status: "idle", lead: true })]), 4);
+  assert.equal(u({}, [act({ id: "L", status: "working", lead: true })], 1), 2, "X6: an open gave-up beats working");
 
   const rows = [
     { a: act({ id: "b", label: "B", session: "s2" }), s: "working" },
@@ -151,11 +144,6 @@ test("sustained fires once after the hold time and resets when the condition end
   assert.equal(sustained(m, "s", true, 340_000, 120_000), true);
 });
 
-test("coverFit fills the box and centres the overflow", () => {
-  assert.deepEqual(coverFit(1000, 500, 720, 630), { s: 1.26, x: (720 - 1260) / 2, y: 0 });
-  assert.deepEqual(coverFit(400, 800, 720, 630), { s: 1.8, x: 0, y: (630 - 1440) / 2 });
-});
-
 test("L2: the header wordmark is the wall sign's 3x5 pixel font, integer-scaled, no accent line", async () => {
   const { readFileSync } = await import("node:fs");
   const { drawPx, pxTextW } = await import("./sprites.ts");
@@ -170,4 +158,31 @@ test("L2: the header wordmark is the wall sign's 3x5 pixel font, integer-scaled,
   assert.equal(Number(pw) / w, Number(ph) / 5); assert.ok(Number.isInteger(Number(pw) / w), "integer scale");
   assert.match(svg, /shape-rendering="crispEdges"/);
   assert.doesNotMatch(html, /\.wm[^{]*\{[^}]*border-bottom/, "no accent line under the wordmark");
+});
+
+test("S3/S8: one row per open wait, permission first, a calm finished turn after a question; questions say so", () => {
+  const st: OfficeState = emptyState();
+  st.agents.h1 = { id: "h1", session: "a", role: "dev", seat: { id: "d0", name: "Ann" }, lastAt: 900 } as never;
+  st.sessions.a = { id: "a", project: "pa", startedAt: 0, lastAt: 900, waiting: true, waitKind: "permission",
+    waits: [{ agent: "", kind: "turn", since: 100, soft: true }, { agent: "h1", kind: "permission", since: 300, text: "Bash" }, { agent: "x", kind: "question", since: 200 }] } as never;
+  const r = radar([], st, 1000, (_k, f) => f);
+  assert.deepEqual(r.map((i) => [i.label, i.wait, !!i.soft]), [["Ann", "permission", false], ["pa", "question", false], ["pa", "turn", true]]);
+  assert.equal(r[1].reason, "Claude is asking you a question");
+  assert.equal(new Set(r.map((i) => i.key)).size, 3);
+  // older daemon: the derived fields, and a turn wait while the prompt runs is a question
+  st.sessions.a = { id: "a", project: "pa", startedAt: 0, lastAt: 900, waiting: true, waitKind: "turn", prompt: "go", waitingText: "Claude needs your permission to use AskUserQuestion" } as never;
+  assert.deepEqual(radar([], st, 1000, (_k, f) => f).map((i) => [i.wait, i.reason]), [["question", "Claude is asking you a question"]]);
+});
+
+test("X1/P1/P7: Clear only on idle, silent or a calm finished turn; Clear idle only with no wait at all", () => {
+  const soft = { id: "s", waiting: true, waitKind: "turn", waits: [{ agent: "", kind: "turn" as const, since: 1, soft: true }] };
+  assert.equal(canClear("idle", { id: "s" }, false), true);
+  assert.equal(canClear("turn", soft, false), true);
+  assert.equal(canClear("turn", soft, false, true), false, "a finished turn is not idle");
+  assert.equal(canClear("turn", { id: "s", waiting: true, waitKind: "turn" }, false), false, "older daemon: not known to be calm");
+  assert.equal(canClear("permission", { id: "s" }, false), false);
+  assert.equal(canClear("blocked", { id: "s" }, false), false);
+  assert.equal(canClear("working", { id: "s" }, false), false);
+  assert.equal(canClear("working", { id: "s" }, true), true, "silent mid-turn");
+  assert.equal(canClear("idle", { id: "s" }, false, true), true);
 });

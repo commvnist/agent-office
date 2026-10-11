@@ -1,7 +1,8 @@
-// Pure helpers for the DOM chrome (no pixi, no DOM): radar, feed filters, formatting, share-poster model.
+// Pure helpers for the DOM chrome (no pixi, no DOM): radar, feed filters, formatting.
 import type { OfficeState, Usage } from "@agent-office/core";
 import type { ActorInfo, FeedItem, SessionInfo } from "./api.ts";
-import { hash } from "./color.ts";
+import { isQuestion, sessionAgg, statusKey, waitKindOf } from "./triage.ts";
+import { STATUS_ORDER, type StatusKey } from "./theme.ts";
 
 export const fmtAge = (ms: number) => {
   const s = Math.floor(ms / 1000);
@@ -35,8 +36,28 @@ export function safeHue(n: number): number {
   for (const [lo, hi] of HUE_BANDS) { if (p < hi - lo) return lo + p; p -= hi - lo; }
   return 220;
 }
-/** A session's one identity colour on every surface (scene badge names, panel names, minimap): the scene's hue for that session id. */
-export const sessionColor = (sessionId: string, s = 0.7, l = 0.72) => `hsl(${safeHue(hash(sessionId))} ${s * 100}% ${l * 100}%)`;
+/** Van der Corput point of slot i in 0..1: every new slot lands in the middle of the largest gap the earlier ones left. */
+export function spread(i: number): number {
+  let f = 0;
+  for (let n = i, b = 0.5; n; n >>= 1, b /= 2) if (n & 1) f += b;
+  return f;
+}
+const SESSION_L = [0, 0.12, -0.12]; // lightness steps by slot, so neighbouring hues also differ in value
+const sessionSlots = new Map<string, number>();
+/**
+ * A session's identity tone (R4): hue in first-seen order at maximum spacing across both identity bands, plus a lightness
+ * offset. main.ts registers live sessions by start time before anything is drawn; any surface asking first registers it.
+ */
+export function sessionTone(id: string): { h: number; dl: number } {
+  let i = sessionSlots.get(id);
+  if (i === undefined) {
+    if (sessionSlots.size >= 512) sessionSlots.clear(); // shortcut: slots are never freed, wiped past 512 sessions (colours reshuffle once); upgrade by reusing ended sessions' slots
+    sessionSlots.set(id, (i = sessionSlots.size));
+  }
+  return { h: safeHue(Math.round(spread(i) * HUE_SPAN) + 6), dl: SESSION_L[i % 3] };
+}
+/** A session's one identity colour on every surface (scene badge names, panel names, minimap): the scene's tone for that session id. */
+export const sessionColor = (sessionId: string, s = 0.7, l = 0.72) => { const t = sessionTone(sessionId); return `hsl(${t.h} ${s * 100}% ${Math.round((l + t.dl) * 100)}%)`; };
 export const projectHue = (name: string) => safeHue([...name].reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7));
 
 /** Shell-safe `cd` line (single quotes; embedded quotes escaped). */
@@ -57,49 +78,61 @@ export function sustained(m: Map<string, { since: number; fired: boolean }>, key
   return (e.fired = true);
 }
 
-/** Scale and offset that make a cw x ch image cover a w x h box (centred, overflow clipped by the caller). */
-export function coverFit(cw: number, ch: number, w: number, h: number) {
-  const s = Math.max(w / cw, h / ch);
-  return { s, x: (w - cw * s) / 2, y: (h - ch * s) / 2 };
-}
-
 /** Escalation tier by how long it has waited: 0 under 5 min, 1 under 15, 2 beyond. */
 export const tierOf = (ms: number) => (ms >= 900_000 ? 2 : ms >= 300_000 ? 1 : 0);
-export type RadarItem = { key: string; kind: "blocked" | "waiting" | "stuck"; id: string; label: string; project: string; since: number; tier: number; reason?: string; session?: string };
+export type WaitKind = "permission" | "question" | "turn";
+/** Builder A's per-agent waits (S3); absent on older daemons, where the session's derived wait fields stand in. */
+export type Wait = { agent: string; kind: WaitKind; since: number; text?: string; soft?: boolean };
+type WaitSess = { id: string; waiting?: boolean; waitKind?: string; waitBy?: string; waitingText?: string; prompt?: string; result?: string; lastAt?: number; waits?: Wait[]; waitSoft?: boolean };
+/** Every open wait of a session: `waits` when the daemon sends it, else the one derived wait (since = undefined: caller decides). */
+export function waitsOf(s: WaitSess | undefined): (Omit<Wait, "since"> & { since?: number })[] {
+  if (!s) return [];
+  if (Array.isArray(s.waits)) return s.waits;
+  return s.waiting ? [{ agent: s.waitBy ?? "", kind: isQuestion(s) ? "question" : waitKindOf(s), text: s.waitingText, soft: s.waitSoft }] : [];
+}
+export type RadarItem = { key: string; kind: "blocked" | "waiting" | "stuck"; id: string; label: string; project: string; since: number; tier: number; reason?: string; session?: string; wait?: WaitKind; soft?: boolean };
+/** C6: gave-up outcomes still open: blocked, not a lead's, of a live session, newer than its latest prompt, not Seen. */
+export const openGaveUps = (state: OfficeState, seen: (key: string) => boolean = () => false) =>
+  (state.outcomes ?? []).filter((o) => { const s = state.sessions[o.session]; return o.outcome === "blocked" && !o.lead && !!s && o.t > (s.promptAt ?? 0) && !seen(gaveUpKey(o)); });
+/** One urgency order on every surface (STATUS_ORDER): permission, your turn (a calm finished turn after a question), gave up, silent. */
+const rankOf = (i: RadarItem) => (i.kind === "waiting" ? (i.wait === "permission" ? 0 : i.soft ? 1.5 : 1) : i.kind === "blocked" ? 2 : 3);
 /**
- * Things that need a human: helpers that gave up, waiting sessions, sessions mid-turn with no event for `stuckMs`, helpers
- * silent for 3x that. `since(key, fallback)` returns when the condition was first seen (caller keeps the map).
- * C6: with `state.outcomes` (current daemons) a gave-up row is a blocked outcome of a live session that is newer than the
- * session's latest prompt and not `seen`; it outlives the 45 s desk hold, a reload and a second page. Older daemons: blocked actors.
+ * Things that need a human: helpers that gave up, every open wait (S3: one row per wait), sessions mid-turn with no event for
+ * `stuckMs`, helpers silent for 3x that. `since(key, fallback)` returns when the condition was first seen (caller keeps the map).
+ * C6: with `state.outcomes` (current daemons) a gave-up row is an open gave-up (openGaveUps); it outlives the 45 s desk hold, a
+ * reload and a second page. Older daemons: blocked actors. A soft wait (a finished turn) is listed calm: tier 0, after the others.
  */
 export function radar(actors: ActorInfo[], state: OfficeState, now: number, since: (key: string, fallback: number) => number, stuckMs = 120_000, seen: (key: string) => boolean = () => false): RadarItem[] {
   const out: RadarItem[] = [];
-  const add = (i: Omit<RadarItem, "tier">) => out.push({ ...i, tier: tierOf(now - i.since) });
+  const add = (i: Omit<RadarItem, "tier">) => out.push({ ...i, tier: i.soft ? 0 : tierOf(now - i.since) });
   if (state.outcomes) {
-    for (const o of state.outcomes) {
-      const s = state.sessions[o.session], key = gaveUpKey(o);
-      if (o.outcome !== "blocked" || o.lead || !s || o.t <= (s.promptAt ?? 0) || seen(key)) continue;
-      add({ key, kind: "blocked", id: o.agentId, label: o.name ?? o.role ?? o.agentId, project: o.project ?? s.project, since: o.t, reason: o.text, session: o.session });
-    }
+    for (const o of openGaveUps(state, seen)) add({ key: gaveUpKey(o), kind: "blocked", id: o.agentId, label: o.name ?? o.role ?? o.agentId, project: o.project ?? state.sessions[o.session].project, since: o.t, reason: o.text, session: o.session });
   } else for (const a of actors) {
     if (!a.lead && a.status === "blocked") add({ key: `blocked:${a.id}`, kind: "blocked", id: a.id, label: a.label, project: a.project, since: since(`blocked:${a.id}`, now), session: a.session });
   }
+  const waiters = new Set<string>();
   for (const s of Object.values(state.sessions)) {
-    const id = `lead:${s.id}`;
-    // X3: on your turn the lead's own last message is the reason, not "Claude is waiting for your input"
-    if (s.waiting) add({ key: `waiting:${s.id}`, kind: "waiting", id: s.waitBy ?? id, label: (s.waitBy && actors.find((x) => x.id === s.waitBy)?.label) || s.project, project: s.project, since: since(`waiting:${s.id}`, s.lastAt ?? now), reason: (s.waitKind !== "permission" && s.result) || s.waitingText, session: s.id });
+    const ws = waitsOf(s);
+    for (const w of ws) {
+      const helper = !!w.agent && !!state.agents[w.agent], id = helper ? w.agent : `lead:${s.id}`;
+      waiters.add(id);
+      // the first wait keeps the old key, so snooze and seen alerts survive an upgrade
+      const key = w === ws[0] ? `waiting:${s.id}` : `waiting:${s.id}:${w.agent}`;
+      // X3: on your turn the lead's own last message is the reason; S8: a question says so
+      const reason = w.kind === "question" ? "Claude is asking you a question" : (w.kind === "turn" && !helper && s.result) || w.text;
+      add({ key, kind: "waiting", id, label: (helper && actors.find((x) => x.id === id)?.label) || (helper ? state.agents[id].seat?.name ?? state.agents[id].role : s.project), project: s.project,
+        since: w.since ?? since(key, s.lastAt ?? now), reason, session: s.id, wait: w.kind, soft: !!w.soft && w.kind === "turn" });
+    }
     // a tool in flight (s.doing) may legitimately be silent for a long time: allow 3x
-    else if (s.prompt && s.lastAt && now - s.lastAt > (s.doing ? stuckMs * 3 : stuckMs)) add({ key: `stuck:${s.id}`, kind: "stuck", id, label: s.project, project: s.project, since: s.lastAt, session: s.id });
+    if (!ws.length && s.prompt && s.lastAt && now - s.lastAt > (s.doing ? stuckMs * 3 : stuckMs)) add({ key: `stuck:${s.id}`, kind: "stuck", id: `lead:${s.id}`, label: s.project, project: s.project, since: s.lastAt, session: s.id });
   }
-  // C7: a seated helper silent for 3x the threshold (a lost stop or an interrupt), unless the wait it raised is open
+  // C7: a seated helper silent for 3x the threshold (a lost stop or an interrupt), unless a wait it raised is open
   for (const a of Object.values(state.agents)) {
     const s = state.sessions[a.session];
-    if (!a.seat || !a.lastAt || now - a.lastAt <= stuckMs * 3 || (s?.waiting && s.waitBy === a.id)) continue;
+    if (!a.seat || !a.lastAt || now - a.lastAt <= stuckMs * 3 || waiters.has(a.id)) continue;
     add({ key: `stuck:${a.id}`, kind: "stuck", id: a.id, label: actors.find((x) => x.id === a.id)?.label ?? a.seat.name ?? a.role, project: s?.project ?? a.session, since: a.lastAt, session: a.session });
   }
-  // one urgency order on every surface (STATUS_ORDER): permission, your turn, gave up, then silent
-  const rk = (i: { kind: string; session?: string }) => i.kind === "waiting" ? (state.sessions[i.session ?? ""]?.waitKind === "turn" ? 1 : 0) : i.kind === "blocked" ? 2 : 3;
-  return out.sort((a, b) => rk(a) - rk(b) || a.since - b.since);
+  return out.sort((a, b) => rankOf(a) - rankOf(b) || a.since - b.since);
 }
 /** The Seen key of a gave-up outcome (no "@": notify.ts uses it for escalation tiers). */
 export const gaveUpKey = (o: { agentId: string; t: number }) => `blocked:${o.agentId}:${o.t}`;
@@ -137,9 +170,24 @@ export const bySession = (items: FeedItem[]) => {
   return by;
 };
 
-/** Session sort bucket: 0 a blocked agent, 1 waiting for you, 2 busy, 3 idle lead. */
-export const urgency = (s: SessionInfo, acts: ActorInfo[]) =>
-  acts.some((a) => a.session === s.id && a.status === "blocked") ? 0 : s.waiting ? 1 : acts.find((a) => a.id === s.lead)?.status === "idle" ? 3 : 2;
+/** X6/S10: a session's one state (tile word, panel chip, sort order): the worst in STATUS_ORDER of its actors (a waiting lead
+ * reads as its wait), its own wait and its open gave-up outcomes. */
+export function sessionState(sid: string, acts: ActorInfo[], sess: WaitSess | undefined, gaveUps = 0): StatusKey {
+  const keys = acts.filter((a) => a.session === sid).map((a) => statusKey(a.lead && sess?.waiting && a.status !== "blocked" ? "waiting" : a.status, sess));
+  if (sess?.waiting) keys.push(waitKindOf(sess));
+  if (gaveUps) keys.push("blocked");
+  return sessionAgg(keys).worst;
+}
+/** Sort rank of a session state: its place in STATUS_ORDER. */
+export const urgency = (k: StatusKey) => STATUS_ORDER.indexOf(k);
+/** X1/P1: Clear is offered only where nothing is lost: idle, silent mid-turn, or a calm finished turn; never working, a
+ * permission prompt, a question or a gave-up. `idleOnly` (Clear idle, P7): no wait at all, not even a finished turn. */
+export function canClear(k: StatusKey, sess: WaitSess | undefined, silent: boolean, idleOnly = false): boolean {
+  const ws = waitsOf(sess);
+  if (k === "permission" || k === "blocked" || ws.some((w) => !w.soft || w.kind !== "turn")) return false;
+  if (idleOnly) return k === "idle" && !ws.length && !sess?.waiting;
+  return k === "idle" || k === "turn" || (k === "working" && silent);
+}
 
 export const RANK: Record<string, number> = { waiting: 0, blocked: 1, queued: 2, working: 3, thinking: 4, idle: 5 };
 export type RosterRow = { a: ActorInfo; s: string };
@@ -172,28 +220,6 @@ export function summary(actors: ActorInfo[], sessions: SessionInfo[]): string {
   const n = (s: string) => actors.filter((a) => a.status === s).length;
   const parts = ["working", "thinking", "queued", "waiting", "blocked"].map((s) => [s, n(s)] as const).filter(([, c]) => c).map(([s, c]) => `${c} ${s}`);
   return `Agent Office: ${sessions.length} session${sessions.length === 1 ? "" : "s"}, ${actors.length} people${parts.length ? ": " + parts.join(", ") : ""}`;
-}
-
-/** Share poster content. Names and counts only: no prompt, tool or path text. */
-export function posterModel(state: OfficeState, now: number) {
-  const sessions = Object.values(state.sessions), agents = Object.values(state.agents);
-  const started = sessions.reduce((m, s) => Math.min(m, s.startedAt), now);
-  const tasks = state.tasks ?? [];
-  const name = (a: (typeof agents)[number]) => (a.seat?.name ?? a.role);
-  const longest = agents.reduce<{ name: string; minutes: number } | null>((m, a) => {
-    const minutes = Math.round((now - (a.startedAt ?? now)) / 60_000);
-    return !m || minutes > m.minutes ? { name: name(a), minutes } : m;
-  }, null);
-  return {
-    sessions: sessions.length,
-    agents: agents.map((a) => ({ name: name(a), role: a.role })),
-    done: tasks.filter((t) => t.status === "done").length,
-    blocked: tasks.filter((t) => t.status === "blocked").length,
-    minutes: sessions.length ? Math.max(0, Math.round((now - started) / 60_000)) : 0,
-    tokens: sessions.reduce((n, s) => n + usageTotal(s.usage), 0),
-    errors: [...sessions, ...agents].reduce((n, x) => n + (x.errors ?? 0), 0),
-    longest,
-  };
 }
 
 /** Owner of each pod (4 desks each): the project with most agents in it (ties: first seen); "" for an empty pod. Keys are seat ids `d<N>`. */

@@ -33,7 +33,7 @@ one rule set in `packages/web/src/snap.ts`. The goal: nothing looks misaligned, 
 - Clock / gauge centres: the footprint keeps only their bounding tiles; `wallDials()` holds the centre and
   `geometry.test.ts` asserts the 20 px extent sits inside the footprint.
 - Light-only art (desk glows, the one vignette, night/day overlays, weather) is not an object; it is anchored on desks/windows. Pools and window light come only from `lights()`; the glow layer is masked to the room rect.
-- Junction LED and rack LEDs are child sprites of their box/cabinet, not separate footprints.
+- The junction LED is a child sprite of its box; rack LEDs are siblings in the y-sort at the cabinet's `zIndex + 0.01` (Pixi v8 warns on children of a Sprite). Neither is a separate footprint.
 
 ## Floors and session badges
 

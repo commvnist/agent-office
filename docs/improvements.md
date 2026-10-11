@@ -4,7 +4,7 @@ Source: 9 simulated focus groups (4 participants each) plus an earlier 6-persona
 These are model-simulated personas, so treat them as hypotheses. Verified by me: #1 (daemon crash on malformed input).
 Dropped as false: "plugin manifest missing" (it exists).
 
-**Status (all 100 implemented; 15 are PARTIAL with the reason in the column).** Nothing here was verified against a live Claude Code session or on Windows/macOS; the web client was exercised in headless Chromium against the demo scenario and a fake `claude` in tmux.
+**Status (all 100 were implemented; PARTIAL gives the reason in the column; REMOVED means built, then cut by an owner decision, with when and why).** Nothing here was verified against a live Claude Code session or on Windows/macOS; the web client was exercised in headless Chromium against the demo scenario and throwaway daemons.
 
 Impact / effort: H M L = high medium low, S M L = small medium large.
 
@@ -31,7 +31,7 @@ Impact / effort: H M L = high medium low, S M L = small medium large.
 | # | Item | What and why | Impact | Effort | Type | Status |
 |---|---|---|---|---|---|---|
 | 14 | Auto-start the daemon from the plugin | SessionStart launches or reuses the daemon; no manual `npm run server` | H | M | feature | DONE |
-| 15 | Plugin install path and marketplace | `/plugin install` then open localhost; first run says what to do | H | M | feature | PARTIAL: marketplace.json written; `/plugin marketplace add` not run |
+| 15 | Plugin install path and marketplace | `/plugin install` then open localhost; first run says what to do | H | M | feature | DONE: `.claude-plugin/marketplace.json`; `npm run setup` adds the marketplace and installs the plugin (`claude plugin ...`) |
 | 16 | Prebuilt web dist or "not built" page | Users must npm install and build before seeing anything | H | M | fix | DONE |
 | 17 | README, LICENSE, quickstart, CONTRIBUTING | 5-minute quickstart, platform matrix, config reference, troubleshooting, demo GIF, MIT | H | S | fix | DONE |
 | 18 | Hook port follows AGENT_OFFICE_PORT | hooks.json hardcodes 4747 in 8 places; changing the port silently severs events | H | S | fix | DONE |
@@ -42,7 +42,7 @@ Impact / effort: H M L = high medium low, S M L = small medium large.
 | 23 | Version handshake, upgrade, uninstall | Schema-version events, mismatch warning, stop/doctor/uninstall commands | M | M | risk | DONE |
 | 24 | Low-overhead async hook forwarding | PreToolUse spawns a process per tool call; fire-and-forget with short timeout | M | M | polish | DONE |
 | 25 | Surface config errors in the UI | Keep last-good config; show validation errors instead of failing silently | M | M | feature | DONE |
-| 26 | CI: typecheck and cross-OS tests | `tsc --noEmit`, node --test on ubuntu/macos/windows, Node 22/24 | H | S | risk | PARTIAL: CI workflow written; never ran on GitHub |
+| 26 | CI: typecheck and cross-OS tests | `tsc --noEmit`, node --test on ubuntu/macos/windows, Node 22/24 | H | S | risk | DONE: `.github/workflows/ci.yml` runs on GitHub (ubuntu/macos/windows, Node 22/24 and 22.6.0) |
 
 ## C. Data accuracy and observability
 
@@ -75,7 +75,7 @@ Impact / effort: H M L = high medium low, S M L = small medium large.
 | 46 | SSE heartbeat, backpressure, resume cursor | No keepalive, ignores drain, no Last-Event-ID, no client cap | M | S | risk | DONE |
 | 47 | Diff snapshots; cut per-frame allocations | Whole-state JSON per event per client; ticker rebuilds maps and sorts every frame | M | M | polish | PARTIAL: snapshots skip stale revs; scene.tick still joins board text each frame |
 | 48 | Extract a pure choreography planner and test it | The riskiest logic lives untested in main.ts | H | M | risk | DONE |
-| 49 | SourceAdapter and ThemePack interfaces | New event sources or themes without editing core | M | L | feature | DONE |
+| 49 | SourceAdapter and ThemePack interfaces | New event sources or themes without editing core | M | L | feature | PARTIAL: `SourceAdapter` stays; ThemePack REMOVED (Oct 2026: one built-in look) |
 
 ## E. Agent workflow and orchestration
 
@@ -107,7 +107,7 @@ Impact / effort: H M L = high medium low, S M L = small medium large.
 | 68 | Collision-aware bubble stacking | Only desk neighbours stagger; add stacking, fade-by-age and per-zone budget | H | M | fix | DONE |
 | 69 | Honor prefers-reduced-motion | Monitor flicker, confetti, bobbing and feed slide-in ignore it; add a low-motion toggle | M | S | risk | DONE |
 | 70 | Night tint must not hide alert cues | Exempt status glyphs and bubbles, or cap darkness, so waiting is visible at 3am | M | S | fix | DONE |
-| 71 | Theme and palette packs | High-contrast, light and CVD-safe themes from one palette table; ~/.agent-office/themes | M | M | feature | DONE |
+| 71 | Theme and palette packs | High-contrast, light and CVD-safe themes from one palette table; ~/.agent-office/themes | M | M | feature | REMOVED (Oct 2026): one built-in look; `theme` in office.json is ignored |
 | 72 | Manual zoom/pan and focus-follow camera | Auto-fit alone makes sprites tiny with many zones or agents | H | M | feature | DONE |
 | 73 | Hover outline, selection ring, Esc to close | Fixed small hit box, no hover state, card vanishes without a close affordance | M | S | polish | DONE |
 
@@ -142,13 +142,13 @@ Impact / effort: H M L = high medium low, S M L = small medium large.
 | 88 | Alerts: OS notification, sound, tab badge | A "waiting for you" bubble in a hidden tab is worthless; title/favicon counts too | H | M | feature | PARTIAL: permission flow + badge done; desktop notification/beep paths unexercised |
 | 89 | Legend, first-run explainer, connection status | Nobody can read dots or `?`; empty office gives no hint why | H | S | feature | DONE |
 | 90 | Auto-demo on empty state | Idle office plays a sample run with a "sample data" badge | H | S | feature | DONE |
-| 91 | Session identity and click-to-focus | Show project/cwd/branch per lead; focus the matching terminal | H | M | feature | PARTIAL: project/cwd/branch/cd-copy done; cannot focus an external terminal (console switches sessions instead) |
+| 91 | Session identity and click-to-focus | Show project/cwd/branch per lead; focus the matching terminal | H | M | feature | PARTIAL: project/cwd/branch/cd-copy done; cannot focus an external terminal (observer-only; the console that switched sessions was removed) |
 | 92 | Plain-English "why" on actions | Use Bash `description` and similar fields already in tool_input | M | S | feature | DONE |
 | 93 | Stuck/blocked radar as the wedge | Position and design around "which agent is waiting on me" | H | M | feature | DONE |
 | 94 | Presenter mode | Big captions, focus on the active agent, hide the side panel | M | M | feature | PARTIAL: works; text scale + camera follow unverified |
-| 95 | Transparent streamer overlay URL | OBS browser source with no chrome and large text | M | S | polish | DONE |
-| 96 | Recording / GIF / clip export | Shareable moments and post-stream highlights | M | M | feature | PARTIAL: MediaRecorder wired; not exercised headless |
-| 97 | Shareable end-of-session card | PNG/SVG poster with agents, tasks, duration and no text content | M | M | feature | DONE |
+| 95 | Transparent streamer overlay URL | OBS browser source with no chrome and large text | M | S | polish | REMOVED (Oct 2026): overlay mode cut; Present and Kiosk stay |
+| 96 | Recording / GIF / clip export | Shareable moments and post-stream highlights | M | M | feature | REMOVED (Oct 2026): GIF first, then Record (.webm) in Pass 5; no audience for it |
+| 97 | Shareable end-of-session card | PNG/SVG poster with agents, tasks, duration and no text content | M | M | feature | REMOVED (Pass 5): the PNG poster was cut; Export is Copy link; Share now means the read-only network viewer |
 | 98 | Documented public event API | Publish the SSE schema plus a 30-line consumer; invites status bars and bots | H | S | feature | DONE |
 | 99 | Plain-text status endpoint | `/status` for tmux, shell prompts and menu bars | M | S | feature | DONE |
 | 100 | Importable role packs | Roles, seats and agent files as one shareable JSON pack | M | M | feature | DONE |

@@ -105,7 +105,7 @@ Watch the office from a phone or tablet on the same network, read-only. Off by d
 2. Open the URL on the device. The certificate is self-signed: accept the warning (compare the fingerprint if you like; the browser shows it in the certificate details).
 3. Pair: "Pair a phone" in Settings, or `node scripts/office.mjs share code`, shows a 6-digit code for 2 minutes. Type it on the device.
 
-The device then sees what the host page shows (text included, unless `privacy` is on) but cannot change anything: there are no write routes on that listener. `share devices` lists paired devices, `share revoke <id>` or `share revoke-all` removes them (open views close at once), `share off` stops the listener, and it stops by itself after `stopAfterHours` (8). Devices unused for 30 days are forgotten. Only private addresses are accepted. Details and the threat model: `docs/ENTERPRISE.md`; routes: `docs/event-api.md`.
+The device then sees what the host page shows (text included, unless `privacy` is on) but cannot change anything: there are no write routes on that listener. `share devices` lists paired devices, `share revoke <id>` or `share revoke-all` removes them (open views close at once), `share off` stops the listener, and it stops by itself after `stopAfterHours` (8). Devices unused for 30 days are forgotten. On the device, Settings shows only "This device": sound or vibration when something needs you, text size, reduced motion and Private, kept on the device. Alerts work only while its page is open (there is no push service). Kiosk works there too and keeps the screen awake. Only private addresses are accepted. Details and the threat model: `docs/ENTERPRISE.md`; routes: `docs/event-api.md`.
 
 ## Desks and pods
 
@@ -170,7 +170,7 @@ Pure, observer-only delight derived live from the current events: highlights for
 
 There are no fun levels and no themes: one look, one set of behaviours. Day and night, weather, window light and dust follow the clock and the work. Highlight cards, rare delights, the attention pulse (ring plus edge vignette) and the slim commentary strip (shown for about 6 s when something new happens, then hidden) are always on. The camera never cuts on its own.
 
-Removed (October 2026, owner decisions): the OBS/overlay mode (`?overlay`, `?preset=obs*`; Present and kiosk stay), GIF export, the Recap PNG, the walk-on courier, the disco floor tint and combos. Motion on the floor comes from real events only.
+Removed (October 2026, owner decisions): the OBS/overlay mode (`?overlay`, `?preset=obs*`; Present and kiosk stay), GIF export, the Recap PNG, the walk-on courier, the disco floor tint and combos; later the Share PNG poster and Record (.webm) (Export is now just Copy link). Motion on the floor comes from real events only.
 
 What you can set (Settings dialog): Reduce motion, Pause ambient motion, Sound (chimes, off by default, with volume and mute), text size, font, line height, letter spacing, alert sound and desktop notifications, stream-safe, spend alarm. Follow (Shift+F) is a manual toggle. The OS `prefers-reduced-motion`, `prefers-contrast: more` and forced-colors settings are honoured.
 

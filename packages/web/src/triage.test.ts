@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { aggLine, clipWords, doneRows, dropOutcome, nextStep, permLine, sessionAgg, statusKey, statusWord, topTools, tree, waitKindOf } from "./triage.ts";
+import { aggLine, clipWords, doneRows, dropOutcome, isQuestion, nextStep, permLine, sessionAgg, statusKey, statusWord, topTools, tree, waitKindOf } from "./triage.ts";
 
 test("one status key per actor; waitKind wins, else the text decides", () => {
   assert.equal(statusKey("blocked"), "blocked");
@@ -58,4 +58,12 @@ test("session aggregate: counts per bucket, worst by STATUS_ORDER, non-zero line
   assert.deepEqual(sessionAgg([]), { agents: 0, working: 0, waiting: 0, blocked: 0, worst: "idle" });
   assert.equal(aggLine(sessionAgg(["idle"])), "");
   assert.equal(sessionAgg(["blocked", "working"]).worst, "blocked");
+});
+
+test("S8: a question is your turn, says so, and never reads as a permission", () => {
+  assert.equal(waitKindOf({ waiting: true, waitKind: "question" }), "turn");
+  assert.equal(waitKindOf({ waiting: true, waitingText: "Claude needs your permission to use AskUserQuestion" }), "turn");
+  assert.equal(isQuestion({ waiting: true, waitKind: "turn", prompt: "go" }), true, "turn wait while the prompt runs");
+  assert.equal(isQuestion({ waiting: true, waitKind: "turn" }), false, "a finished turn");
+  assert.equal(nextStep("question", "api"), "Answer it in the api terminal.");
 });

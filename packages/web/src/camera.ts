@@ -88,7 +88,7 @@ export class Camera {
     this.panY = clamp(this.panY, -lh * sc, lh * sc);
     if (this.phone && !this.fitAll) { // a room larger than the stage never slides off it: no dead band beside or below the walls
       if (lw * sc > W) this.panX = clamp(this.panX, -(lw * sc - W) / 2, (lw * sc - W) / 2);
-      if (lh * sc > H) this.panY = clamp(this.panY, H - lh * sc, 0);
+      this.panY = lh * sc > H ? clamp(this.panY, H - lh * sc, 0) : 0; // X7: a room that fits stays put, top-aligned
     }
     const snap = (n: number) => Math.round(n * dpr) / dpr; // whole device pixels: art pixel edges never straddle a physical pixel
     const ox = snap(cx - (lw / 2) * sc + this.panX), oy = snap(cy - (lh / 2) * sc + this.panY);
@@ -104,10 +104,10 @@ export class Camera {
   }
 
   /** Screen y the world's vertical middle sits on at zero pan: a world taller than the viewport hangs from the top (wall,
-   * lobby, first pods) instead of showing its middle; at equal height both agree. */
+   * lobby, first pods) instead of showing its middle; at equal height both agree. A phone always hangs it from the top. */
   private anchorY(sc: number) {
     const L = this.last;
-    return L.lh * sc > L.H ? L.top + (L.lh * sc) / 2 : L.top + L.H / 2;
+    return L.lh * sc > L.H || this.phone ? L.top + (L.lh * sc) / 2 : L.top + L.H / 2; // X7: phones hang it from the top: no dead band under the header
   }
   /** panY that puts art y on the viewport centre at scale `sc`. */
   private panYFor(y: number, sc: number) {

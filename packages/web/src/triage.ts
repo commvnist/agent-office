@@ -3,11 +3,13 @@
 import type { Session } from "@agent-office/core";
 import { STATUS, STATUS_ORDER, type StatusKey } from "./theme.ts";
 
-type Sess = { waiting?: boolean; waitKind?: "permission" | "turn"; waitingText?: string };
+type Sess = { waiting?: boolean; waitKind?: string; waitingText?: string; prompt?: string };
 type Act = { id: string; label: string; role: string; lead: boolean; status: string; chain: string[]; children: string[] };
 
-/** The daemon's waitKind; older daemons send only the text, so a mention of permission decides. */
-export const waitKindOf = (s?: Sess): "permission" | "turn" => s?.waitKind ?? (/permission/i.test(s?.waitingText ?? "") ? "permission" : "turn");
+/** The daemon's waitKind as a STATUS key (a question is your turn); older daemons send only the text, so a mention of permission decides. */
+export const waitKindOf = (s?: Sess): "permission" | "turn" => s?.waitKind ? (s.waitKind === "permission" ? "permission" : "turn") : /permission/i.test(s?.waitingText ?? "") && !isQuestion(s) ? "permission" : "turn";
+/** S8: an open AskUserQuestion: waitKind "question", or (older daemons) a turn wait while the prompt is still running, or its tool named. */
+export const isQuestion = (s?: Sess) => !!s?.waiting && (s.waitKind === "question" || /\bAskUserQuestion\b/.test(s.waitingText ?? "") || (s.waitKind === "turn" && !!s.prompt));
 
 /** Actor status (+ its session, for a waiting lead) -> the shared STATUS key. queued counts as idle: it is not doing anything yet. */
 export function statusKey(status: string, sess?: Sess): StatusKey {
@@ -44,7 +46,8 @@ export function clipWords(s: string, n: number): string {
 export const dropOutcome = (s: string) => s.replace(/^\s*(?:DONE|BLOCKED|PARTIAL)\b:?\s*/i, "");
 
 /** What the human does next, in plain words. */
-export function nextStep(k: StatusKey | "stuck", project: string, lead?: string): string {
+export function nextStep(k: StatusKey | "stuck" | "question", project: string, lead?: string): string {
+  if (k === "question") return `Answer it in the ${project} terminal.`;
   if (k === "permission") return `Approve or deny it in the ${project} terminal.`;
   if (k === "turn") return `Claude finished its turn: reply in the ${project} terminal.`;
   if (k === "blocked") return `${lead ?? "Its lead"} has the report and may handle it; if not, answer in the ${project} terminal.`;

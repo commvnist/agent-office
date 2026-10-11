@@ -2,7 +2,7 @@
 
 Source: 5 Sonnet 5.5 agents, one per area, each given the round-1 backlog (`docs/improvements.md`, all implemented) and the visual focus-group findings to avoid repeats. Model-generated hypotheses read from the code; nothing was run or rendered, so verify before building. Numbering continues from round 1.
 
-Impact / effort: H M L = high medium low, S M L = small medium large. Status: DONE unless noted. Implemented and verified by typecheck, tests and build; nothing was checked in a browser.
+Impact / effort: H M L = high medium low, S M L = small medium large. Status: DONE unless noted; REMOVED = built, then cut by an owner decision. Implemented and verified by typecheck, tests and build; nothing was checked in a browser.
 
 Near-duplicates to merge when building: #126 with #193 (stuck threshold), #131 with #181 (per-project scope), #133 with #121/#123 (attention ordering).
 
@@ -95,7 +95,7 @@ Near-duplicates to merge when building: #126 with #193 (stuck threshold), #131 w
 | 168 | Incremental DOM updates | `refresh()` rebuilds stats, radar, card, sessions, feed every 500ms; dirty-flag on events. | M | M | improve | PARTIAL: keyed diffs and hidden-tab skip; no dirty flag |
 | 169 | Virtualize roster and feed | One DOM node per entry; window the list or collapse finished agents at 100+. | M | L | improve | PARTIAL: idle helpers fold past 12 agents; no virtualization |
 | 170 | Live region urgency | Keeps last 3 per 1.5s, all polite; assertive region for blocked/waiting, "and N more". | H | S | fix | DONE |
-| 171 | Chrome follows the chosen theme | Theme packs recolour only the canvas; let a pack set `--bg/--panel/--fg`. | M | M | improve | DONE |
+| 171 | Chrome follows the chosen theme | Theme packs recolour only the canvas; let a pack set `--bg/--panel/--fg`. | M | M | improve | REMOVED (Oct 2026): one built-in look, no theme packs |
 | 172 | Theme from OS preferences | No prefers-color-scheme/contrast hookup; pick light/high-contrast when no stored choice. | M | S | feature | DONE |
 | 173 | Hard-coded hex colours bypass tokens | Feed borders, hover, `.tx`, buttons use literals; replace with vars. | L | S | fix | DONE |
 | 174 | Localization string table and plurals | Inline English and manual "s" plurals; extract a messages map, `Intl.PluralRules`. | M | M | feature | PARTIAL: i18n.ts and plurals, English only, own files only |
@@ -128,7 +128,7 @@ Near-duplicates to merge when building: #126 with #193 (stuck threshold), #131 w
 | 196 | Persist outcome history | `tasks` is capped and drops on restart; compact outcome list to a daily summary endpoint. | M | M | feature | DONE |
 | 197 | `/status` per-session detail | Aggregate only; `?session=` or per-project lines for tmux/menu-bar scripts. | M | S | improve | DONE |
 | 198 | Compact wall mode | Dense grid of session tiles (name, state, age, tokens, errors) with no canvas, for a spare monitor. | M | M | feature | DONE |
-| 199 | Poster adds outcomes and cost | `posterModel` counts done/blocked but record.ts draws only done; add blocked, tokens, longest agent, errors. | M | S | improve | DONE |
+| 199 | Poster adds outcomes and cost | `posterModel` counts done/blocked but record.ts draws only done; add blocked, tokens, longest agent, errors. | M | S | improve | REMOVED (Pass 5): the poster was cut |
 | 200 | Daily/weekly digest export | One markdown/JSON report from stored events: sessions, roles, outcomes, tokens, errors, hours. | M | M | feature | DONE |
 
 ## Not checked

@@ -65,5 +65,19 @@ test("caption wording: plain sentences, report prefixes not repeated, lead notes
 test("sessionColor uses the scene's session hue, so a session has one identity colour everywhere", async () => {
   const { sessionColor } = await import("./logic.ts");
   const { sessionHue } = await import("./choreo.ts");
-  assert.equal(sessionColor("abc"), `hsl(${sessionHue("abc")} 70% 72%)`);
+  assert.match(sessionColor("abc"), new RegExp(`^hsl\\(${sessionHue("abc")} 70% \\d+%\\)$`));
+});
+
+test("session hues: first-seen order, widely spaced across both bands, lightness varies between neighbours (R4)", async () => {
+  const { sessionTone }: typeof import("./logic.ts") = await import("./logic.ts?r4" as string); // a fresh module: its slots start at 0
+  const ids = Array.from({ length: 8 }, (_, i) => `r4-${i}`), tones = ids.map(sessionTone);
+  const gap = (a: number, b: number) => Math.min(Math.abs(a - b), 360 - Math.abs(a - b));
+  for (const n of [2, 4, 8]) {
+    let min = 360;
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) min = Math.min(min, gap(tones[i].h, tones[j].h));
+    assert.ok(min >= [0, 0, 60, 0, 30, 0, 0, 0, 15][n], `${n} sessions: closest pair ${min} degrees apart`);
+  }
+  assert.ok(tones.every((t) => (t.h >= 80 && t.h <= 129) || (t.h >= 218 && t.h <= 300)), "inside the identity bands");
+  assert.ok(new Set(tones.slice(0, 3).map((t) => t.dl)).size === 3, "the first three differ in lightness too");
+  assert.deepEqual(ids.map(sessionTone), tones, "stable once seen");
 });

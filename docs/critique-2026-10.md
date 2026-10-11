@@ -791,3 +791,93 @@ Craft and coherence only, no new features. Two Opus auditors (scene craft; chrom
 | Header | The header refits only when its content changes (it ran on every panel refresh: ~4.5% of the main thread at 128 agents). |
 
 Skipped with reasons: the window sill bar (a physical sill, not the removed neon line); the alert vignette (kept in Pass 4); a lounging capture (it depends on idle timing). Perf was not gated locally on this pass: the machine was loaded (load average ~20); an A/B at 128 agents put the old and new builds in the same range (frame p95 14.9-17.6 ms before, 14.0-16.1 ms after), and CI runs the gate on every push.
+
+## Pass 5: the finished build after LAN sharing and Clear (Opus)
+
+The same five lenses as Passes 3 and 4, run read-only on the build after the LAN viewer, manual Clear, steady idle tags, art-px bubbles and the couch step-down. Each agent read this document first and verified claims on throwaway daemons, reducer probes or headless Chrome (desktop, 2x/4x zoom, 390 px phone, LAN pairing and revoke on a bridge address). **Verified** means confirmed by a run or in code; the rest is judgement.
+
+### Consensus
+
+- **Clear is unsafe** (P1, X1, S7): Clear is offered on working and waiting tiles with no confirm. A cleared permission prompt never returns (Claude is blocked, so no event arrives); a working session that is cleared returns under its raw id, recovered, with helpers renamed and a false ENDED summary in the log.
+- **Things that need you disappear by themselves** (S1, S2, S4, L2): ghost helpers are swept only at boot; the 45 min TTL removes waiting sessions; another session's chatter evicts an unseen gave-up; sessions past 50 are dropped, permission prompt included.
+- **Gave-up and status signs disagree across surfaces** (X5, X6, S10, R1, R2, P8): raw ids for departed helpers, a green "working" tile beside a gave-up row, a different sort order in Sessions, the amber "!" and cyan "?" reused for receiving a message, a partial report, a queued agent and a helper's permission.
+- **The phone viewer is a page you must watch** (P2, P3, L1, X7, X9): no sound or vibration on paired devices, no kiosk, one 503 or 401 leaves it offline for good, a dead band above the scene, and a revoked page that still looks live.
+
+### Findings
+
+| Id | Finding | Evidence | Fix | Effort |
+|---|---|---|---|---|
+| L3 | An empty token file turns auth off | Verified: empty `token`/`ui-token`, `/state`, `/event`, `/shutdown` return 200 (`same("", "")`) | Regenerate short tokens at boot; `same()` rejects empty | S |
+| X1/P1 | Clear on working or waiting sessions | Verified (`views.ts:102`) | Clear only on idle/silent tiles | S |
+| S7 | A cleared session returns as its id, "after a daemon restart" | Verified probe | Adapter passes `cwd` on every event; reducer fills a recovered session's project; no ENDED summary for a cleared session that returns | S |
+| X2 | Emptying the office starts Sample in 3 s, with dead Clear buttons | Verified (`modes.ts:242`) | Auto-sample only on a daemon that never saw a session; hide Clear outside live | S |
+| S1 | Ghost helpers are never swept at runtime | Verified (`server/main.ts:500` commits only removed sessions) | Commit when agents are removed too | S |
+| S2 | TTL removes sessions waiting on you | Verified probe (`state.ts:290`) | Skip waiting sessions | S |
+| S4 | Unseen gave-up evicted by other sessions' outcomes | Verified probe (cap 30 shared) | Never evict an unseen gave-up of a live session | S |
+| L2 | Sessions past 50 vanish, permission included | Verified (`state.ts:355`) | Evict the oldest non-waiting session; count drops in `/status` | S |
+| L1 | One 503/401 leaves the page offline for good | Verified (`net.ts:72`) | Reconnect on CLOSED with backoff; 401 on a phone goes to `/pair`; a device's new stream evicts its oldest | S |
+| S3 | One wait per session: approving one helper drops another's prompt; a lead Stop clears a helper's prompt | Verified probes | Waits per agent; each closes only its own | M |
+| S5 | Overlapping tools: `doing` cleared by the first end | Verified (`state.ts:453`) | Clear only when no start is open for that actor | S |
+| S6 | The last of several same-role delegations is "exact" | Verified probe (`state.ts:321`) | Exact only when alone in its window | S |
+| S8 | AskUserQuestion reads "needs your permission" and "finished its turn" | Verified probe | "Claude is asking you a question" / "Answer it in the terminal" | S |
+| S10 | Sessions view sorts by its own urgency | Verified (`logic.ts:146`) | Sort by the STATUS_ORDER worst state | S |
+| X6 | A tile says "working" while its helper gave up | Verified | Tile state = worst of session and its open gave-ups | S |
+| X5/P8 | Departed helpers named by raw id; feed and Recently done disagree on names | Verified (`choreo.ts:359`) | Fall back to the name kept with the outcome | S |
+| R1 | Amber "!" for receive and partial report; cyan "?" for queued; `#7fe3ff` hard-coded on machine marks | Verified (`choreo.ts:153,175`, `main.ts:569,625`, `actor.ts:540`) | Message glyph in paper; "…" for queued; machine marks on `KEY.cyan` | S |
+| R2 | A lead shows your-turn "?" when a helper needs permission | Verified (`main.ts:468`) | Emote only for the lead's own turn wait | S |
+| P7 | A turn that ends with a question reads idle and is offered to "Clear idle" | Verified | Exclude sessions with an unread result since their last prompt from Clear idle | S |
+| X4 | "Open" on a departed gave-up helper jumps to History | Verified (`ui.ts:59`) | Stay in Office, select the lead, list the helper and its report | S-M |
+| X11 | "Clear" also means deselect on the card | Verified (`ui.ts:246`) | Rename to "Deselect" | S |
+| X3 | First run: the setup card lasts 3 s before Sample covers it | Verified | Sample banner says how to connect and when the last hook arrived | S |
+| P2 | No sound, vibration, text size or motion settings on a paired phone | Verified (`index.html:149`, `sharelogic.ts:67`) | A "This device" settings section, viewer-local only | M |
+| P3 | No kiosk on paired devices | Verified (same rule) | Allow kiosk on remote, with a Screen Wake Lock | S |
+| X7 | A ~180 px dead band above the scene on a phone | Verified (390x844) | Top-align the fit on narrow screens; viewing chip inline | S |
+| X8 | Paired devices cannot be told apart | Verified (reduced UA strings) | Optional name on the pair form; show the pairing date | S |
+| X9 | A revoked phone's message has no link and the page still alarms | Verified | Link to `/pair`; dim pill and scene while offline | S |
+| X10 | The share chip does not open the share section | Judgement | Chip opens Settings at Share with the URL shown large | S |
+| L5 | The LAN address can pick a Docker bridge; a DHCP change leaves a dead URL | Verified candidates on this host | Rank 192.168 > 10 > 172.16, skip virtual adapters; list candidates; stop and log when the address is gone; doctor warns on WSL NAT | S-M |
+| L7 | Phones re-download ~870 KB per load | Verified sizes | Immutable cache for hashed `/assets/*` | S |
+| L4 | `npm run setup` starts the daemon without the strip-types flag (Node 22.6–22.17) | Verified in code (`setup.mjs:97`) | Same flags as other spawns; add 22.6.0 to CI | S |
+| L6 | A crashed daemon restarts only on a new session; hooks during boot replay are dropped | Verified in code | Also autostart on UserPromptSubmit; listen before replay | S |
+| S11 | Compaction looks like a stall | Judgement | Forward PreCompact as a note the stuck check skips | S |
+| S9 | "Your turn" after Stop depends on an `idle_prompt` never seen on real data | Judgement | Owner call (see below) | S |
+| R3 | Pod plaque and caption overprint at 2x/4x; text strokes fixed in screen px | Verified | Gaps and strokes from `fontPx`; round joins | S |
+| R4 | Session hues collide (26% of pairs within 20°) | Verified probe | Assign hues in first-seen order at maximum spacing | S |
+| R6 | Tether and long-tool arc are anti-aliased vectors across faces | Verified | Dotted pixel tether at feet level; pixel arc frames | S-M |
+| R7 | Tool chip overprints bubble text; stacked bubbles fade with alpha | Verified | Pad by the chip width; darken instead of fading | S |
+| R8 | Empty chairs are bright session-colour blocks | Judgement | Env-ramp chair with a 1 px session trim | S |
+| R9 | Upper-row tags float ~9 art px above heads | Judgement | Tag at head top; lift only while an emote shows | S |
+| R5 | Over 12 helpers in total, every crew folds to a card, even at 1440 px | Verified | Owner call (see below) | M |
+| P4 | Backlog status is stale (#95 OBS, #96 GIF, #71/#49 themes, #91 console, #26 CI, #15) | Verified | Add REMOVED; update rows | S |
+| P5/P6 | Export ▸ Share is a PNG poster, unrelated to network Share; Record and poster lost their audience | Verified / judgement | Owner call (see below) | S |
+
+### Owner decisions needed
+
+1. **S9:** treat a finished turn (Stop) as a calm "your turn" (listed in NEEDS YOU, no chime), or keep it idle until Claude Code sends `idle_prompt`.
+2. **R5:** fold crews by legibility (figures under ~20 screen px, or more helpers than visible desks) instead of above 12 helpers in total, with a small pixel plate instead of a card.
+3. **P5/P6:** cut the PNG poster and Record (Export becomes Copy link), or rename the poster "Poster (PNG)" and keep both.
+4. **P2:** phone alerts work only while the page is open (sound, vibration, title). Waking a locked phone needs a push service, which would break "nothing leaves the machine"; the plan does not include it.
+
+### Protect (all five agree)
+
+Observer-only and the read-only LAN route table; one urgency order and one STATUS map; outcomes as the main unit (✓ only for DONE); the calm (no auto camera cuts, sound off by default on the host); the lead-at-the-door hierarchy and seats that never move; the KEY value ramp, pixel alert rings and faces as the brightest pixels; world-relative text; the perf gate at both points.
+
+### Owner decisions on Pass 5
+
+1. A finished turn is a calm "your turn": listed in NEEDS YOU after the others, a dim dotted ring, no chime, no notification, no pulse. It still expires at the idle TTL and can be cleared by hand; permission prompts and questions never expire and cannot be cleared.
+2. Crews fold by legibility (a figure under 20 screen px, unfolding from 24), as a small plate above the pod.
+3. The PNG poster and Record are cut; Export holds Copy link.
+4. No push service: phone alerts work only while the page is open.
+
+### Pass 5 build: status
+
+Built by three Opus builders on disjoint files (data and server; web chrome; scene), integrated and checked by the lead: 360 tests, typecheck, compliance and the web build pass; a mixed-state office (helper permission, question, finished turn, gave-up, 8 helpers) checked in headless Chrome at 1440x900 and 390x844 with a clean console. Every row of the findings table is done except as noted below.
+
+| Item | Status |
+|---|---|
+| Waits | Sessions carry `waits` (one per agent: permission, question or turn, `soft` for a finished turn); the old fields stay as the derived most urgent wait. |
+| Integration fix | The scene drew a question as a permission ("!", amber ring); `waitsFor` now maps only a permission to the amber sign (test added). |
+| R5 "more helpers than visible desks" | Skipped: every seated helper has a desk, so it has no useful meaning. |
+| S1 daemon test | Covered by core tests (a ghost-only sweep returns a new state); a daemon test would need 20 s of real waiting. |
+| Plugin | 0.0.4 (PreCompact hook, autostart on prompt); installed copies need `npm run setup` or `/plugin update`. |
+| Known limits | A helper interrupted with an open permission keeps the session unclearable until the ghost sweep (~15 min after the lead's next finished turn); the X2 "fresh daemon" rule is a marked shortcut; LAN reads during boot replay may briefly see an empty state; on a phone "Fit all", fold plates can be pushed onto the lead row. Perf timings were not gated (machine loaded); object counts pass at both points (2477 and 3088 of 3500). |

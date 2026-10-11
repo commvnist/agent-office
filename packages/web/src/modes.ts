@@ -1,10 +1,9 @@
-// Pluggable data sources (#90 sample data, #33 replay) + the toolbar buttons that switch them, privacy (#10), record (#96), share (#97).
+// Pluggable data sources (#90 sample data, #33 replay) + the toolbar buttons that switch them, privacy (#10), copy link.
 // Both simulations run events through the core reducer locally (sim.ts) and push envelopes via office.source.
 import { emptyState } from "@agent-office/core";
 import { office } from "./api.ts";
 import { $, btn, download, el } from "./dom.ts";
 import { FALLBACK_CFG, Playback, demoScript, simEnvelope } from "./sim.ts";
-import { recording, sharePoster, toggleRecording } from "./record.ts";
 import { HISTORY_LIMIT, fetchHistory, markers, toCsv, toJsonl, type Marker } from "./history.ts";
 import { group } from "./toolbar.ts";
 import { register } from "./palette.ts";
@@ -137,23 +136,13 @@ export function bindModes(tools: HTMLElement, bar: HTMLElement) {
   register("History: Replay a time range", () => toggleReplay(true));
   register("Data: Sample data on / off", toggleSample);
   register("Privacy: Private on / off (reloads)", () => office.source.setPrivate(!office.source.private));
-  const note = (s: string) => { $("rec-note").textContent = s; };
-  const recBtn = btn("Record", "Record the office canvas to a .webm file", (b) => {
-    const s = toggleRecording();
-    b.textContent = recording() ? "Stop rec" : "Record";
-    note(s);
-  });
-  const linkBtn = btn("Copy link", "Copy a URL that restores the selection, scope, view and filters. Nothing is sent anywhere.", async () => note(await copyLink()));
-  out.append(recBtn, linkBtn, btn("Share", "Download a PNG poster: office snapshot, counts and names (speech bubbles in the snapshot can show text; Private blanks them)", sharePoster));
+  const linkBtn = btn("Copy link", "Copy a URL that restores the selection, scope, view and filters. Nothing is sent anywhere.", async () => { $("rec-note").textContent = await copyLink(); });
+  out.append(linkBtn);
   register("Export: Copy link", () => linkBtn.click());
-  register("Export: Record video (.webm)", () => recBtn.click());
-  register("Export: Share poster (PNG)", () => void sharePoster());
   register("Setup: Private on / off", () => office.source.setPrivate(!office.source.private));
-  document.addEventListener("ao-rec-stop", () => { recBtn.textContent = "Record"; $("rec-note").textContent = "saved"; });
   const noteEl = el("span", "note chip");
   noteEl.id = "rec-note";
   noteEl.setAttribute("role", "status");
-  noteEl.title = "Recordings include speech bubbles, which can contain prompts. Turn Private on to hide them.";
   badge.after(noteEl); // a header chip: the Export menu closes on click, so its result shows here
 
   // replay bar
@@ -239,16 +228,21 @@ export function bindModes(tools: HTMLElement, bar: HTMLElement) {
     void startReplay(ms(from) || Date.now() - Number(sel.value), ms(to), status, () => exp.forEach((b) => { b.disabled = !loaded.length; }))), ...exp, status, c);
   bar.append(box);
 
-  // auto sample data when the office has been empty for a few seconds
-  let lastReal = Date.now();
+  // X2: auto sample data only on a daemon that has never seen a session (first run): not after a Clear or the idle sweep, not on a paired device
+  let lastReal = Date.now(), ever = false, hooks: boolean | null = null;
   const realSessions = () => Object.keys(office.source.liveEnvelope()?.state.sessions ?? {}).length > 0;
+  const fresh = () => { const e = office.source.liveEnvelope(); return !!e && !e.remote && !ever && !e.state.summaries?.length && hooks === false; };
+  // shortcut: "never saw a session" = no ended-session summaries and no hook since the daemon started (GET /status); a daemon
+  // restarted after its summaries aged out counts as fresh. Upgrade if the envelope carries a lifetime session count.
+  void fetch("/status?format=json", { credentials: "same-origin" }).then((r) => (r.ok ? r.json() : null)).then((j: { lastEventAt?: number } | null) => { hooks = j ? !!j.lastEventAt : true; }, () => { hooks = true; });
   office.source.onLive(() => {
     if (!realSessions()) return;
+    ever = true;
     lastReal = Date.now();
     if (office.source.mode === "demo") stop(); // a real session appeared: sample data ends immediately
   });
   setInterval(() => {
     if (realSessions()) lastReal = Date.now(); // sessions stay real between events
-    else if (office.source.mode === "live" && !manual && Date.now() - lastReal > AUTO_AFTER_MS) startDemo();
+    else if (office.source.mode === "live" && !manual && fresh() && Date.now() - lastReal > AUTO_AFTER_MS) startDemo();
   }, 1000);
 }

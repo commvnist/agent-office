@@ -37,7 +37,8 @@ async function send(method: "POST" | "DELETE", path: string, body?: unknown): Pr
 
 /** Settings > Share on network. Fills `box` once; returns the open hook (reloads the state). */
 export function shareSection(box: HTMLElement, row: (label: string, c: HTMLElement, hint?: string) => HTMLElement): () => void {
-  box.append(el("p", "k", "Lets phones on this network watch the office, read-only: no Settings, no controls. Hooks and the token stay on this machine. Off by default; stops by itself."));
+  box.append(el("p", "k", "Lets phones on this network watch the office, read-only: no host settings, no controls. Hooks and the token stay on this machine. Off by default; stops by itself."),
+    el("p", "k", "A phone can sound or vibrate when something needs you, but only while its page is open: there is no push service, nothing leaves this network."));
   const on = el("input");
   on.type = "checkbox";
   on.addEventListener("change", () => { on.disabled = true; void send("POST", "/share", { on: on.checked }).finally(() => { on.disabled = false; }); });
@@ -75,8 +76,9 @@ export function shareSection(box: HTMLElement, row: (label: string, c: HTMLEleme
     if (!pair.hidden && pairing) {
       const code = el("div", "pcode", pairing.code.replace(/(\d{3})(\d{3})/, "$1 $2"));
       code.setAttribute("aria-label", `Pairing code ${pairing.code.split("").join(" ")}`);
-      const k = el("p", "k", `On the phone open ${s?.url ?? "the address"}/pair and type this code. Expires in ${mmss(left)}; single use.`);
-      if (pair.firstElementChild?.textContent !== code.textContent) pair.replaceChildren(code, k);
+      const k = el("p", "k", `On the phone open the address above and type this code. Expires in ${mmss(left)}; single use.`);
+      // X10: the address large beside the code: both are typed on the phone
+      if (pair.firstElementChild?.nextElementSibling?.textContent !== code.textContent) pair.replaceChildren(el("div", "purl", `${s?.url ?? ""}/pair`), code, k);
       else pair.lastElementChild!.textContent = k.textContent; // tick only the countdown: the code keeps its node
     }
     const ds = live ? s!.devices : [];
@@ -84,7 +86,8 @@ export function shareSection(box: HTMLElement, row: (label: string, c: HTMLEleme
     if (devs.dataset.sig !== dsig) {
       devs.dataset.sig = dsig;
       devs.replaceChildren(...(live ? [el("p", "k", ds.length ? `Paired devices (${ds.length})` : "No paired devices yet.")] : []), ...ds.map((d) => {
-        const r = el("div", "srow"), name = el("span", "", d.name);
+        // X8: the name the phone gave (or its browser) and when it paired: two phones of one model can be told apart
+        const r = el("div", "srow"), name = el("span", "", `${d.name} · paired ${new Date(d.createdAt).toLocaleDateString([], { day: "numeric", month: "short" })}`);
         name.title = `${d.name}, paired ${new Date(d.createdAt).toLocaleString()}`;
         const ctl = el("span", "sctl");
         const rv = btn("Revoke", "Unpair this device now: its open views close at once", () => void send("DELETE", `/share/devices/${encodeURIComponent(d.id)}`), "b sm");
@@ -107,7 +110,7 @@ export function bindLan() {
     document.body.classList.toggle("remote", !!e.remote);
     if (e.remote) {
       const t = `viewing ${location.hostname}`;
-      if (chip.textContent !== t) { chip.textContent = t; chip.title = "A read-only view of another computer's office, over the local network"; }
+      if (chip.textContent !== t) { chip.textContent = t; chip.title = "A read-only view of another computer's office, over the local network. Click for this device's settings."; }
       chip.hidden = false;
     } else if (!started) {
       started = true;
@@ -123,6 +126,6 @@ export function bindLan() {
     if (isRemote()) return;
     const t = lanChip(info);
     chip.hidden = !t;
-    if (chip.textContent !== t) { chip.textContent = t; chip.title = "Phones on this network can watch this office, read-only. Settings > Share on network."; }
+    if (chip.textContent !== t) { chip.textContent = t; chip.title = "Phones on this network can watch this office, read-only. Click for Settings > Share on network."; }
   });
 }

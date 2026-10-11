@@ -56,31 +56,49 @@ export function applyPatch(env: Envelope | null, p: Patch): Envelope | null {
 }
 
 export type ConnState = "connecting" | "live" | "retrying";
-/** Open /stream (same-origin cookie auth). EventSource reconnects by itself and sends Last-Event-ID; patches that do not fit resync from /state. */
+/** L1: delay before the n-th reopen of a closed stream (0-based): 1 s doubling, capped at 30 s. */
+export const backoff = (n: number) => Math.min(30_000, 1000 * 2 ** Math.min(n, 5));
+/**
+ * Open /stream (same-origin cookie auth). While the EventSource is CONNECTING it retries by itself (Last-Event-ID); once the
+ * browser gives up (CLOSED: a 401, a 503, a dropped listener) the stream is reopened with backoff. A paired page whose 401
+ * says it is no longer paired goes to /pair. Patches that do not fit resync from /state.
+ */
 export function connect(onEnvelope: (e: Envelope) => void, onState: (s: ConnState) => void, priv = false): () => void {
-  const es = new EventSource(priv ? "/stream?private=1" : "/stream");
+  let es: EventSource, tries = 0, timer: ReturnType<typeof setTimeout> | undefined;
   let cur: Envelope | null = null, syncing = false;
   const take = (e: Envelope) => { cur = e; onEnvelope(e); };
+  const stateUrl = priv ? "/state?private=1" : "/state";
   const resync = async () => {
     if (syncing) return;
     syncing = true;
     try {
-      const r = await fetch(priv ? "/state?private=1" : "/state", { credentials: "same-origin" });
+      const r = await fetch(stateUrl, { credentials: "same-origin" });
       if (r.ok) { const e: Envelope = await r.json(); if (!cur || e.epoch !== cur.epoch || e.rev > cur.rev) take(e); }
     } catch (e) { console.error("resync failed", e); } finally { syncing = false; }
   };
-  es.onopen = () => onState("live");
-  es.onerror = () => onState("retrying");
-  es.onmessage = (m) => {
-    try { take(JSON.parse(m.data)); } catch (e) { console.error("bad snapshot", e); }
+  const open = () => {
+    es = new EventSource(priv ? "/stream?private=1" : "/stream");
+    es.onopen = () => { tries = 0; onState("live"); };
+    es.onerror = () => {
+      onState("retrying");
+      if (es.readyState !== EventSource.CLOSED) return; // the browser is retrying by itself
+      // the loopback daemon is plain http: an https page is a paired device's view
+      if (cur?.remote || location.protocol === "https:") void fetch(stateUrl, { credentials: "same-origin" }).then((r) => { if (r.status === 401) location.assign("/pair"); }, () => {});
+      clearTimeout(timer);
+      timer = setTimeout(open, backoff(tries++));
+    };
+    es.onmessage = (m) => {
+      try { take(JSON.parse(m.data)); } catch (e) { console.error("bad snapshot", e); }
+    };
+    es.addEventListener("patch", (m) => {
+      try {
+        const p: Patch = JSON.parse((m as MessageEvent).data);
+        if (cur && p.epoch === cur.epoch && p.rev <= cur.rev) return; // already covered (a resync overtook it)
+        const next = applyPatch(cur, p);
+        if (next) take(next); else void resync();
+      } catch (e) { console.error("bad patch", e); }
+    });
   };
-  es.addEventListener("patch", (m) => {
-    try {
-      const p: Patch = JSON.parse((m as MessageEvent).data);
-      if (cur && p.epoch === cur.epoch && p.rev <= cur.rev) return; // already covered (a resync overtook it)
-      const next = applyPatch(cur, p);
-      if (next) take(next); else void resync();
-    } catch (e) { console.error("bad patch", e); }
-  });
-  return () => es.close();
+  open();
+  return () => { clearTimeout(timer); es.close(); };
 }

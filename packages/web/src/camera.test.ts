@@ -132,3 +132,11 @@ test("phone view follows the auto point and never shows past the walls", () => {
   c.toggleFitAll();
   assert.ok(!c.fitAll && c.autoFollow);
 });
+
+test("X7: on a phone a room shorter than the stage hangs from the header, whatever the follow point", () => {
+  const c = new Camera();
+  c.phone = true;
+  c.autoPos = { x: 160, y: 190 }; // far down the room: a centred fit would pan it down and leave a band above
+  for (let i = 0; i < 5; i++) c.view(1, 390, 700, 140, 320, 200, null, 0.1);
+  assert.equal(c.view(1, 390, 700, 140, 320, 200).oy, 140);
+});

@@ -53,3 +53,8 @@ test("applyPatch refuses a patch that does not fit: no envelope, other epoch, ot
   assert.equal(applyPatch(e0, { epoch: "e", rev: 5, base: 4 }), null);
   assert.equal(applyPatch(e0, { epoch: "e", rev: 4, base: 3 })!.rev, 4);
 });
+
+test("L1: a closed stream reopens after 1 s, doubling, capped at 30 s", async () => {
+  const { backoff } = await import("./net.ts");
+  assert.deepEqual([0, 1, 2, 4, 5, 9, 1000].map(backoff), [1000, 2000, 4000, 16_000, 30_000, 30_000, 30_000]);
+});

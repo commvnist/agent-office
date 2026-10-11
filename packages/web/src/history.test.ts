@@ -2,8 +2,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { OfficeEvent } from "@agent-office/core";
 import { awayCounts, fetchHistory, historyRange, gantt, markers, pickRange, rangeStats, toCsv, waterfall, zoomView } from "./history.ts";
-import { posterModel } from "./logic.ts";
-import { emptyState } from "@agent-office/core";
 import { MSG, t } from "./i18n.ts";
 
 const ev = (x: unknown) => x as OfficeEvent;
@@ -30,13 +28,6 @@ test("X2: a stored stop's outcome field wins over the message prefix; away count
 });
 test("csv quotes and defuses formulas", () => {
   assert.match(toCsv(E).split("\n")[3], /"'=x,""y"""/);
-});
-test("poster adds tokens, longest agent and errors", () => {
-  const s = emptyState();
-  s.sessions.s = { id: "s", project: "p", waiting: false, startedAt: 0, errors: 2, usage: { input: 5, output: 7, cacheRead: 0, cacheCreate: 0 } } as never;
-  s.agents.a = { id: "a", session: "s", role: "qa", agentType: "qa", startedAt: 1000, errors: 1 } as never;
-  const m = posterModel(s, 61_000);
-  assert.deepEqual([m.tokens, m.errors, m.longest?.minutes], [12, 3, 1]);
 });
 test("plural message", () => {
   assert.equal(t("session", { n: 1 }, "en"), "1 session");

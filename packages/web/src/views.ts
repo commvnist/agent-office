@@ -8,7 +8,8 @@ import { aggLine, look, outcomeLook, permLine, sessionAgg, statusKey, statusWord
 import { replayRange, toggleReplay } from "./modes.ts";
 import { store } from "./dom.ts";
 import { ignoreKey } from "./camera.ts";
-import { fmtAge, fmtDur, fmtTokens } from "./logic.ts";
+import { canClear, fmtAge, fmtDur, fmtTokens, openGaveUps, sessionState, urgency } from "./logic.ts";
+import { stuckMin } from "./notify.ts";
 import { t } from "./i18n.ts";
 import { group } from "./toolbar.ts";
 import { buildLink, parseLink } from "./sharelogic.ts";
@@ -32,7 +33,7 @@ function renderWall(box: HTMLElement) {
   renderWall0(box);
   if (box === wallGrid) renderEnded(endedBox);
 }
-let wallGrid: HTMLElement, endedBox: HTMLElement, liveCnt: HTMLElement, clearIdle: HTMLButtonElement;
+let wallGrid: HTMLElement, endedBox: HTMLElement, liveCnt: HTMLElement, liveWord: HTMLElement, clearIdle: HTMLButtonElement;
 /** Counts never break inside ("1 permission wait", "~ 0 partly done"): spaces within each " · " part are non-breaking. */
 const nb = (s: string) => s.split(" · ").map((x) => x.replace(/ /g, "\u00a0")).join(" · ");
 /** The Sessions view's "Ended" list from state.summaries (newest first). */
@@ -74,21 +75,27 @@ function goal(prompt?: string, result?: string): HTMLElement[] {
 function renderWall0(box: HTMLElement) {
   const e = office.getEnvelope(), now = Date.now();
   if (!e) return;
-  if (box === wallGrid) liveCnt.textContent = office.sessions().length ? `(${office.sessions().length})` : "";
-  const local = !isRemote(); // a paired phone only watches
+  const mode = office.source.mode;
+  if (box === wallGrid) { liveCnt.textContent = office.sessions().length ? `(${office.sessions().length})` : ""; liveWord.textContent = mode === "demo" ? "SAMPLE " : mode === "replay" ? "REPLAY " : "LIVE "; }
+  const local = !isRemote() && mode === "live"; // a paired phone only watches; X2: nothing to clear in a sample or replay
   const acts = office.actors();
+  let seen: string[] = [];
+  try { seen = JSON.parse(store.get("gaveup.seen") ?? "[]"); } catch { /* bad value: none seen */ }
+  const gave = openGaveUps(e.state, (k) => seen.includes(k)), stuck = stuckMin() * 60_000;
   const tiles = office.sessions().map((s) => {
     const ss = e.state.sessions[s.id];
     const keyOf = (a: (typeof acts)[number]) => statusKey(a.lead && s.waiting && a.status !== "blocked" ? "waiting" : a.status, ss);
     const mine = acts.filter((a) => a.session === s.id), agg = sessionAgg(mine.filter((a) => !a.lead).map(keyOf)); // X5: counts are helpers only
-    const state = s.waiting && !mine.length ? statusKey("waiting", ss) : sessionAgg(mine.map(keyOf)).worst;
+    const state = sessionState(s.id, acts, ss, gave.filter((o) => o.session === s.id).length); // X6: the radar's rule
+    const silent = !!(ss?.prompt && ss.lastAt && now - ss.lastAt > (ss.doing ? stuck * 3 : stuck));
     const errors = ss?.errors ?? 0;
     const perm = permLine(ss?.permWait, now, fmtDur);
-    return { s, state, age: fmtAge(now - s.startedAt), tok: fmtTokens(s.usage), errors, perm, line: aggLine(agg), helpers: agg.agents, prompt: ss?.prompt ?? ss?.lastPrompt, result: ss?.result };
-  });
-  const idle = tiles.filter((x) => x.state === "idle" && !x.helpers).map((x) => x.s.id);
+    return { s, state, age: fmtAge(now - s.startedAt), tok: fmtTokens(s.usage), errors, perm, line: aggLine(agg), helpers: agg.agents, prompt: ss?.prompt ?? ss?.lastPrompt, result: ss?.result,
+      clear: local && canClear(state, ss, silent), idle: canClear(state, ss, silent, true) && !agg.agents };
+  }).sort((a, b) => urgency(a.state) - urgency(b.state) || a.s.project.localeCompare(b.s.project)); // S10: the radar's order
+  const idle = tiles.filter((x) => x.idle).map((x) => x.s.id);
   if (box === wallGrid) { clearIdle.hidden = !local || !idle.length; clearIdle.textContent = `Clear idle (${idle.length})`; clearIdle.onclick = () => void clearSessions(idle); }
-  renderIf(box, JSON.stringify([tiles.map((x) => [x.s.id, x.s.project, x.state, x.age, x.tok, x.errors, x.helpers, x.perm, x.line, x.prompt, x.result]), hideText(), local]), () =>
+  renderIf(box, JSON.stringify([tiles.map((x) => [x.s.id, x.s.project, x.state, x.age, x.tok, x.errors, x.helpers, x.perm, x.line, x.prompt, x.result, x.clear]), hideText()]), () =>
     tiles.length ? tiles.map((x) => {
       const b = el("button", "tile");
       b.type = "button";
@@ -97,8 +104,8 @@ function renderWall0(box: HTMLElement) {
         el("span", "k", nb(x.tok || "no tokens yet")), el("span", x.errors ? "er" : "k", `${x.errors} error${x.errors === 1 ? "" : "s"}`));
       if (x.perm) b.append(el("span", "k", nb(x.perm)));
       b.addEventListener("click", () => { office.select(x.s.lead); setView(""); });
-      if (!local) return b;
-      // Clear: the session leaves the office until it sends another event (nothing is sent to Claude)
+      if (!x.clear) return b;
+      // Clear (X1): only idle, silent or a calm finished turn; the session leaves the office until it sends another event (nothing is sent to Claude)
       const w = el("div", "tilew"), c = btn("Clear", `Remove ${x.s.project} from the office until it does something again`, () => void clearSessions([x.s.id]), "b sm");
       w.append(b, c);
       return w;
@@ -413,12 +420,13 @@ export function bindViews(tools: HTMLElement) {
   wallGrid = grid;
   endedBox = el("section");
   endedBox.setAttribute("aria-label", "Ended sessions");
-  const liveSec = el("section"), liveH = el("h2", "", "LIVE ");
+  const liveSec = el("section"), liveH = el("h2");
+  liveWord = el("span", "", "LIVE ");
   liveSec.setAttribute("aria-label", "Live sessions");
   liveCnt = el("span", "cnt");
-  clearIdle = btn("Clear idle", "Remove every idle session (no prompt, no helpers) from the office; each comes back when it does something", () => {}, "b sm");
+  clearIdle = btn("Clear idle", "Remove every idle session (nothing waiting, no prompt, no helpers) from the office; each comes back when it does something", () => {}, "b sm");
   clearIdle.hidden = true;
-  liveH.append(liveCnt, clearIdle);
+  liveH.append(liveWord, liveCnt, clearIdle);
   liveSec.append(liveH, grid);
   wall.append(liveSec, endedBox);
   document.body.append(wall, tlRoot);

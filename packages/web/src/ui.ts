@@ -3,7 +3,7 @@
 import { office, type ActorInfo, type FeedItem } from "./api.ts";
 import { hotFiles, leadId } from "@agent-office/core";
 import { $, announce as domAnnounce, btn, clip, copy, el, renderIf, store, sync } from "./dom.ts";
-import { bySession, burnHot, gaveUpKey, captionText, burnRate, cdCommand, filterFeed, fmtAge, fmtDur, fmtTokens, quietBefore, sessionColor, radar, rosterGroups, sanitizeFilters, statusGroups, summary, sumUsage, urgency, usageTotal, whoLine, type FeedFilter, type RadarItem } from "./logic.ts";
+import { bySession, burnHot, gaveUpKey, captionText, burnRate, cdCommand, filterFeed, fmtAge, fmtDur, fmtTokens, openGaveUps, quietBefore, sessionColor, sessionState, radar, rosterGroups, sanitizeFilters, statusGroups, summary, sumUsage, urgency, usageTotal, waitsOf, whoLine, type FeedFilter, type RadarItem } from "./logic.ts";
 import { bindPanelChrome } from "./panel.ts";
 import { backToLive, bindModes, toggleSample } from "./modes.ts";
 import { KEY, STATUS, STATUS_ORDER } from "./theme.ts";
@@ -11,7 +11,7 @@ import { clipWords, doneRows, dropOutcome, look, nextStep, outcomeLook, permLine
 import * as notify from "./notify.ts";
 import { bindFun, ringsEl } from "./fundom.ts";
 import { bindColonists } from "./colonists.ts";
-import { showHistoryAt } from "./views.ts";
+import { showHistoryAt, showView } from "./views.ts";
 import { fitHeader } from "./toolbar.ts";
 import { buildLink, parseLink, toolTracker, type ToolCall } from "./sharelogic.ts";
 import { hideText } from "./stream.ts";
@@ -29,10 +29,12 @@ const stateOf = () => office.getEnvelope()?.state;
 const signals = (sid: string) => stateOf()?.sessions[sid];
 /** Live source with the daemon stream down: panel sections say so instead of looking empty. */
 const offline = () => office.source.mode === "live" && office.connection.state === "retrying";
-/** Leads of a waiting session read as waiting everywhere (radar, roster, session row). */
-const effStatus = (a: ActorInfo) => (a.lead && a.status !== "blocked" && stateOf()?.sessions[a.session]?.waiting ? "waiting" : a.status);
-/** The shared STATUS key of an actor (one map for every surface, A1). */
-const keyOf = (a: ActorInfo) => statusKey(effStatus(a), stateOf()?.sessions[a.session]);
+/** S3: the open wait raised by this actor (a lead owns the waits no seated helper raised). */
+const myWait = (a: ActorInfo) => { const st = stateOf(); return waitsOf(st?.sessions[a.session]).find((w) => (a.lead ? !(w.agent && st?.agents[w.agent]) : w.agent === a.id)); };
+/** A lead reads as waiting while its own wait is open (radar, roster, session row); R2: not for a helper's. */
+const effStatus = (a: ActorInfo) => (a.lead && a.status !== "blocked" && myWait(a) ? "waiting" : a.status);
+/** The shared STATUS key of an actor (one map for every surface, A1): a waiting actor by its own wait's kind. */
+const keyOf = (a: ActorInfo) => { const s = effStatus(a), w = s === "waiting" ? myWait(a) : undefined; return w ? (w.kind === "permission" ? "permission" : "turn") : statusKey(s, stateOf()?.sessions[a.session]); };
 /** Status chip: colour from the shared map, plus glyph and word (never colour alone). */
 const chip = (k: Parameters<typeof look>[0]) => { const c = el("span", "stc", statusWord(k)); c.style.setProperty("--st", look(k).color); return c; };
 
@@ -55,27 +57,28 @@ const lastReport = (id: string) => office.feed.find((i) => i.kind === "report" &
 /** C6: gave-up rows marked Seen (this browser, like snooze); pruned to the outcomes the daemon still holds. */
 const seenGaveUp = new Set<string>(loadJson<string[]>("gaveup.seen", []));
 const saveSeen = () => store.set("gaveup.seen", JSON.stringify([...seenGaveUp]));
-/** Select an agent, or for one that has left the floor open History at that moment (X6); a live row during a replay goes back to live first. */
-function openAt(id: string, t: number, session?: string) {
+/** Select an agent; X4: for one that has left the floor, stay in the Office on its lead (the card lists a gave-up helper and
+ * its report), or open History at that moment when asked or when the session is gone. A live row during a replay goes back to live first. */
+function openAt(id: string, t: number, session?: string, toHistory = false) {
   if (office.source.mode !== "live" && office.actors().every((a) => a.id !== id)) backToLive();
+  const lead = session && office.actors().some((a) => a.id === leadId(session)) ? leadId(session) : null;
   if (office.actors().some((a) => a.id === id)) pick(id);
-  else { showHistoryAt(t); if (session && office.actors().some((a) => a.id === leadId(session))) office.select(leadId(session)); }
+  else if (lead && !toHistory) { showView(""); pick(lead); }
+  else { showHistoryAt(t); if (lead) office.select(lead); }
 }
-const RANKED = [...STATUS_ORDER, "stuck"];
 /** Z6: NEEDS YOU, the header pill, title, favicon and chimes read the LIVE envelope, also during Replay and Sample. */
 function renderRadar(now: number) {
   const sim = office.source.mode !== "live", env = sim ? office.source.liveEnvelope() : office.getEnvelope();
   // shortcut: during a simulation the live blocked helpers are not known (main.ts holds them per displayed scene); live waits and stalls are
   const all = env ? radar(sim ? [] : office.actors(), env.state, now, (k, fb) => firstSeen.get(k) ?? (firstSeen.set(k, fb), fb), notify.stuckMin() * 60_000, (k) => seenGaveUp.has(k)) : [];
   if (env?.state.outcomes) { const live = new Set(env.state.outcomes.map(gaveUpKey)); let gone = false; for (const k of seenGaveUp) if (!live.has(k)) gone = seenGaveUp.delete(k); if (gone) saveSeen(); }
-  all.sort((a, b) => RANKED.indexOf(notify.kindOf(a)) - RANKED.indexOf(notify.kindOf(b)) || a.since - b.since); // permission is the loudest (V3)
   const keys = new Set(all.map((i) => i.key));
   for (const k of firstSeen.keys()) if (!keys.has(k)) firstSeen.delete(k);
   let changed = false;
   for (const [k, u] of snoozed) if (u <= now || !keys.has(k)) { snoozed.delete(k); changed = true; }
   if (changed) store.set("snooze", JSON.stringify(Object.fromEntries(snoozed)));
   items = all.filter((i) => !snoozed.has(i.key));
-  for (const i of items) if (!radarKeys.has(i.key) && i.kind !== "stuck") announce(`${i.label}: ${look(notify.kindOf(i)).label}`, true);
+  for (const i of items) if (!radarKeys.has(i.key) && i.kind !== "stuck") announce(`${i.label}: ${i.wait === "question" ? "is asking you a question" : look(notify.kindOf(i)).label}`, !i.soft); // a finished turn is said politely
   radarKeys = new Set(items.map((i) => i.key));
   const why = (i: RadarItem) => dropOutcome(i.reason || (i.kind === "blocked" ? lastReport(i.id) ?? "" : "")).trim();
   // a live row during a replay: go back to live first, then find it there
@@ -83,7 +86,7 @@ function renderRadar(now: number) {
   renderIf($("radar-list"), JSON.stringify([sim, items.map((i) => `${i.key}|${notify.kindOf(i)}|${fmtAge(now - i.since)}|${why(i)}`)]), () =>
     items.length
       ? items.map((i) => {
-        const k = notify.kindOf(i), w = el("div", `rdw t${i.tier}`);
+        const k = notify.kindOf(i), w = el("div", `rdw t${i.tier}${i.soft ? " calm" : ""}`);
         w.style.setProperty("--st", look(k).color);
         w.setAttribute("role", "listitem");
         if (i.session) accent(w, i.session);
@@ -124,9 +127,10 @@ function renderPill(sim: boolean) {
   if (!first) return;
   const k = notify.kindOf(first), why = dropOutcome(first.reason ?? "");
   n.style.setProperty("--st", look(k).color);
+  n.classList.toggle("calm", !!first.soft); // S9: only calm turns waiting: an outlined count, not the loud fill
   // a squeezed header cuts the tail: the count leads when several wait (it must survive), else the name; glyph + colour say the state
   n.textContent = items.length > 1 ? `${look(k).glyph} ${items.length} need you · ${first.label}` : `${look(k).glyph} ${first.label} · ${look(k).label}`;
-  n.title = `${first.label}: ${look(k).label}${why ? ` (${why})` : ""}. ${nextStep(k, first.project)} Click to open it; n cycles.`;
+  n.title = `${first.label}: ${look(k).label}${why ? ` (${why})` : ""}. ${nextStep(first.wait === "question" ? "question" : k, first.project)} Click to open it; n cycles.`;
 }
 
 // ---- per-agent tool timeline: the state keeps only the latest call, so successive snapshots build the last 12 ----
@@ -190,7 +194,10 @@ function renderCard() {
   const last = (p: (i: FeedItem) => boolean) => f.find((i) => p(i) && i.text);
   const report = last((i) => i.kind === "report" && i.fromId === a.id)?.text;
   // the reason for the state, up front: the lead's prompt text, or the helper's report; never the "BLOCKED:" prefix twice (A9)
-  const reason = k === "turn" ? (a.lead && sess?.result) || sess?.waitingText || "" : k === "permission" ? sess?.waitingText ?? "" : k === "blocked" ? dropOutcome(report ?? "no report text") : "";
+  const wait = myWait(a), question = wait?.kind === "question";
+  const reason = question ? "Claude is asking you a question" : k === "turn" ? (a.lead && sess?.result) || wait?.text || sess?.waitingText || "" : k === "permission" ? wait?.text ?? sess?.waitingText ?? "" : k === "blocked" ? dropOutcome(report ?? "no report text") : "";
+  // X4: helpers of this lead that gave up and left the floor stay listed with their report until the next prompt or Seen
+  const st = stateOf(), gone = a.lead && st ? openGaveUps(st, (x) => seenGaveUp.has(x)).filter((o) => o.session === a.session && !acts.some((x) => x.id === o.agentId)) : [];
   const rows: [string, string][] = [["role", a.lead ? "session lead" : a.role], ["session", a.project]];
   if (a.doing) rows.push(["last tool", `${a.doing}${a.detail ? " · " + a.detail : ""}`]);
   if (a.why) rows.push(["why", a.why]);
@@ -210,7 +217,7 @@ function renderCard() {
   const full = texts.filter((x): x is [string, string] => !!x[1]);
   if (k === "blocked") full.sort((x, y) => +(y[0] === "report") - +(x[0] === "report")); // most relevant first
   const calls = tools.get(a.id), hide = hideText();
-  const sig = JSON.stringify([a.label, k, reason, a.task, t.up.map((x) => x.id), t.down.map((x) => [x.id, keyOf(x)]), rows, full, calls, hide, office.source.mode, timings?.textContent]);
+  const sig = JSON.stringify([a.label, k, reason, a.task, t.up.map((x) => x.id), t.down.map((x) => [x.id, keyOf(x)]), gone.map((o) => [o.agentId, o.t]), rows, full, calls, hide, office.source.mode, timings?.textContent]);
   renderIf(c, sig, () => {
     const out: Node[] = [];
     const head = el("div", "chead");
@@ -222,11 +229,11 @@ function renderCard() {
     const put = (key: string, v: string, cls = "") => { kv.append(el("span", "k", key), el("span", cls, v)); };
     if (by) put(a.lead ? "asked by" : "delegated by", by, "tx");
     else if (a.task) put("task", a.task, "tx");
-    if (k !== "working" && k !== "idle") put("next", office.source.mode === "live" ? nextStep(k, a.project, lead?.label) : "This is a replay or sample: nothing to do."); // X8: no "next: Nothing to do" row
+    if (k !== "working" && k !== "idle") put("next", office.source.mode === "live" ? nextStep(question ? "question" : k, a.project, lead?.label) : "This is a replay or sample: nothing to do."); // X8: no "next: Nothing to do" row
     for (const [key, v] of rows) put(key, v, key === "folder" || key === "why" || key === "last tool" ? "tx" : "");
     out.push(kv);
     // X2: lead -> ... -> this agent -> its helpers, each one click away
-    if (t.up.length || t.down.length) {
+    if (t.up.length || t.down.length || gone.length) {
       const ul = el("ul", "tree");
       ul.setAttribute("aria-label", "Delegation chain");
       const li = (x: ActorInfo, depth: number, me = false) => {
@@ -239,11 +246,20 @@ function renderCard() {
       t.up.forEach((x, i) => li(x, i));
       li(a, t.up.length, true);
       t.down.forEach((x) => li(x, t.up.length + 1));
+      for (const o of gone) {
+        const l = el("li");
+        l.style.setProperty("--d", "1");
+        const name = o.name ?? o.role ?? o.agentId;
+        l.append(el("b", "", name), " ", chip("blocked"), " ", btn("History", "Open History at the moment it gave up", () => showHistoryAt(o.t), "b sm"));
+        const r = dropOutcome(o.text ?? "");
+        if (r && !hide) { const p = el("div", "tx", clipWords(r, 280)); p.title = r; l.append(p); }
+        ul.append(l);
+      }
       out.push(ul);
     }
     const md = [`## ${a.label}: ${look(k).label}`, ...(reason ? [`- reason: ${reason}`] : []), ...(by ? [`- delegated by: ${by}`] : []), ...rows.map(([key, v]) => `- ${key}: ${v}`), ...full.map(([key, v]) => `\n### ${key}\n${v}`)].join("\n");
     const bar = el("div", "row");
-    bar.append(btn("Focus", "Zoom to and follow it (f)", () => office.focus(a.id), "b sm"), copyBtn("Copy summary", md, "Copy this agent's state as markdown"), btn("Clear", "Deselect (Esc)", () => office.select(null), "b sm"));
+    bar.append(btn("Focus", "Zoom to and follow it (f)", () => office.focus(a.id), "b sm"), copyBtn("Copy summary", md, "Copy this agent's state as markdown"), btn("Deselect", "Deselect (Esc)", () => office.select(null), "b sm"));
     out.push(bar, toolList(calls, hide), ...(timings ? [timings] : []));
     full.forEach(([key, v], n) => {
       const d = el("details", "full");
@@ -271,8 +287,8 @@ function renderDone(now: number) {
     b.append(head);
     const text = r.text || r.task;
     if (text && !hide) { b.append(el("span", "why", clipWords(text, 120))); b.title = r.task ? `${text}\n\ntask: ${r.task}` : text; }
-    b.addEventListener("click", () => openAt(r.agentId, r.t, r.session));
-    if (!office.actors().some((x) => x.id === r.agentId)) b.title = `${b.title ? `${b.title}\n\n` : ""}Left the floor: opens History at that time`;
+    b.addEventListener("click", () => openAt(r.agentId, r.t, r.session, r.outcome !== "blocked")); // X4: a gave-up opens on its lead's card
+    if (!office.actors().some((x) => x.id === r.agentId)) b.title = `${b.title ? `${b.title}\n\n` : ""}Left the floor: ${r.outcome === "blocked" ? "opens its lead's card" : "opens History at that time"}`;
     return b;
   }) : [el("div", "k pad", "Nothing finished yet: when a session's turn or a helper's report comes back (done, gave up, partly done) it is listed here.")]),
   ...(all.length > 8 ? [btn(doneAll ? "Show fewer" : `Show all (${all.length})`, "List every outcome the daemon keeps", () => { doneAll = !doneAll; renderDone(Date.now()); }, "b sm more-done")] : [])]);
@@ -300,8 +316,11 @@ function renderSessions(now: number) {
   const st = stateOf();
   const acts = office.actors();
   const list = office.sessions();
-  const rows = list.map((s) => ({ s, last: st?.sessions[s.id]?.lastAt, prompt: st?.sessions[s.id]?.prompt ?? st?.sessions[s.id]?.lastPrompt, result: st?.sessions[s.id]?.result, perm: permLine(signals(s.id)?.permWait, now, fmtDur), u: urgency(s, acts), rate: rateOf(s.id, now), c: ringCounts(acts, s.id), g: sessionAgg(acts.filter((a) => a.session === s.id && !a.lead).map(keyOf)), worst: sessionAgg(acts.filter((a) => a.session === s.id).map(keyOf)).worst }))
-    .sort((a, b) => a.u - b.u || a.s.project.localeCompare(b.s.project));
+  const gave = st ? openGaveUps(st, (k) => seenGaveUp.has(k)) : [];
+  const rows = list.map((s) => {
+    const worst = sessionState(s.id, acts, st?.sessions[s.id], gave.filter((o) => o.session === s.id).length); // X6/S10: the radar's rule and order
+    return { s, last: st?.sessions[s.id]?.lastAt, prompt: st?.sessions[s.id]?.prompt ?? st?.sessions[s.id]?.lastPrompt, result: st?.sessions[s.id]?.result, perm: permLine(signals(s.id)?.permWait, now, fmtDur), u: urgency(worst), rate: rateOf(s.id, now), c: ringCounts(acts, s.id), g: sessionAgg(acts.filter((a) => a.session === s.id && !a.lead).map(keyOf)), worst };
+  }).sort((a, b) => a.u - b.u || a.s.project.localeCompare(b.s.project));
   const tot = sumUsage(list.map((s) => s.usage));
   $("n-sess").textContent = rows.length ? `(${rows.length})` : "";
   renderIf($("sessions"), JSON.stringify([rows.map((r) => [r.s, r.prompt, r.result, r.worst, r.u, r.perm, r.last ? fmtAge(now - r.last) : "", Math.round(r.rate / 1000), filter.session === r.s.id, r.c, r.g]), idleOpen]), () => {
@@ -335,7 +354,7 @@ function renderSessions(now: number) {
       }
       return d;
     };
-    const live = rows.filter((r) => r.u < 3), idle = rows.filter((r) => r.u === 3);
+    const live = rows.filter((r) => r.worst !== "idle"), idle = rows.filter((r) => r.worst === "idle");
     const out: Node[] = [];
     if (rows.length > 1) out.push(el("div", "k pad", `Current sessions: ${fmtTokens(tot)}`)); // sums only the sessions listed, not all of today
     if (!live.length) return [...out, ...idle.map(one)];
@@ -517,7 +536,8 @@ function feedRow(f: FeedItem): HTMLElement {
   const row = el("div", `it ${f.kind}`);
   row.setAttribute("role", "listitem");
   row.dataset.ids = [f.fromId, f.toId].filter(Boolean).join("|");
-  if (f.session) accent(row, f.session);
+  // X5: a gave-up report reads in the gave-up status colour, not the session hue (one meaning per colour)
+  if (f.kind === "report" && f.outcome === "blocked") row.classList.add("gaveup"); else if (f.session) accent(row, f.session);
   const main = el("button", "row");
   main.type = "button";
   main.title = "Select and pulse this actor";

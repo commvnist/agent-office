@@ -1,10 +1,10 @@
 // Panel shell and small global chrome: collapsible/resizable side panel with mobile drawer (#74), presenter mode (#94), settings popover (#67/#69/#71), legend + first-run explainer + connection banner (#89).
 import { office } from "./api.ts";
-import { $, btn, el, store } from "./dom.ts";
+import { $, announce, btn, el, store } from "./dom.ts";
 import { STUCK_MIN, enableDesktop, mutes, prefs, spendLimit, stuckMin } from "./notify.ts";
 import { chimePrefs, testChime } from "./chime.ts";
 import { settings, setAmbientPaused } from "./settings.ts";
-import { captionText, whoLine } from "./logic.ts";
+import { captionText, fmtAge, whoLine } from "./logic.ts";
 import { modal } from "./dialog.ts";
 import { group } from "./toolbar.ts";
 import { bindKeys } from "./keys.ts";
@@ -154,6 +154,16 @@ function bindSettings(tools: HTMLElement) {
   head.append(h, x);
   pop.append(head);
 
+  // P2: a paired device's own prefs (the only section it shows); all in this browser's storage, nothing reaches the host
+  const dev = sec("This device", "Kept on this device only; nothing is sent to the host. Alerts work only while this page is open (no push service).");
+  dev.classList.add("dev");
+  row("Sound when something needs you", check(chimePrefs.on.get(), chimePrefs.on.set), "A short tone when a new item joins NEEDS YOU (a finished turn stays quiet)");
+  if ("vibrate" in navigator) row("Vibrate when something needs you", check(prefs.vibrate.get(), (b) => { prefs.vibrate.set(b); if (b) navigator.vibrate(120); }));
+  row("Text size", range(0.8, 2, 0.1, savedScale(), (v) => { store.set("scale", String(v)); applyScale(v); }));
+  row("Reduce motion", check(store.get("motion") === "1" || (store.get("motion") === null && matchMedia("(prefers-reduced-motion: reduce)").matches), (b) => { store.set("motion", b ? "1" : "0"); office.setReducedMotion(b); }));
+  row("Private for this screen", check(office.source.private, (b) => office.source.setPrivate(b)), "Hides prompts and reports on this screen; reloads the page");
+  dev.append(btn("Test sound", "Plays one short tone", testChime));
+
   sec("Display");
   row("Text size", range(0.8, 2, 0.1, savedScale(), (v) => { store.set("scale", String(v)); applyScale(body.classList.contains("presenter") ? Math.max(1.5, v) : v); }));
   const font = el("select");
@@ -235,7 +245,7 @@ function bindSettings(tools: HTMLElement) {
     dp.textContent = office.privacy ? "The daemon is blanking text for everyone (office.json privacy)." : "";
   };
 
-  const fillShare = shareSection(sec("Share on network"), row);
+  const shareBox = sec("Share on network"), fillShare = shareSection(shareBox, row);
 
   pop.hidden = true;
   const openBtn = btn("⚙", "Settings: display, motion, sound, notifications, privacy, office protocol", () => m.toggle());
@@ -245,6 +255,8 @@ function bindSettings(tools: HTMLElement) {
   group(tools, "Setup").append(openBtn);
   const m = modal(pop, openBtn, () => { fillMutes(); fillInfo(); fillShare(); });
   register("Open Settings", () => m.open());
+  // X10: the share chip opens Settings at Share (on a paired device: at its own section)
+  $("sharechip").addEventListener("click", () => { m.open(); (isRemote() ? dev : shareBox).scrollIntoView({ block: "start" }); });
   bindPalette();
   // apply persisted choices
   if (rm !== null) office.setReducedMotion(rm === "1");
@@ -266,16 +278,27 @@ function bindIntro() {
 async function probe(): Promise<string> {
   try {
     const r = await fetch("/state", { credentials: "same-origin" });
-    if (r.status === 401 && isRemote()) return "This device is no longer paired (revoked, or unused for 30 days). Open /pair on this address and type a new code from the host.";
+    if (r.status === 401 && remotePage()) return "This device is no longer paired (revoked, or unused for 30 days). Pair it again with a new code from the host.";
     if (r.status === 401) return "Unauthorized: this page has no access cookie. Open it through the daemon URL (http://127.0.0.1:<port>/), not a copy or another host.";
     if (r.status === 403) return "Host not allowed: open the page as 127.0.0.1 or localhost on the daemon port.";
     return "The stream dropped; retrying. If this persists run: node scripts/office.mjs doctor";
   } catch {
+    if (remotePage()) return "Sharing stopped, or the host is off this network. This view is not live. When the host shares again, reload or pair again.";
     return "Cannot reach the daemon. Start Claude Code with the plugin (it starts the daemon) or run: node packages/server/src/main.ts. Check with: node scripts/office.mjs status";
   }
 }
+/** A paired device's page: the envelope says so, and the loopback daemon is never https. */
+const remotePage = () => isRemote() || location.protocol === "https:";
 let probing = false, probed = "", staleSince = 0;
-let staleEl: HTMLElement;
+let staleEl: HTMLElement, lastHook = "checking…", hookAsked = false;
+/** X3: when the daemon last received a hook (GET /status; counts since the daemon started). */
+async function lastHookText(): Promise<string> {
+  try {
+    const r = await fetch("/status?format=json", { credentials: "same-origin" });
+    const j = r.ok ? ((await r.json()) as { lastEventAt?: number }) : null;
+    return !j ? "unknown" : j.lastEventAt ? `${fmtAge(Date.now() - j.lastEventAt)}${Date.now() - j.lastEventAt < 60_000 ? "" : " ago"}` : "never (since the daemon started)";
+  } catch { return "unknown (daemon not reachable)"; }
+}
 function banner() {
   const b = $("banner"), e = office.getEnvelope(), s = office.connection.state, sim = office.source.mode !== "live", demo = office.source.mode === "demo";
   const msgs: string[] = [];
@@ -293,15 +316,21 @@ function banner() {
   } else { probed = ""; staleSince = 0; }
   staleEl.hidden = !staleSince;
   // on a paired phone the probe's reason (e.g. "no longer paired") is the useful line, not a generic "stream is down"
-  if (staleSince) staleEl.textContent = isRemote() && probed ? probed : t("stale", { time: new Date(staleSince).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) });
+  if (staleSince) {
+    staleEl.replaceChildren(remotePage() && probed ? probed : t("stale", { time: new Date(staleSince).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) }));
+    // X9: a revoked or stopped phone gets the way back, not just the bad news
+    if (remotePage()) { const a = el("a", "", "Pair again"); a.href = "/pair"; staleEl.append(" ", a); }
+  }
   if (s === "connecting") msgs.push("Connecting to the daemon…");
 
-  const sig = `${demo}\n${msgs.join("\n")}`;
+  if (demo && !hookAsked) { hookAsked = true; void lastHookText().then((x) => { lastHook = x; banner(); }); }
+  if (!demo) hookAsked = false;
+  const sig = `${demo}\n${lastHook}\n${msgs.join("\n")}`;
   if (b.dataset.sig === sig) return;
   b.dataset.sig = sig;
   const rows = msgs.map((m) => el("div", "warn", m));
   if (demo) { // fake agents must not pass for the user's sessions
-    const d = el("div", "warn", "Sample data, not your sessions. ");
+    const d = el("div", "warn", `Sample data, not your sessions. To see yours: run npm run setup, then start Claude Code. Last hook: ${lastHook}. `);
     d.append(btn("Stop sample", "Stop the built-in sample data", stopSample));
     rows.unshift(d);
   }
@@ -329,7 +358,16 @@ export function bindPanelChrome(tools: HTMLElement) {
   bindLan();
   bindKeys(tools);
   bindIntro();
-  office.connection.onChange(() => { $("live").classList.toggle("off", office.connection.state !== "live"); banner(); });
+  let wasLive = false;
+  office.connection.onChange((st) => {
+    $("live").classList.toggle("off", st !== "live");
+    body.classList.toggle("offline", st === "retrying" && office.source.mode === "live");
+    // L1: say it once each way, politely (the stale strip is the visible alert)
+    if (st === "retrying" && wasLive) announce("Offline: the office is not live; reconnecting");
+    if (st === "live" && staleSince) announce("Back online");
+    wasLive = st === "live";
+    banner();
+  });
   office.subscribe(banner);
   office.source.onMode(banner);
   banner();
