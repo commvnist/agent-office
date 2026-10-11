@@ -15,6 +15,7 @@ import { buildLink, parseLink } from "./sharelogic.ts";
 import { cycleFollow, following } from "./actions.ts";
 import { register } from "./palette.ts";
 import { hideText } from "./stream.ts";
+import { isRemote } from "./lan.ts";
 import type { OfficeEvent } from "@agent-office/core";
 
 type View = "" | "wall" | "timeline";
@@ -31,7 +32,7 @@ function renderWall(box: HTMLElement) {
   renderWall0(box);
   if (box === wallGrid) renderEnded(endedBox);
 }
-let wallGrid: HTMLElement, endedBox: HTMLElement, liveCnt: HTMLElement;
+let wallGrid: HTMLElement, endedBox: HTMLElement, liveCnt: HTMLElement, clearIdle: HTMLButtonElement;
 /** Counts never break inside ("1 permission wait", "~ 0 partly done"): spaces within each " · " part are non-breaking. */
 const nb = (s: string) => s.split(" · ").map((x) => x.replace(/ /g, "\u00a0")).join(" · ");
 /** The Sessions view's "Ended" list from state.summaries (newest first). */
@@ -74,6 +75,7 @@ function renderWall0(box: HTMLElement) {
   const e = office.getEnvelope(), now = Date.now();
   if (!e) return;
   if (box === wallGrid) liveCnt.textContent = office.sessions().length ? `(${office.sessions().length})` : "";
+  const local = !isRemote(); // a paired phone only watches
   const acts = office.actors();
   const tiles = office.sessions().map((s) => {
     const ss = e.state.sessions[s.id];
@@ -84,7 +86,9 @@ function renderWall0(box: HTMLElement) {
     const perm = permLine(ss?.permWait, now, fmtDur);
     return { s, state, age: fmtAge(now - s.startedAt), tok: fmtTokens(s.usage), errors, perm, line: aggLine(agg), helpers: agg.agents, prompt: ss?.prompt ?? ss?.lastPrompt, result: ss?.result };
   });
-  renderIf(box, JSON.stringify([tiles.map((x) => [x.s.id, x.s.project, x.state, x.age, x.tok, x.errors, x.helpers, x.perm, x.line, x.prompt, x.result]), hideText()]), () =>
+  const idle = tiles.filter((x) => x.state === "idle" && !x.helpers).map((x) => x.s.id);
+  if (box === wallGrid) { clearIdle.hidden = !local || !idle.length; clearIdle.textContent = `Clear idle (${idle.length})`; clearIdle.onclick = () => void clearSessions(idle); }
+  renderIf(box, JSON.stringify([tiles.map((x) => [x.s.id, x.s.project, x.state, x.age, x.tok, x.errors, x.helpers, x.perm, x.line, x.prompt, x.result]), hideText(), local]), () =>
     tiles.length ? tiles.map((x) => {
       const b = el("button", "tile");
       b.type = "button";
@@ -93,8 +97,18 @@ function renderWall0(box: HTMLElement) {
         el("span", "k", nb(x.tok || "no tokens yet")), el("span", x.errors ? "er" : "k", `${x.errors} error${x.errors === 1 ? "" : "s"}`));
       if (x.perm) b.append(el("span", "k", nb(x.perm)));
       b.addEventListener("click", () => { office.select(x.s.lead); setView(""); });
-      return b;
+      if (!local) return b;
+      // Clear: the session leaves the office until it sends another event (nothing is sent to Claude)
+      const w = el("div", "tilew"), c = btn("Clear", `Remove ${x.s.project} from the office until it does something again`, () => void clearSessions([x.s.id]), "b sm");
+      w.append(b, c);
+      return w;
     }) : [el("div", "k pad", "No sessions yet. Start Claude Code with the plugin; they appear here.")]);
+}
+
+/** Clear sessions from the office by hand (loopback only; a cleared session that sends a new event comes back). */
+async function clearSessions(ids: string[]) {
+  if (!ids.length) return;
+  await fetch("/sessions/clear", { method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids }) }).catch(() => {});
 }
 
 // ---- waterfall timeline: canvas 2D, only the visible rows are drawn ----
@@ -402,7 +416,9 @@ export function bindViews(tools: HTMLElement) {
   const liveSec = el("section"), liveH = el("h2", "", "LIVE ");
   liveSec.setAttribute("aria-label", "Live sessions");
   liveCnt = el("span", "cnt");
-  liveH.append(liveCnt);
+  clearIdle = btn("Clear idle", "Remove every idle session (no prompt, no helpers) from the office; each comes back when it does something", () => {}, "b sm");
+  clearIdle.hidden = true;
+  liveH.append(liveCnt, clearIdle);
   liveSec.append(liveH, grid);
   wall.append(liveSec, endedBox);
   document.body.append(wall, tlRoot);

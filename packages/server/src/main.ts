@@ -329,6 +329,37 @@ const share = createShare({
   read: (path, req, res, u) => readRoute(path, req, res, u, true),
   serve: (url, res) => existsSync(WEB) && serve(url, res),
 });
+/**
+ * Clear sessions from the office by hand (Sessions view): POST {ids: string[]} ends each one as if it had sent SessionEnd,
+ * stored like any event so a restart keeps it gone. Loopback only (the LAN viewer has no such route), same guard as the
+ * share controls. A cleared session that sends another event comes back on its own; nothing touches Claude.
+ */
+function clearRoute(req: IncomingMessage, res: ServerResponse) {
+  const origin = req.headers.origin;
+  if (origin !== undefined && origin !== `http://${req.headers.host}`) return void res.writeHead(403).end();
+  if (!canRead(req)) return void res.writeHead(401).end();
+  if (req.method !== "POST") return void res.writeHead(405).end();
+  let body = "";
+  req.setEncoding("utf8");
+  req.on("data", (d: string) => { body += d; if (body.length > 8192 && !res.headersSent) { res.writeHead(413, { connection: "close" }).end(); req.destroy(); } });
+  req.on("end", () => {
+    if (res.headersSent) return;
+    let ids: unknown;
+    try { ids = JSON.parse(body).ids; } catch { return void res.writeHead(400).end(); }
+    if (!Array.isArray(ids) || ids.length > 64) return void res.writeHead(400).end();
+    const known = ids.filter((x): x is string => typeof x === "string" && x in state.sessions);
+    const c = (refreshConfig(), cfg), t = Date.now();
+    let next = state;
+    for (const session of known) {
+      const e: OfficeEvent = { type: "session_end", session, t };
+      next = reduce(c, next, e);
+      try { appendEvent(DIR, e, !!c.privacy); } catch (err) { log("event log:", (err as Error).message); }
+    }
+    if (known.length) commit(next);
+    json(res, 200, { cleared: known });
+  });
+}
+
 /** Local share controls (S5): the UI cookie or the master header, and no foreign Origin. */
 function shareRoute(req: IncomingMessage, res: ServerResponse, path: string) {
   const origin = req.headers.origin;
@@ -391,6 +422,7 @@ function handle(req: IncomingMessage, res: ServerResponse, allowedHosts: Set<str
     return;
   }
   if (path === "/share" || path.startsWith("/share/")) return shareRoute(req, res, path);
+  if (path === "/sessions/clear") return clearRoute(req, res);
   if (!get) return void res.writeHead(404).end();
 
   if (path === "/state" || path === "/stream" || path === "/history") {

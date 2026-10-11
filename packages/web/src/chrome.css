@@ -153,3 +153,5 @@ body.presenter #fit,body.kiosk #fit{display:none}
 #top.f-stats #stats{display:none} /* O4: counts that cannot fit are dropped, never shown as a stray character */
 body.tick #mm{bottom:58px} /* the ticker lifts the meter strip: the minimap stays above both */
 @media (max-width:800px){body:not(.collapsed) #spark,body:not(.collapsed) #ticker{display:none}} /* phone sheet open: the strip would cover its last card */
+.tilew{display:flex;flex-direction:column;gap:4px} .tilew>.tile{flex:1} .tilew>.b{align-self:flex-start}
+#wall h2 .b{margin-inline-start:12px;text-transform:none;letter-spacing:normal}

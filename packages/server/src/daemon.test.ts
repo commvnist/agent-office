@@ -361,7 +361,7 @@ test("share end to end: pair over HTTPS, read-only remote view, token separation
   assert.equal((await lan(url, "/state", { headers: { host, "x-agent-office-token": d.token } })).status, 401);
   assert.equal((await lan(url, "/state", { headers: { host, cookie: ui.cookie } })).status, 401);
   assert.equal((await call(d.port, "/state", { headers: { cookie: dev.cookie } })).status, 401);
-  for (const [m, p] of [["POST", "/event"], ["POST", "/shutdown"], ["GET", "/share"], ["POST", "/share/code"], ["GET", "/status"], ["GET", "/outcomes"], ["GET", "/health"]]) {
+  for (const [m, p] of [["POST", "/event"], ["POST", "/shutdown"], ["POST", "/sessions/clear"], ["GET", "/share"], ["POST", "/share/code"], ["GET", "/status"], ["GET", "/outcomes"], ["GET", "/health"]]) {
     assert.equal((await lan(url, p, { method: m, headers: { ...dev, "x-agent-office-token": d.token }, body: "{}" })).status, 404, `${m} ${p} on the LAN`);
   }
   assert.equal((await lan(url, "/state", { headers: { ...dev, host: "evil.example" } })).status, 403);
@@ -381,4 +381,25 @@ test("share end to end: pair over HTTPS, read-only remote view, token separation
   assert.equal((await call(d.port, "/share/devices", { method: "DELETE", headers: ui })).status, 200);
   assert.equal(JSON.parse((await call(d.port, "/share", { method: "POST", headers: ui, body: JSON.stringify({ on: false }) })).body).enabled, false);
   await assert.rejects(lan(url, "/pair", { headers: { host } }), "the LAN listener is gone");
+});
+
+test("clear sessions by hand: UI cookie only, same-host only, stored so a restart keeps them gone; a new event brings one back", async () => {
+  const d = await boot();
+  const post = (b: object) => call(d.port, "/event", { method: "POST", headers: { "x-agent-office-token": d.token }, body: JSON.stringify(b) });
+  for (const s of ["a", "b"]) await post({ hook_event_name: "SessionStart", session_id: s, cwd: `/w/${s}` });
+  const ui = { cookie: String((await call(d.port, "/")).headers["set-cookie"]).split(";")[0] };
+  const clear = (h: Record<string, string>, ids: unknown) => call(d.port, "/sessions/clear", { method: "POST", headers: h, body: JSON.stringify({ ids }) });
+  assert.equal((await clear({}, ["a"])).status, 401, "no cookie");
+  assert.equal((await clear({ ...ui, origin: "http://evil.example" }, ["a"])).status, 403, "foreign origin");
+  assert.equal((await clear(ui, "a")).status, 400, "ids must be a list");
+  assert.deepEqual(JSON.parse((await clear(ui, ["a", "nope"])).body), { cleared: ["a"] });
+  assert.deepEqual(Object.keys((await st(d)).state.sessions), ["b"]);
+  d.p.kill();
+  const p = spawn(process.execPath, [MAIN], { env: { ...process.env, AGENT_OFFICE_HOME: d.home, AGENT_OFFICE_PORT: "0" }, stdio: ["ignore", "pipe", "pipe"] });
+  procs.push(p);
+  const out: string = await new Promise((res) => p.stdout!.on("data", (x) => /listening on/.test(String(x)) && res(String(x))));
+  const d2 = { ...d, p, port: Number(new URL(/http:\/\/\S+/.exec(out)![0]).port) };
+  assert.deepEqual(Object.keys((await st(d2)).state.sessions), ["b"], "still gone after a restart");
+  await call(d2.port, "/event", { method: "POST", headers: { "x-agent-office-token": d.token }, body: JSON.stringify({ hook_event_name: "UserPromptSubmit", session_id: "a", prompt: "hi" }) });
+  assert.ok("a" in (await st(d2)).state.sessions, "a new event brings it back");
 });

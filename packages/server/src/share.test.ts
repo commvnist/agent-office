@@ -182,7 +182,7 @@ test("LAN with a device: reads only, nothing else exists; stream caps; revoke cl
     assert.match(String(root.headers["set-cookie"]), /Max-Age=2592000/, "loading the page slides the 30 days");
     // Every loopback route, every method: not found here, even with a device cookie and the master-token header.
     const all = { ...h, "x-agent-office-token": "x".repeat(64) };
-    for (const path of ["/event", "/shutdown", "/share", "/share/code", "/share/devices", "/share/devices/abcdef12", "/status", "/outcomes", "/health"]) {
+    for (const path of ["/event", "/shutdown", "/sessions/clear", "/share", "/share/code", "/share/devices", "/share/devices/abcdef12", "/status", "/outcomes", "/health"]) {
       for (const method of ["GET", "POST", "PUT", "DELETE", "PATCH"]) assert.equal((await l.call(path, { method, headers: all, body: "{}" }).catch((e) => { throw new Error(`${method} ${path}: ${e.message}`); })).status, 404, `${method} ${path}`);
     }
     for (const method of ["POST", "PUT", "DELETE"]) assert.equal((await l.call("/state", { method, headers: all })).status, 404, `${method} /state`);
