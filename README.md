@@ -133,7 +133,10 @@ install paths, else Playwright's cache; without one it skips locally and fails i
 
 Calibration (October 2026, 3 runs, 108 actors on screen, crews collapsed): p95 13.6 to 14.5 ms, p50 about 9 ms, about
 2640 objects. The gate is 16 ms p95 and 3500 objects, the main-thread number only (GPU work runs in software GL on CI and
-is not gated). `PERF_PROFILE=<file>` also writes a `.cpuprofile` of the measured window (open it in DevTools). The same run times the daemon: about 0.7 ms per sequential `POST /event` at 100 agents, 1.1 ms with
+is not gated). `PERF_PROFILE=<file>` also writes a `.cpuprofile` of the measured window (open it in DevTools). DevTools throttling is relative to the host, so the
+gate first times a fixed JavaScript workload in the page (unthrottled, median of 5) and divides frame times by the host's
+speed relative to the calibration host (`REF_BENCH_MS`, 71 ms there): a slow CI runner is held to the same work, not to
+its own hardware. The raw numbers are printed too. The same run times the daemon: about 0.7 ms per sequential `POST /event` at 100 agents, 1.1 ms with
 a browser subscribed to `/stream`, so roughly 900 events/s, far above what hooks produce.
 
 ## What it shows, and what it ignores

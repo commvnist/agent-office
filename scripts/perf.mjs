@@ -13,6 +13,9 @@ import { fileURLToPath } from "node:url";
 // 3 local runs gave p95 13.6-14.5 ms and ~2640 objects at 108 actors with sessions collapsed.
 // shortcut: calibrated on one local machine; if the CI runner is slower, measure there before loosening the 16 ms target.
 export const BUDGET = { p95: 16, objects: 3500 };
+/** Fixed workload (math + small allocations) timed in the page to compare hosts; REF_BENCH_MS is its median on the calibration host. */
+export const BENCH_JS = "(() => { const t = performance.now(); let x = 0; const a = []; for (let i = 0; i < 3e6; i++) { x += Math.sqrt(i) * Math.sin(i); if (i % 500 === 0) a.push({ i, x }); } return performance.now() - t + (x > Infinity ? 1 : 0); })()";
+export const REF_BENCH_MS = 71; // median in the running office on the calibration host (README "Performance gate")
 
 /** Nearest-rank percentile of a list of numbers (0 for an empty list). */
 export function pct(xs, p) {
@@ -120,6 +123,11 @@ async function main() {
       await sleep(40);
     }
   })();
+  // Host speed: DevTools throttling is relative to the host, so a slow CI runner at 4x is far slower than the reference
+  // machine at 4x. Time a fixed JS workload (median of 5, unthrottled) and scale frame times to the reference host.
+  const bench = [];
+  for (let i = 0; i < 5; i++) bench.push(await evalJs(BENCH_JS));
+  const speed = pct(bench, 50) / REF_BENCH_MS; // > 1: slower than the reference host
   await cdp("Emulation.setCPUThrottlingRate", { rate: 4 });
   await sleep(5000); // warm-up: walk-ins, texture bakes
   await evalJs("__aoPerf.reset()");
@@ -131,9 +139,11 @@ async function main() {
   await traffic;
   ws.close();
 
-  const m = { frames: frames.length, p50: pct(frames, 50), p95: pct(frames, 95), max: Math.max(0, ...frames), objects, actors };
+  const raw = { p50: pct(frames, 50), p95: pct(frames, 95), max: Math.max(0, ...frames) };
+  const m = { frames: frames.length, p50: raw.p50 / speed, p95: raw.p95 / speed, max: raw.max / speed, objects, actors };
   console.log(`perf: ${agents} agents / ${SESS} sessions, ${actors} actors on screen, CPU 4x throttled, ${seconds}s`);
-  console.log(`  frame main-thread ms: p50 ${m.p50.toFixed(2)}  p95 ${m.p95.toFixed(2)}  max ${m.max.toFixed(2)}  (${m.frames} frames; budget p95 ${budget.p95})`);
+  console.log(`  host speed: ${speed.toFixed(2)}x the reference (bench ${pct(bench, 50).toFixed(1)} ms vs ${REF_BENCH_MS} ms); raw frame p50 ${raw.p50.toFixed(2)}  p95 ${raw.p95.toFixed(2)}`);
+  console.log(`  frame main-thread ms, normalized to the reference host: p50 ${m.p50.toFixed(2)}  p95 ${m.p95.toFixed(2)}  max ${m.max.toFixed(2)}  (${m.frames} frames; budget p95 ${budget.p95})`);
   console.log(`  display objects: ${objects} (budget ${budget.objects})`);
   console.log(`  daemon commit: ${empty.toFixed(2)} ms/event with 0 agents, ${full.toFixed(2)} ms/event with ${agents}, ${viewed.toFixed(2)} with ${agents} and a browser on /stream (~${Math.round(1000 / viewed)} events/s sequential)`);
   const bad = verdict(m, budget);
