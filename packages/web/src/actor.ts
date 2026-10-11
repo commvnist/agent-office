@@ -468,7 +468,7 @@ export class Actor {
     const sit = !moving && this.sitting;
     const pc = this.perch;
     if (sit) this.dir = "down", this.flip = false;
-    else if (pc) this.dir = "up", this.flip = false; // the couch faces its table: the lounger is seen from behind
+    else if (pc) this.dir = pc.t >= PERCH_MS + pc.ms ? "down" : "up", this.flip = false; // the couch faces its table: the lounger is seen from behind; getting up, it turns to step down off the back, never gliding backwards
     if (sit && !this.wasSitting && !settings.reducedMotion) { this.nudge = 1; this.settle = 0.8; } // chair pull-out, then a small settle into the seat
     this.wasSitting = sit;
     const still = settings.reducedMotion;
