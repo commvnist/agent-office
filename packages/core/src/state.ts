@@ -515,8 +515,10 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
     }
     case "turn_end": {
       const x = s.sessions[e.session], text = firstLine(e.message);
-      // S9: a finished turn is your turn, calm (soft): the lead's own wait only, a helper's open prompt stays
-      const lw = leadId(e.session), waits = [...(x.waits ?? []).filter((w) => w.agent !== lw), { agent: lw, kind: "turn" as const, since: e.t, soft: true }];
+      // S9: a finished turn is your turn, calm (soft): the lead's own wait only, a helper's open prompt stays. Not while its
+      // helpers still run (background agents): Claude resumes by itself when they report, so nothing waits on you yet.
+      const lw = leadId(e.session), helping = Object.values(s.agents).some((a) => a.session === e.session);
+      const waits = [...(x.waits ?? []).filter((w) => w.agent !== lw), ...(helping ? [] : [{ agent: lw, kind: "turn" as const, since: e.t, soft: true }])];
       let n = patchSession(s, e.session, { ...setWaits(x, waits, e.t), doing: undefined, detail: undefined, why: undefined, prompt: undefined, result: text || undefined, turnAt: e.t,
         ...(e.usage ? { usage: maxUsage(x.usage, e.usage) } : {}) });
       // The lead's finished turn is an outcome too (its prompt -> its result line); an unprefixed answer stays undefined (neutral).

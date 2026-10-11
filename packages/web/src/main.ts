@@ -703,6 +703,7 @@ function maybeStroll(now: number) {
   for (const sess of Object.values(state.sessions)) {
     const id = leadId(sess.id), a = actors.get(id);
     if (!a || sess.prompt || sess.waiting || sess.doing || a.leaving || !a.sitting || a.steps.length || running.has(id)) continue;
+    if (Object.values(state.agents).some((g) => g.session === sess.id)) continue; // its helpers still run: it is not on a break
     cands.push({ id, lastActive: Math.max(a.busyAt, sess.lastAt ?? 0), strolledAt: strolled.get(id) ?? 0, session: sess.id });
   }
   const p = pickStroller(cands, now);

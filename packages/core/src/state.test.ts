@@ -609,13 +609,13 @@ test("S3: waits per agent; each agent's own event closes only its own (probes 1,
   assert.equal(s.sessions.s1.waitBy, "h1", "most urgent: the oldest permission");
   s = reduce(cfg, s, h({ type: "tool", tool: "Bash", t: 3 }));
   assert.deepEqual(waitsOf(s), ["h1:permission"]);
-  // 11: the lead's Stop leaves a helper's open permission
+  // 11: the lead's Stop leaves a helper's open permission (and opens no turn of its own while that helper runs)
   s = reduce(cfg, s, h({ type: "turn_end", t: 4 }));
-  assert.deepEqual(waitsOf(s), ["h1:permission", "lead:s1:turn~"]);
-  assert.deepEqual([s.sessions.s1.waitKind, s.sessions.s1.waitBy, s.sessions.s1.waitSoft], ["permission", "h1", undefined], "the permission outranks a calm turn");
+  assert.deepEqual(waitsOf(s), ["h1:permission"]);
+  assert.deepEqual([s.sessions.s1.waitKind, s.sessions.s1.waitBy, s.sessions.s1.waitSoft], ["permission", "h1", undefined]);
   assert.equal(s.sessions.s1.permWait?.since, 1, "permWait runs while any permission is open");
   s = reduce(cfg, s, { type: "agent_stop", session: "s1", agentId: "h1", t: 9 });
-  assert.deepEqual([waitsOf(s), s.sessions.s1.waitSoft, s.sessions.s1.permWait], [["lead:s1:turn~"], true, { n: 1, totalMs: 8, lastMs: 8 }]);
+  assert.deepEqual([waitsOf(s), s.sessions.s1.waitSoft, s.sessions.s1.permWait], [[], undefined, { n: 1, totalMs: 8, lastMs: 8 }]);
 });
 
 test("S9: a finished turn is a soft your-turn; idle_prompt keeps it; a prompt closes it; a question stays a question", () => {
@@ -627,6 +627,10 @@ test("S9: a finished turn is a soft your-turn; idle_prompt keeps it; a prompt cl
   assert.deepEqual([s.sessions.s1.waiting, s.sessions.s1.waits, s.sessions.s1.waitSoft], [false, [], undefined]);
   const idleOnly = run(h({ type: "session_start", project: "p" }), h({ type: "waiting", idle: true, kind: "turn", t: 5 }));
   assert.equal(idleOnly.sessions.s1.waitSoft, undefined, "an idle_prompt with no Stop (interrupt) is a plain your-turn");
+  const bg = run(h({ type: "session_start", project: "p" }), h({ type: "prompt", text: "audit", t: 1 }), start("h1"), h({ type: "turn_end", message: "Three audits are still running", t: 3 }));
+  assert.deepEqual([bg.sessions.s1.waiting, bg.sessions.s1.waits], [false, []], "background helpers still run: Claude resumes by itself, not your turn");
+  const done = run(h({ type: "session_start", project: "p" }), h({ type: "prompt", text: "audit", t: 1 }), start("h1"), { type: "agent_stop", session: "s1", agentId: "h1", t: 2 } as OfficeEvent, h({ type: "turn_end", t: 3 }));
+  assert.equal(done.sessions.s1.waitSoft, true, "once they have reported, the next Stop is your turn");
   const q = run(h({ type: "session_start", project: "p" }), h({ type: "waiting", kind: "question", text: "Claude needs your permission to use AskUserQuestion", t: 5 }));
   assert.deepEqual([q.sessions.s1.waits![0].kind, q.sessions.s1.waitKind, q.sessions.s1.waitSoft], ["question", "turn", undefined]);
 });
