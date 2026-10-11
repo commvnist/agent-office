@@ -681,3 +681,31 @@ Derived signals proposed next (hooks only): interrupt count per session; compact
 | Simulation | S1 + S2: attribute waits and tools to the agent that raised them. |
 
 Owner calls raised: the disco floor tint (R4), the courier (S8), dropping GIF and Recap PNG (P8), lowering the desk cap vs gating 190 agents (L3).
+
+### Owner decisions on Pass 4
+
+| Item | Decision |
+|---|---|
+| Disco floor tint (R4) | Remove. |
+| Walk-on courier (S8) | Remove. |
+| GIF export, Recap PNG (P8) | Remove. |
+| OBS / overlay mode | Remove (the `?overlay` and `?preset=obs*` flags, their CSS and code paths; H6 and H7 become moot). Present and kiosk stay. |
+| Desk cap (L3) | Lower it to what passes the perf gate: measure whole floors (64, 128) under the gate and cap at the largest that passes; docs and README follow. |
+
+### New owner findings (from a live screenshot)
+
+| ID | Sev | Finding | Fix |
+|---|---|---|---|
+| O1 | High | Name tags cover their agents' chat bubbles and thought clouds: an upper-row seated agent's tag sits above the head, exactly where the bubble and emote live (Bram, Maren). | A bubble or emote and its own agent's tag never overlap: the tag goes below when a bubble or emote is up (or the bubble rises above the tag), through the same label stacking. |
+| O2 | High | The lead's tag concatenates and truncates its text ("agent-off… > Bram +3"): the project name, the thing a lead tag exists for, is the part that gets cut. | Lead tags stay legible: the project on its own line in full (clipped only by a generous width), the delegation line second; never truncate the project to make room for the delegation line. |
+| O3 | High | Text in the simulation must keep a constant size relative to the world: zooming in makes it bigger, zooming out makes it smaller, with no screen-size floor. Today `fontPx` floors at 10px (settings.ts:60), so zoomed-out text and bubbles stay large relative to the world. Applies to every in-scene text: name tags, bubbles, pod badges, plaques, the wall ledger, signs, the queue label. Reading small text is done by zooming in. | Remove the 10px floor from in-scene text and bubble geometry (one world-relative scale, `textZoom`), keep the crisp text rendering; DOM chrome is unaffected. Re-check label stacking and the badge layout at small scales. |
+
+### Build plan after Pass 4 (ordered)
+
+1. **Truth first (wrong data on screen).** S1 attribute waits to the agent that raised them; S2 never draw an unknown helper as the lead (create it as recovered); S3 + P2 unknown outcomes neutral, never ✓ or "Done."; S4 questions are your turn without ending the turn; S6 summary duration from `lastAt`; X2 History reads `outcome`; L1 a restart keeps the office (replay starts within retention, or a checkpoint); L2 privacy pseudonymises the project on disk and in `/state`.
+2. **Did it get there (outcomes for sessions).** P1 a lead's finished turn files an outcome with its result line; X3 the your-turn row shows the lead's last message; X1 + S7 gave-up alerts derived from `state.outcomes`, durable across pages, with Seen; P3 + X4 + X5 session tiles show the goal and last result, helper-only counts, "gave up" everywhere; P4 "Since you left" block; X6 "Show all" in Recently done.
+3. **Removals and scale (owner decisions).** Remove the disco tint, the courier, GIF, Recap PNG and OBS/overlay mode; lower the desk cap to what the gate passes; L4 the frame check exempts by environment, not by the measured run; L5 typecheck blocking in CI; L6 `windowsHide`; L7 purge `events.log` and the listener leak; L8 header counts from crew numbers, use or drop `?lod=summary`.
+4. **The simulation reads right (text, art, motion).** O3 world-relative text with no floor; O1 tags never cover their own bubbles; O2 legible lead tags; R1 hide chairs of collapsed occupants; R2 a steady lamp coloured by wait kind; R3 chrome on the value key and a small wordmark; R4 effects on STATUS/KEY, confetti gold and paper; R5 rings behind the figure, pixel pulse; R6 paper-tinted emotes and plates; R7 keep a strip of wall at scale, pixel-plate badges; R8 lit-edge outline break, move the shirt off magenta; P6 cut combos, delights in-scene only and never during an alert; S5 stuck helpers and per-agent TTL; S8 no confetti on errored turns, quirks only when idle, delete dead `pickPartner`.
+5. **Words and final review.** P5 README numbers and tagline; P7 rename "nudged", move the Stuck setting, let the pill grow; X7 `n` cycles NEEDS YOU; X8 trim the breadcrumb and empty "next"; then the screenshot matrix, the perf gate at the new cap, and a short critic pass.
+
+Per phase: typecheck, tests, compliance, build, a screenshot matrix that is inspected, the doc updated, commit and push.
