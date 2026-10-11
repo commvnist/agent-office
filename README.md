@@ -137,7 +137,7 @@ is not gated). `PERF_PROFILE=<file>` also writes a `.cpuprofile` of the measured
 gate first times a fixed JavaScript workload in the page (unthrottled, median of 5) and divides frame times by the host's
 speed relative to the calibration host (`REF_BENCH_MS`, 71 ms there): a slow CI runner is held to the same work, not to
 its own hardware. The raw numbers are printed too. The gate always holds the update phase (everything the app does per frame before the
-render) to the budget; it holds the full frame (update + render submit) too when at least 100 frames were sampled. On a
+render) to the budget; it holds the full frame (update + render submit) too when rendering kept up (at least 30 fps sampled). On a
 GPU-less 2-core CI runner software GL starves the page to about 3 frames a second, so there the full frame is printed
 and render cost is held by the object budget instead. The same run times the daemon: about 0.7 ms per sequential `POST /event` at 100 agents, 1.1 ms with
 a browser subscribed to `/stream`, so roughly 900 events/s, far above what hooks produce.
