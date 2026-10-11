@@ -1,7 +1,7 @@
 import { Container, Graphics, Sprite, Text } from "pixi.js";
 import { TILE_PX, type Tile } from "@agent-office/core";
 import { dev } from "./snap.ts";
-import { personTex, emoteTex, ringTex, toolIconTex, badgeIconTex, pipTex, PIP, type Dir, type Emote, type Expr, type Look } from "./sprites.ts";
+import { personTex, emoteTex, ringTex, arcTex, ARC_STEPS, toolIconTex, badgeIconTex, pipTex, PIP, type Dir, type Emote, type Expr, type Look } from "./sprites.ts";
 import { easeSpeed, fontPx, REF_SC, settings, stackBubbles, textZoom, type BubbleBox } from "./settings.ts";
 import { KEY, STATUS, theme } from "./theme.ts";
 import { HOP_MS, JITTER_MS, SQUASH_MS, cleanText, clampBox, hopPose, idleTier, jitterX, microPose, microSlot, sipState, popScale, quirkAt, squashY, stackLabels, statusOf, stepDrop, type Status, toolIcon, type Box, type Rect } from "./choreo.ts";
@@ -34,6 +34,9 @@ const BUBBLE_STYLE: Record<BubbleKind, { bg: number; fg: number; border: number 
   blocked: { bg: 0xffe8e8, fg: 0x4d1010, border: 0xd32f2f },
 };
 const MONO = "ui-monospace, Menlo, Consolas, monospace";
+/** Dark outline for in-scene text: its width scales like the font (`base` is the width at the reference zoom), round joins (R3). */
+export const outline = (base: number) => ({ color: KEY.env[0], width: fontPx(base), join: "round" as const });
+const hexN = (h: string) => Number.parseInt(h.slice(1), 16);
 const PERCH_MS = 240; // couch sit-down / stand-up slide
 const GLANCE_MS = 700;
 const WALK_STEP = 5; // art px per walk pose (6 poses = 30 px stride, ~93 ms each at walking speed): feet plant instead of sliding
@@ -58,18 +61,20 @@ function makeBubble(text: string, kind: BubbleKind, badge?: Badge): Container {
     style: { fontFamily: MONO, fontSize: fontPx(small ? 10 : 12), fill: st.fg, wordWrap: true, wordWrapWidth: Math.round((small ? 64 : 72) * A), lineHeight: Math.round((small ? 14 : 16) * u) },
   });
   // radius, stroke, tail and chip follow the text zoom in whole pixels (an even stroke stays on the pixel grid when centred)
-  const pad = Math.round(7 * u), w = Math.ceil(t.width) + pad * 2, h = Math.ceil(t.height) + pad * 2;
+  const k = Math.max(1, Math.round(1.5 * u)), m = Math.max(1, Math.round(2 * u)), o = Math.round(5 * u), chip = 7 * k + 2 * m;
+  const pad = Math.round(7 * u), padL = badge ? Math.max(pad, chip - o + Math.round(3 * u)) : pad; // text starts past the corner chip, never under it (R7)
+  const w = Math.ceil(t.width) + padL + pad, h = Math.ceil(t.height) + pad * 2;
   const sw = 2 * Math.max(1, Math.round(u)), tw = Math.max(3, Math.round(6 * u)), th = Math.max(4, Math.round(8 * u)), cx = Math.round(w / 2);
   const g = new Graphics();
   g.roundRect(0, 0, w, h, Math.max(2, Math.round(6 * u))).fill(st.bg).stroke({ width: sw, color: st.border });
   g.poly([cx - tw, h - sw / 2, cx + tw, h - sw / 2, cx, h + th]).fill(st.bg);
   g.moveTo(cx - tw, h).lineTo(cx, h + th).lineTo(cx + tw, h).stroke({ width: sw, color: st.border });
-  t.position.set(pad, pad);
+  t.position.set(padL, pad);
   const c = new Container();
   c.addChild(g, t);
   if (badge) { // corner chip: a square plate with a 7x7 pixel glyph at a whole-number scale (tool family icon, else the event type)
-    const ic = kind === "tool" ? toolIcon(text) : null, k = Math.max(1, Math.round(1.5 * u)), m = Math.max(1, Math.round(2 * u)), o = Math.round(5 * u);
-    const b = new Graphics().rect(-o, -o, 7 * k + 2 * m, 7 * k + 2 * m).fill(st.border);
+    const ic = kind === "tool" ? toolIcon(text) : null;
+    const b = new Graphics().rect(-o, -o, chip, chip).fill(st.border);
     const s = new Sprite(ic ? toolIconTex(ic) : badgeIconTex(badge));
     s.tint = st.bg; s.scale.set(k); s.position.set(m - o, m - o);
     c.addChild(b, s);
@@ -142,6 +147,8 @@ export class Actor {
   private wasSitting = false;
   private ring = new Sprite(); // alert ring: a pixel sprite at art scale, screen space (UI layer sits above the night overlay)
   waitKind: WaitKind = "permission";
+  /** A finished turn (the session's Stop): a calm "your turn", no raised hand or worried face (R2). */
+  soft = false;
   private alertAt = 0; // this.t when the alert began: it pulses only for its first seconds
   tagAbove = false; // upper-row seat: the name tag goes above the head, since below the desk is the lower row's head
   private mark = new Graphics(); // hover / selection outline, screen space
@@ -150,11 +157,11 @@ export class Actor {
   private selected = false;
   private plateW = -1;
   private plateH = -1;
-  private progOn = false;
   private edgeOn = false;
   private plate = new Graphics(); // dark backing behind the name tag, screen space
   private edge = new Graphics(); // off-screen alert arrow
-  private prog = new Graphics(); // long tool call arc
+  private prog = new Sprite(); // long tool call: pixel ring frames behind the figure (R6)
+  private progN = -1;
   private sc = 1;
   private qpos = 0;
   private walked = 0; // art px travelled, drives the walk frame
@@ -206,20 +213,24 @@ export class Actor {
     this.emoteSprite.anchor.set(0.5, 1);
     // the alert ring sits behind the figure (R5): its back arc frames the person, the face and a raised hand stay visible
     this.ring.position.set(0, -12);
-    this.c.addChild(shadow, this.ring, this.sprite, this.emoteSprite);
+    this.prog.position.set(0, -12);
+    this.prog.anchor.set(0.5);
+    this.prog.tint = hexN(KEY.cyan);
+    this.prog.visible = false;
+    this.c.addChild(shadow, this.ring, this.prog, this.sprite, this.emoteSprite);
     this.c.eventMode = "static";
     this.c.cursor = "pointer";
     // hit box padded by ~8 screen px so it stays grabbable at fit zoom (#117)
     this.c.hitArea = { contains: (x: number, y: number) => { const p = 8 / this.sc; return x > -12 - p && x < 12 + p && y > -30 - p && y < 4 + p; } };
     world.addChild(this.c);
-    this.tag = new Text({ text: label, style: { fontFamily: MONO, fontSize: fontPx(11), fill: KEY.text.fg, stroke: { color: KEY.env[0], width: 3 } } });
+    this.tag = new Text({ text: label, style: { fontFamily: MONO, fontSize: fontPx(11), fill: KEY.text.fg, stroke: outline(3) } });
     this.tag.anchor.set(0.5, 0);
     this.glyph.anchor.set(0.5, 1);
     this.ring.anchor.set(0.5);
     this.glyph.texture = emoteTex("exclaim");
     this.ring.visible = this.mark.visible = this.glyph.visible = false;
     this.pip.visible = false;
-    this.ui.addChild(this.mark, this.prog, this.glyph, this.edge, this.plate, this.tag, this.pip);
+    this.ui.addChild(this.mark, this.glyph, this.edge, this.plate, this.tag, this.pip);
     uiLayer.addChild(this.ui);
   }
 
@@ -266,15 +277,18 @@ export class Actor {
   /** Re-apply settings.textScale to the tag and any live bubbles. */
   refreshText() {
     this.tag.style.fontSize = fontPx(11);
+    this.tag.style.stroke = outline(3);
     if (this.speech) { const o = this.speech; o.node.destroy({ children: true }); o.node = makeBubble(o.text, o.kind, o.badge); bubbleHost(this.ui).addChild(o.node); }
     if (this.toolBubble) { const o = this.toolBubble; o.node.destroy({ children: true }); o.node = makeBubble(o.text, "tool", "tool"); bubbleHost(this.ui).addChild(o.node); }
   }
   /** Pulsing ring + large distinct glyph (waiting = "!", blocked = flag + red "! " tag). null clears. Persists while leaving. */
-  setAlert(a: Alert | null, kind: WaitKind = "permission") {
-    if (this.alert === a && (a !== "waiting" || this.waitKind === kind)) return;
+  setAlert(a: Alert | null, kind: WaitKind = "permission", soft = false) {
+    const sf = a === "waiting" && kind === "turn" && soft;
+    if (this.alert === a && (a !== "waiting" || (this.waitKind === kind && this.soft === sf))) return;
     if (this.alert !== a) this.alertAt = this.t;
     this.alert = a;
     this.waitKind = kind;
+    this.soft = sf;
     if (a) {
       // one status map (theme.STATUS), shape + glyph + colour: permission 4 arcs "!", your turn dotted "?", gave up 6 arcs "x"
       const k = a === "blocked" ? "blocked" : kind;
@@ -304,7 +318,7 @@ export class Actor {
     }
     const Lh = Math.round(L / 2);
     if (sel) for (const sx of [-1, 1]) m.rect(sx < 0 ? -W : W - Lh, -Math.ceil(t / 2), Lh, t);
-    m.fill(sel ? 0x7fe3ff : 0x5aa9c9);
+    m.fill(sel ? hexN(KEY.cyan) : 0x5aa9c9); // a machine mark: never the your-turn cyan
   }
   /** Labeled idle ambient visit: walk to `to`, linger, return home. No speech; main.ts decides when. */
   idleStroll(to: Tile, ms: number, toward?: { x: number; y: number }, couch?: { x: number; y: number }) {
@@ -499,7 +513,7 @@ export class Actor {
     // quirks (yawn, phone, sip) only when truly idle: a helper between tools is still generating, so it never qualifies (S8)
     const calm = !moving && !still && !settings.ambientPaused && !this.alert && !this.working && !this.thinking && !this.emote && !this.speech && now - this.busyAt > 6000;
     const quirk = calm ? quirkAt(now, this.h) : null;
-    const expr: Expr = this.alert === "blocked" ? "stuck" : this.alert === "waiting" ? "worry"
+    const expr: Expr = this.alert === "blocked" ? "stuck" : this.alert === "waiting" && !this.soft ? "worry"
       : this.emote?.e === "check" || this.emote?.e === "heart" ? "happy" : quirk ?? (seated && this.working ? "focus" : "neutral");
     const last = this.hits[this.hits.length - 1] ?? -1e9;
     const pose = pc ? (pc.k >= 1 ? "couch" : "walk") : glancing ? "sit-glance" : seated ? (this.working ? "sit" : "sit-think") : "walk";
@@ -510,7 +524,7 @@ export class Actor {
       dip: seated && this.working && !still && now - last < 90, // head dips on each tool hit
       sip: this.sip === "sip" && !glancing,
       think: (glancing && !this.working) || (this.sip === "sip" && !glancing), // the glance turns the head only; arms keep the think pose
-      raise: this.alert === "waiting" && !moving && !pc, // waiting on you: a hand goes up (readable at pod scale without a UI mark)
+      raise: this.alert === "waiting" && !this.soft && !moving && !pc, // waiting on you: a hand goes up (readable at pod scale without a UI mark); a finished turn sits calm
     });
     this.sprite.scale.x = (glancing ? this.glanceFlip : this.flip) ? -1 : 1; // leads at 1x too: whole art pixels; the padded shoulders are the lead cue
     this.sprite.tint = this.stale ? 0x8a8a9c : 0xffffff;
@@ -537,7 +551,7 @@ export class Actor {
     // cloud: the cloud sat on the leaned-back pose and landed on the desk row above
     if (this.emote && (this.emote.left -= ms) <= 0) this.emote = null;
     let e: Emote | null = this.emote?.e ?? null;
-    if (!e && this.queued && !moving) e = "question";
+    if (!e && this.queued && !moving) e = "wait"; // waiting for a desk is not "needs you" (R1)
     const ek = e ? (e.startsWith("dots") ? "dots" : e) : "";
     if (ek !== this.emoteKey) { this.emoteKey = ek; this.emoteBorn = now; }
     if (e) {
@@ -574,8 +588,9 @@ export class Actor {
     }
     const couched = !!this.perch && this.perch.k >= 1; // lounging: head sits ~4px lower than standing
     const headY = dev(sy - (this.sitting ? 20 : couched ? 24 : 28) * sc - 2 * sc); // the tail tip sits 2 art px above the head, at every zoom
-    // upper-row tag sits above the emote's space (emotes are <= 9 art px tall, bottom 19 px above the feet), so it never covers its own thought cloud (O1); bubbles stack above it
-    if (this.tagAbove && this.sitting) { this.tag.y = dev(sy - 29 * sc - this.tag.height - 1); if (floor) this.clampTag(); }
+    // upper-row tag sits on the head top (20 art px above the feet); while an emote shows it lifts above the emote's space (emotes are
+    // <= 9 art px tall, bottom 19 px above the feet), so it never covers its own emote or thought (O1); bubbles stack above it (R9)
+    if (this.tagAbove && this.sitting) { this.tag.y = dev(sy - (this.emoteSprite.visible ? 29 : 20) * sc - this.tag.height - 1); if (floor) this.clampTag(); }
     const toolY = headY - stagger;
     // 120ms pop-in, 150ms fade-out (#109)
     const fade = (b: { left: number; born: number }) => (settings.reducedMotion ? 1 : Math.max(0, Math.min(1, (this.t - b.born) / 120, b.left / 150)));
@@ -596,7 +611,7 @@ export class Actor {
     // alerts move only for their first 4 s (then hold still); "your turn" never pulses: it is calm, not urgent. The pulse is two
     // stepped frames (full, dimmed), never a fractional scale that blurs the pixel ring (R5).
     const fresh = this.alert && !settings.reducedMotion && !(this.alert === "waiting" && this.waitKind === "turn") && this.t - this.alertAt < 4000;
-    this.ring.alpha = fresh && Math.floor(this.t / (this.alert === "blocked" ? 225 : 350)) % 2 ? 0.55 : 1;
+    this.ring.alpha = this.soft ? 0.5 : fresh && Math.floor(this.t / (this.alert === "blocked" ? 225 : 350)) % 2 ? 0.55 : 1;
     const rt = this.ring.texture;
     this.ringScr.x = sx; this.ringScr.y = dev(sy - 12 * sc); this.ringScr.w = rt.width * sc; this.ringScr.h = rt.height * sc;
     this.mark.position.set(sx, dev(sy - (this.sitting ? 9 : 12) * sc));
@@ -604,16 +619,11 @@ export class Actor {
     const gs = dev(Math.max(2, sc * 1.6)); // whole device px per glyph texel
     this.glyph.scale.set(gs);
     this.glyph.position.set(dev(sx + 14 * sc), dev(sy - (this.sitting ? 18 : couched ? 22 : 26) * sc));
-    // arc for a tool call that has been running a while: busy, not hung (#114)
+    // arc for a tool call that has been running a while: busy, not hung (#114). Only a genuinely long call (3x the tool's own p95)
+    // earns a mark, and only the arc: a full track circle on every busy worker read as noise (critique A4/T7). Pixel frames, 16 steps.
     const el = this.toolSince ? this.t - this.toolSince : 0;
-    if (this.progOn) { this.prog.clear(); this.progOn = false; }
-    if (el > this.longAfter) { // only a genuinely long call (3x the tool's own p95) earns a mark, and only the arc: a full track circle on every busy worker read as noise (critique A4/T7)
-      this.progOn = true;
-      this.prog.position.set(sx, dev(sy - 12 * sc));
-      const end = -Math.PI / 2 + Math.PI * 2 * Math.min(1, (el - this.longAfter) / 270_000);
-      const r = 17 * sc;
-      this.prog.moveTo(0, -r).arc(0, 0, r, -Math.PI / 2, end).stroke({ width: Math.max(1, Math.round(sc)), color: 0x7fe3ff, alpha: 0.7 }); // moveTo: the arc must not continue a previous path (that drew a spoke)
-    }
+    const n = el > this.longAfter ? Math.max(1, Math.ceil(ARC_STEPS * Math.min(1, (el - this.longAfter) / 270_000))) : 0;
+    if (n !== this.progN) { this.progN = n; this.prog.visible = n > 0; if (n) this.prog.texture = arcTex(n); }
     // off-screen alert: arrow on the nearest viewport edge in the alert colour (#104)
     if (this.edgeOn) { this.edge.clear(); this.edgeOn = false; }
     if (view && this.alert && (sx < 0 || sx > view.w || sy < view.top || sy > view.h)) {
@@ -749,7 +759,9 @@ export function layoutBubbles(it: Iterable<Actor>, view?: { w: number; h: number
     if (!n) return;
     const bx = bubbleBoxes[i];
     n.y = r.y;
-    n.alpha = r.alpha * bubbleNodes[i].fade;
+    n.alpha = bubbleNodes[i].fade;
+    const v = Math.round(255 * Math.max(0.55, r.alpha)); // a displaced bubble darkens its plate instead of fading: text over text never mixes (R7)
+    (n.children[0] as Graphics).tint = (v << 16) | (v << 8) | v;
     n.visible = r.visible;
     const fl = bubbleNodes[i].fl;
     if (fl) n.x = clampBox({ x: n.x, y: n.y - bx.h, w: bx.w, h: bx.h }, fl).x; // sideways inside the room; vertically the stacker hides it instead

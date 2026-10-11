@@ -1,6 +1,6 @@
 import type { Texture } from "pixi.js";
 import { Grid, shade } from "./pixel.ts";
-import { toLuma } from "./color.ts";
+import { hsl, toLuma } from "./color.ts";
 import { KEY, STATUS, theme } from "./theme.ts";
 import { settings } from "./settings.ts";
 import type { ToolIconName } from "./choreo.ts";
@@ -40,6 +40,15 @@ export const stoolTex = (v = 0) =>
   memo(`stool:${v}`, () => {
     const g = new Grid(16, 16), c = CHAIRS[v % CHAIRS.length];
     slab(g, 4, 8, 8, 3, c[1]); g.rect(4, 8, 8, 1, c[0]); g.rect(7, 11, 2, 4, E[2]); g.rect(4, 14, 8, 1, E[0]); g.rect(5, 15, 6, 1, "rgba(26,20,40,0.22)");
+    return g;
+  });
+
+/** A vacant chair or stool (R8): the room's own env ramp, so it never reads as a lit block, with a 1 px trim in the last occupant's session hue (-1: none). */
+export const vacantChairTex = (stool: boolean, hue: number) =>
+  memo(`vchair:${+stool}:${hue}`, () => {
+    const g = new Grid(16, 16), trim = hue >= 0 ? hsl(hue, 0.5, 0.5) : E[4];
+    if (stool) { slab(g, 4, 8, 8, 3, E[3]); g.rect(4, 8, 8, 1, trim); g.rect(7, 11, 2, 4, E[2]); g.rect(4, 14, 8, 1, E[0]); return g; }
+    slab(g, 3, 2, 10, 11, E[3]); slab(g, 4, 3, 8, 9, E[4]); slab(g, 2, 10, 12, 3, E[3]); g.rect(4, 2, 8, 1, trim);
     return g;
   });
 
@@ -311,9 +320,12 @@ const ICONS: Record<string, string[]> = {
   heart: [".#.#.", "#####", "#####", ".###.", "..#.."],
   flag: ["##...", "####.", "##...", "#....", "#...."],
   cross: ["#...#", ".#.#.", "..#..", ".#.#.", "#...#"],
+  message: [".....", "#####", "##.##", "#.#.#", "#####"], // an envelope: something arrived, nothing needs you
+  wait: [".....", ".....", ".....", ".....", ".....", "#.#.#"], // queued for a desk: an ellipsis, not "?"
 };
-export type Emote = "exclaim" | "check" | "question" | "bulb" | "heart" | "flag" | "cross" | "dots0" | "dots1" | "dots2";
-const EMOTE_COLOR: Record<string, string> = { exclaim: STATUS.permission.color, check: "#5be37d", question: STATUS.turn.color, bulb: "#ffe08a", heart: "#ff7a9a", flag: "#ff4a4a", cross: STATUS.blocked.color };
+export type Emote = "exclaim" | "check" | "question" | "bulb" | "heart" | "flag" | "cross" | "message" | "wait" | "dots0" | "dots1" | "dots2";
+// amber "!" and cyan "?" mean only "needs you" (R1): arrivals and queueing are paper
+const EMOTE_COLOR: Record<string, string> = { exclaim: STATUS.permission.color, check: "#5be37d", question: STATUS.turn.color, bulb: "#ffe08a", heart: "#ff7a9a", flag: "#ff4a4a", cross: STATUS.blocked.color, message: KEY.paper, wait: KEY.paper };
 // 11x7 thought cloud: # outline, o fill; the dots are lit left to right
 const CLOUD = ["..###.###..", ".#ooo#ooo#.", "#ooooooooo#", "#ooooooooo#", ".#ooooooo#.", "..#######..", ".....#....."];
 /**
@@ -330,6 +342,18 @@ export const ringTex = (kind: "permission" | "turn" | "blocked") =>
           : (a % ((Math.PI * 2) / (kind === "permission" ? 4 : 6))) < ((Math.PI * 2) / (kind === "permission" ? 4 : 6)) * 0.62;
         if (on) g.set(x, y, col);
       } else if (kind !== "turn" && Math.abs(d - (R - 3)) < 0.5) g.set(x, y, col + "59"); // faint inner ring (35% alpha)
+    }
+    return g;
+  });
+
+/** Long tool call progress (R6): the alert ring's 1 px circle, lit clockwise from the top for `n` of 16 steps; white, tinted by the caller. */
+export const ARC_STEPS = 16;
+export const arcTex = (n: number) =>
+  memoRaw(`arc:${n}`, () => {
+    const R = 12, C = 13, g = new Grid(27, 27);
+    for (let y = 0; y < 27; y++) for (let x = 0; x < 27; x++) {
+      const dx = x - C, dy = y - C, a = (Math.atan2(dx, -dy) + Math.PI * 2) % (Math.PI * 2); // 0 at the top, clockwise
+      if (Math.abs(Math.hypot(dx, dy) - R) < 0.6 && a < (Math.PI * 2 * n) / ARC_STEPS) g.set(x, y, "#ffffff");
     }
     return g;
   });

@@ -1,6 +1,6 @@
 import { Container, Graphics, Sprite, Text, type Texture } from "pixi.js";
 import { podRow, podStyle, type Layout, type Task } from "@agent-office/core";
-import { T, tagHits } from "./actor.ts";
+import { T, outline, tagHits } from "./actor.ts";
 import { sceneGeometry, selfCheck, type SceneGeometry } from "./geometry.ts";
 import { art, dev, place } from "./snap.ts";
 import { bake, Grid, hash, hsl, mix } from "./pixel.ts";
@@ -14,7 +14,7 @@ import type { Weather } from "./flair.ts";
 import { cleanText, couchSeats, skyAt, toolKind } from "./choreo.ts";
 import { promptCaption } from "./pod.ts";
 import { hideText } from "./stream.ts";
-import { activity, armchairTex, stoolTex, benchTex, boothTex, CHAIR_STYLES, catTex, chairTex, chipStack, coffeeTex, coolerTex, couchTex, deskTex, drawPx, floorLampTex, fridgeTex, holoTex, huddleTex, junctionTex, laptopTex, ledNoise, plantTex, pxTextW, rackTex, sconceTex, shadowTex, shelfTex, staleK, tableTex, wallTex, whiteTex } from "./sprites.ts";
+import { activity, armchairTex, stoolTex, benchTex, boothTex, CHAIR_STYLES, catTex, chairTex, vacantChairTex, chipStack, coffeeTex, coolerTex, couchTex, deskTex, drawPx, floorLampTex, fridgeTex, holoTex, huddleTex, junctionTex, laptopTex, ledNoise, plantTex, pxTextW, rackTex, sconceTex, shadowTex, shelfTex, staleK, tableTex, wallTex, whiteTex } from "./sprites.ts";
 
 const MAX_LIGHTS = 30;
 const FILED_MS = 30 * 60_000; // how long a finished helper's filed card stays on its empty desk
@@ -37,7 +37,7 @@ const E = KEY.env, CY = hexNum(KEY.cyan), CY_OFF = hexNum(KEY.cyanOff), WARM = h
  */
 export type SeatState = { used: boolean; working: boolean; tool?: string; count?: number; stale?: boolean; project?: string; role?: string; flash?: number; waiting?: boolean; prompt?: string;
   /** `load` = tool calls in the last 30 s (0 idle .. 3 busy): lights the desk power rail. `queueDepth` = queued items for the agent (chip stack). `idleMs` = real silence (desaturates the desk). `hue` = session identity hue (floor trim). */
-  load?: 0 | 1 | 2 | 3; mug?: boolean; queueDepth?: number; idleMs?: number; hue?: number;
+  load?: 0 | 1 | 2 | 3; mug?: boolean; queueDepth?: number; idleMs?: number; hue?: number; /** session lightness offset that goes with `hue` (logic.ts sessionTone) */ tone?: number;
   /** Seated, between tools, mid-turn: three dots on the monitor (the actor shows no thought cloud at the desk). */
   think?: boolean;
   /** The occupant is hidden by session collapse: its chair hides too (an empty chair reads as a top hat), the desk keeps its activity (R1). */
@@ -45,7 +45,7 @@ export type SeatState = { used: boolean; working: boolean; tool?: string; count?
   /** Why it waits: permission (amber lamp) or your turn (cyan lamp); defaults to permission. */
   waitKind?: "permission" | "turn" };
 
-type Desk = { s: Sprite; accent: string; chair: Sprite | null; overflowTier: number | null; deco: Graphics | null; decoKey: string; shown: number; pod: number; by: number; v: 0 | 1; idx: number; sh: Sprite[]; used: boolean; chairAt: number; sty: 0 | 1 | 2 };
+type Desk = { s: Sprite; accent: string; chair: Sprite | null; ctex?: Texture; hue: number; overflowTier: number | null; deco: Graphics | null; decoKey: string; shown: number; pod: number; by: number; v: 0 | 1; idx: number; sh: Sprite[]; used: boolean; chairAt: number; sty: 0 | 1 | 2 };
 const BUILD_MS = 400, RISE = 6; // build-in fade/rise
 const MONO = "ui-monospace, Menlo, Consolas, monospace";
 const DIM = 0x171421; // cool shadow tint: zones dim toward it instead of plain black
@@ -312,15 +312,16 @@ export class Scene {
   }
 
   /** Redraw a pod's patch: its owner's hue, or a dim neutral square while empty. Runs only when occupancy changes. */
-  private setOwner(i: number, owner: string, hue = -1) {
+  private setOwner(i: number, owner: string, hue = -1, dl = 0) {
     const pod = this.pods[i];
-    pod.owner = owner; pod.hue = hue;
+    pod.owner = owner; pod.hue = hue + dl; // the key: hue and tone together
     pod.g.clear().rect(pod.x, pod.y, pod.w, pod.h); // square: a curve on a 1 art px grid only anti-aliases
-    // the pad is the project's colour (a quiet tint: shirts always beat the pod behind them); the 1px trim inside it at 25% alpha is the session's identity hue
-    if (owner) pod.g.fill({ color: hexNum(hsl(projectHue(owner), 0.4, 0.55)), alpha: 0.09 }).stroke({ width: 1, color: hexNum(hsl(hue >= 0 ? hue : projectHue(owner), 0.65, 0.6)), alpha: 0.25, alignment: 1 });
+    // pad and 1px trim are the session's identity tone (a quiet tint: shirts always beat the pod behind them); a crew without one falls back to its project
+    const h = hue >= 0 ? hue : projectHue(owner);
+    if (owner) pod.g.fill({ color: hexNum(hsl(h, 0.4, 0.55 + dl)), alpha: 0.09 }).stroke({ width: 1, color: hexNum(hsl(h, 0.65, 0.6 + dl)), alpha: 0.25, alignment: 1 });
     else pod.g.fill({ color: DIM, alpha: 0.14 });
     if (!owner) { if (pod.plaque) pod.plaque.visible = false; return; }
-    pod.plaque ??= this.ui.addChild(new Text({ text: "", style: { fontFamily: MONO, fontSize: 10, fill: KEY.text.fg, stroke: { color: E[0], width: 3 } } }));
+    pod.plaque ??= this.ui.addChild(new Text({ text: "", style: { fontFamily: MONO, fontSize: 10, fill: KEY.text.fg, stroke: outline(3) } }));
     pod.plaque.anchor.set(0.5);
     pod.plaque.eventMode = "none";
     pod.plaque.visible = true;
@@ -508,9 +509,9 @@ export class Scene {
     if (!on) { if (this.leds[0]?.visible) { this.leds.forEach((s) => (s.visible = false)); this.ledStep = -1; } return; }
     if (!this.leds.length) {
       for (const rk of this.racks) for (let i = 0; i < 12; i++) {
-        const s = new Sprite(whiteTex());
-        s.position.set(8 + (i % 3), 3 + Math.floor(i / 3) * 3); s.eventMode = "none";
-        rk.addChild(s); this.leds.push(s);
+        const s = new Sprite(whiteTex()); // a sibling just above the cabinet: Pixi v8 warns on (and will drop) children of a Sprite
+        s.position.set(rk.x + 8 + (i % 3), rk.y + 3 + Math.floor(i / 3) * 3); s.zIndex = rk.zIndex + 0.01; s.eventMode = "none";
+        rk.parent!.addChild(s); this.leds.push(s);
       }
     }
     const step = Math.floor(now / (125 + 875 * (1 - a))); // 1 s per step idle, 125 ms busy
@@ -554,7 +555,7 @@ export class Scene {
       chair.visible = false; // empty chairs read as top hats: shown only while the seat is used
       const deco = p.kind === "permanent" ? this.addDeco(ysort, dk.x, dk.y, dk.y + T + 0.5) : null;
       const sh = [shadow(dk.x + 1, dk.y + T - 3), shadow(dk.x + 1, dk.y - T + 12)];
-      this.desks.set(seat, { s, accent, chair, overflowTier: p.kind === "overflow" ? p.tier : null, deco, decoKey: "", shown: 0, pod: Math.floor(Number(seat.slice(1)) / 4), by: dk.y, v, idx: Number(seat.slice(1)) || 0, sh, used: false, chairAt: 0, sty });
+      this.desks.set(seat, { s, accent, chair, ctex: chair.texture, hue: -1, overflowTier: p.kind === "overflow" ? p.tier : null, deco, decoKey: "", shown: 0, pod: Math.floor(Number(seat.slice(1)) / 4), by: dk.y, v, idx: Number(seat.slice(1)) || 0, sh, used: false, chairAt: 0, sty });
     }
     for (let p = 0; p * 4 < l.props.length; p++) { // bench and huddle pods: a table tile joins each desk row, so four people share one table
       const st: string = podStyle(p);
@@ -568,7 +569,7 @@ export class Scene {
       const s = add(deskTex("#f4f1ff", 0), k.x, k.y, k.y + T);
       const sh = [shadow(k.x + 1, k.y + T - 3), shadow(c.x + 1, c.y + 12)];
       sh[0].visible = true;
-      this.desks.set(`lobby#${i}`, { s, accent: "#f4f1ff", chair, overflowTier: null, deco: this.addDeco(ysort, k.x, k.y, k.y + T + 0.5), decoKey: "", shown: 0, pod: -1, by: 0, v: 0, idx: i, sh, used: false, chairAt: 0, sty: 0 });
+      this.desks.set(`lobby#${i}`, { s, accent: "#f4f1ff", chair, ctex: chair.texture, hue: -1, overflowTier: null, deco: this.addDeco(ysort, k.x, k.y, k.y + T + 0.5), decoKey: "", shown: 0, pod: -1, by: 0, v: 0, idx: i, sh, used: false, chairAt: 0, sty: 0 });
     });
     l.decor.forEach((d, i) => {
       const r = this.geo.rect(`decor:${d.kind}:${i}`), z = r.y + T;
@@ -660,6 +661,8 @@ export class Scene {
       }
       const u = !!st?.used;
       if (u !== d.used) { d.used = u; d.chairAt = now; }
+      if (u && st?.hue !== undefined) d.hue = st.hue; // the vacant chair keeps the last occupant's session trim
+      if (d.chair && d.ctex) d.chair.texture = u ? d.ctex : vacantChairTex(d.sty === 1, d.hue); // vacant: env ramp + 1 px trim, never a lit block (R8)
       // a chair stays out, pushed back, for a moment after its occupant leaves (tick hides it); never-used chairs stay hidden
       if (d.chair) d.chair.visible = (u || (d.pod >= 0 && !settings.reducedMotion && d.chairAt > 0 && now - d.chairAt < CHAIR_LINGER_MS));
       d.sh[0].visible = d.s.visible;
@@ -673,9 +676,9 @@ export class Scene {
     for (const [k, st] of m) if (st.used) used.add(wingOf(k));
     for (const [role, g] of this.zoneDim) g.visible = !used.has(role);
     const owners = podOwners(new Map([...m].filter(([, st]) => st.used && st.project).map(([k, st]) => [k, st.project!])), this.pods.length);
-    const hues = new Array<number>(this.pods.length).fill(-1);
-    for (const [id, st] of m) { const pi = this.desks.get(id)?.pod ?? -1; if (pi >= 0 && pi < hues.length && st.used && st.hue !== undefined && hues[pi] < 0) hues[pi] = st.hue; }
-    owners.forEach((o, i) => { if (o !== this.pods[i].owner || hues[i] !== this.pods[i].hue) this.setOwner(i, o, hues[i]); });
+    const hues = new Array<number>(this.pods.length).fill(-1), tones = new Array<number>(this.pods.length).fill(0);
+    for (const [id, st] of m) { const pi = this.desks.get(id)?.pod ?? -1; if (pi >= 0 && pi < hues.length && st.used && st.hue !== undefined && hues[pi] < 0) { hues[pi] = st.hue; tones[pi] = st.tone ?? 0; } }
+    owners.forEach((o, i) => { if (o !== this.pods[i].owner || hues[i] + tones[i] !== this.pods[i].hue) this.setOwner(i, o, hues[i], tones[i]); });
     // per pod: the caption is the first seat's session prompt
     const prompts = new Array<string>(this.pods.length).fill("");
     for (const [id, st] of m) {
@@ -751,25 +754,27 @@ export class Scene {
       if (key !== p.key) {
         p.key = key;
         q.style.fontSize = pfs;
+        q.style.stroke = outline(3); // strokes scale like the font (R3)
         const t = hideText() ? `P${i + 1}` : `P${i + 1} · ${cleanText(p.owner, 40)}`; // pod identity is attached to the pod; text hidden (stream-safe, private) drops the project name (critique I2)
         q.text = t.length > chars ? t.slice(0, chars - 1) + "…" : t;
       }
       const priv = office.privacy || office.source.private, capOn = sc >= 2 && !!p.prompt && !priv && !this.born.has(i);
       const cx = dev(ox + (p.x + p.w / 2) * sc);
-      q.position.set(cx, dev(oy + (p.y - 7) * sc - (capOn ? 5 : 0)));
+      q.position.set(cx, dev(oy + (p.y - 7) * sc - (capOn ? Math.round(pfs * 0.7) : 0))); // gaps scale with the fonts, so plaque and caption never overprint (R3)
       if (tagHits(q.x, q.y, q.width, q.height)) q.visible = false; // a name tag or selection ring wins over the plaque
       // last-prompt caption under the plaque: small, muted, only when zoomed in; text re-set only when its inputs change
       if (!capOn) { if (p.cap) p.cap.visible = false; return; }
-      const cap = (p.cap ??= this.ui.addChild(new Text({ text: "", style: { fontFamily: MONO, fontSize: 9, fill: KEY.text.soft, stroke: { color: E[0], width: 2 } } })));
+      const cap = (p.cap ??= this.ui.addChild(new Text({ text: "", style: { fontFamily: MONO, fontSize: 9, fill: KEY.text.soft, stroke: outline(2) } })));
       if (p.prompt !== p.capPrompt || p.capChars !== cchars || p.capPriv !== priv || cap.style.fontSize !== cfs) {
         cap.style.fontSize = cfs;
+        cap.style.stroke = outline(2);
         p.capPrompt = p.prompt; p.capChars = cchars; p.capPriv = priv;
         cap.text = promptCaption(p.prompt, priv, cchars);
         cap.anchor.set(0.5);
         cap.alpha = 0.75;
         cap.eventMode = "none";
       }
-      cap.position.set(cx, dev(oy + (p.y - 7) * sc + 6));
+      cap.position.set(cx, dev(oy + (p.y - 7) * sc + Math.round(cfs * 0.7)));
       cap.visible = !tagHits(cap.x, cap.y, cap.width, cap.height);
     });
     const dt = new Date(clockT); // replay passes the recorded time (#105)

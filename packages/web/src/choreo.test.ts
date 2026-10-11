@@ -272,11 +272,11 @@ test("longToolMs: 3x the tool's own p95 once known, floored at 10 s; 30 s before
 });
 
 import { collapseLatch, worstState } from "./choreo.ts";
-test("session collapse: on above 12 helpers, off again at 10; worst state follows STATUS order", () => {
-  assert.equal(collapseLatch(false, 12), false);
-  assert.equal(collapseLatch(false, 13), true);
-  assert.equal(collapseLatch(true, 11), true);
-  assert.equal(collapseLatch(true, 10), false);
+test("session collapse: folds when a figure is under 20 screen px, unfolds from 24; worst state follows STATUS order", () => {
+  assert.equal(collapseLatch(false, 20), false); // legible: helpers stay on the floor, however many there are
+  assert.equal(collapseLatch(false, 19), true);
+  assert.equal(collapseLatch(true, 23), true); // hysteresis: a small zoom back does not unfold
+  assert.equal(collapseLatch(true, 24), false);
   const w = (...s: ("working" | "idle" | "blocked" | "waiting" | "queued")[]) => worstState(s.map((x) => ({ s: x, wait: "turn" as const })));
   assert.equal(w(), "idle");
   assert.equal(w("idle", "working"), "working");
@@ -291,4 +291,28 @@ test("alertsFor: a helper's permission prompt rings on that helper, not the lead
   assert.deepEqual([...alertsFor(st, [], (x) => `lead:${x}`)], [["h1", "waiting"]]);
   const gone = { ...st, agents: {} } as unknown as Parameters<typeof alertsFor>[0];
   assert.deepEqual([...alertsFor(gone, [], (x) => `lead:${x}`)], [["lead:s", "waiting"]], "unknown agent: falls back to the lead");
+});
+
+test("waitsFor: per-agent waits when the daemon sends them, else the derived one; soft turns stay soft (S3/R2)", async () => {
+  const { waitsFor } = await import("./choreo.ts");
+  type S = Parameters<typeof waitsFor>[0];
+  const L = (x: string) => `lead:${x}`;
+  const both = { sessions: { s: { id: "s", waiting: true, waitKind: "permission", waitBy: "h1", waits: [{ agent: "h1", kind: "permission", since: 1 }, { agent: "h2", kind: "permission", since: 2 }, { agent: "lead:s", kind: "turn", since: 3, soft: true }] } }, agents: { h1: {}, h2: {} } } as unknown as S;
+  assert.deepEqual([...waitsFor(both, L)], [["h1", { kind: "permission", soft: false }], ["h2", { kind: "permission", soft: false }], ["lead:s", { kind: "turn", soft: true }]]);
+  const old = { sessions: { s: { id: "s", waiting: true, waitKind: "turn", waitSoft: true } }, agents: {} } as unknown as S;
+  assert.deepEqual([...waitsFor(old, L)], [["lead:s", { kind: "turn", soft: true }]], "no waits list: the derived wait, on the lead");
+  const two = { sessions: { s: { id: "s", waiting: true, waits: [{ kind: "turn", soft: true }, { kind: "permission" }] } }, agents: {} } as unknown as S;
+  assert.deepEqual(waitsFor(two, L).get("lead:s"), { kind: "permission", soft: false }, "the louder wait wins");
+  const ask = { sessions: { s: { id: "s", waiting: true, waits: [{ agent: "lead:s", kind: "question", since: 1 }] } }, agents: {} } as unknown as S;
+  assert.deepEqual(waitsFor(ask, L).get("lead:s"), { kind: "turn", soft: false }, "a question is your turn, never the permission sign");
+});
+
+test("tether dots: whole art pixels on an across-then-down route, evenly spaced, sliding with the phase (R6)", async () => {
+  const { tetherDots } = await import("./choreo.ts");
+  const pts: [number, number][] = [];
+  tetherDots(10.4, 50, 19, 40, 0, (x, y) => pts.push([x, y]));
+  assert.deepEqual(pts, [[10, 50], [13, 50], [16, 50], [19, 50], [19, 47], [19, 44], [19, 41]]);
+  const moved: number[] = [];
+  tetherDots(0, 0, 9, 0, 4, (x) => moved.push(x));
+  assert.deepEqual(moved, [1, 4, 7]);
 });

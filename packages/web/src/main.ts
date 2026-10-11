@@ -1,6 +1,6 @@
 import { Application, Container, Graphics, Sprite, Text, UPDATE_PRIORITY, type ContainerChild } from "pixi.js";
 import { buildLayout, deskCount, emptyFun, findPath, seatTile, standNear, stepFun, leadId, parentChain, type FunEvent, type FunMemory, type Layout, type OfficeConfig, type OfficeState, type Tile } from "@agent-office/core";
-import { Actor, T, feet, layoutBubbles, layoutTags, obstacles, pipScale, setPip, setBubbleBlank, setBubbleLayer, setFloorBounds } from "./actor.ts";
+import { Actor, T, feet, outline, layoutBubbles, layoutTags, obstacles, pipScale, setPip, setBubbleBlank, setBubbleLayer, setFloorBounds } from "./actor.ts";
 import { hideText } from "./stream.ts";
 import { dropOutcome } from "./triage.ts";
 import { Scene, type SeatState } from "./scene.ts";
@@ -12,13 +12,13 @@ import { bindMinimap } from "./minimap.ts";
 import { ambientOn, burstAllowed, fontPx, frozen, setSceneScale, setTextScale, settings } from "./settings.ts";
 import { FxBudget, scaled, type FxClass } from "./fx.ts";
 import { followDue, pickBusiest } from "./follow.ts";
-import { projectHue, sessionColor } from "./logic.ts";
+import { projectHue, sessionColor, sessionTone } from "./logic.ts";
 import { bake } from "./pixel.ts";
 import { dev, setDpr } from "./snap.ts";
 import { clip, store } from "./dom.ts";
 import { ticketTex } from "./ticket.ts";
 import { hash } from "./color.ts";
-import { clampBox, collapseLatch, stackLabels, worstState, type Box, alertsFor, boardLines, crowdLod, doorHold, holds, loadLevel, newAlerts, feedItem, isWorking, longToolMs, pickStroller, planInteraction, sessionHue, shrinkFloor, pushCapped, statusOf, stepHold, couchSeats, tetherAlpha, ticketEnd, ticketFor, ticketT, yieldsTo, TICKET_MS, uniqueNames, type Action, type PlanCtx, type Shrink, type StrollCand, type Ticket } from "./choreo.ts";
+import { clampBox, collapseLatch, FIGURE_ART, tetherDots, waitsFor, stackLabels, worstState, type Box, alertsFor, boardLines, crowdLod, doorHold, holds, loadLevel, newAlerts, feedItem, isWorking, longToolMs, pickStroller, planInteraction, shrinkFloor, pushCapped, statusOf, stepHold, couchSeats, tetherAlpha, ticketEnd, ticketFor, ticketT, yieldsTo, TICKET_MS, uniqueNames, type Action, type PlanCtx, type Shrink, type StrollCand, type Ticket } from "./choreo.ts";
 import { advance, connect, newCursor, type Envelope } from "./net.ts";
 import { camera, bindPointer, isNarrow, phoneScale, pickAuto, type View } from "./camera.ts";
 import { hooks, liveIn, office, publish, pushFeed, setConnection, isPresenter, type ActorInfo, type SessionInfo } from "./api.ts";
@@ -96,12 +96,12 @@ const bubbleLayer = new Container();
 app.stage.addChild(world, uiLayer, bubbleLayer);
 setBubbleLayer(bubbleLayer);
 // "+N" for arrivals waiting at the door beyond the six drawn in the line; a count of real agents, not text from any event
-const doorTok = new Text({ text: "", style: { fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: 11, fill: 0x7fe3ff, stroke: { color: KEY.env[0], width: 3 } } });
+const doorTok = new Text({ text: "", style: { fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: 11, fill: KEY.cyan, stroke: outline(3) } }); // a machine count, not the your-turn cyan (R1)
 doorTok.anchor.set(0.5, 1);
 doorTok.visible = false;
 uiLayer.addChild(doorTok);
 // "+N waiting for a desk" over the last waiting spot once the queue outgrows the drawn row (every desk on every floor taken): never an invisible queue
-const queueTok = new Text({ text: "", style: { fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: 11, fill: KEY.text.fg, stroke: { color: KEY.env[0], width: 3 } } });
+const queueTok = new Text({ text: "", style: { fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: 11, fill: KEY.text.fg, stroke: outline(3) } });
 queueTok.anchor.set(0.5, 1);
 queueTok.visible = false;
 uiLayer.addChild(queueTok);
@@ -122,7 +122,7 @@ let boardText: string[] = [];
 let skyT = 0; // replay: recorded time for the window sky and clock, 0 = wall clock
 let cooler: { x: number; y: number } | null = null;
 // the signal fields are filled here (scene.ts renders them); working/stale/load/idleMs are refreshed per frame, no allocation
-type Seat = SeatState & { load?: 0 | 1 | 2 | 3; queueDepth?: number; idleMs?: number; hue?: number };
+type Seat = SeatState & { load?: 0 | 1 | 2 | 3; queueDepth?: number; idleMs?: number; hue?: number; tone?: number };
 let seatStates = new Map<string, Seat>();
 let idleTagMs = 120_000; // the "Stuck after" panel setting (ui.ts keeps it in the store); refreshed at 1 Hz
 const shrink: Shrink = { floor: 0, since: 0 };
@@ -197,7 +197,10 @@ const teamOf = (sid: string | undefined) => { const p = sid ? state.sessions[sid
 const fxb = new FxBudget();
 const fxk = (cls: FxClass, key: string) => fxb.take(cls, key, Date.now());
 const nextSlot = (id: string) => { const n = visitors.get(id) ?? 0; visitors.set(id, n + 1); return n; };
-const nameOf = (id: string) => meta.get(id)?.name ?? actors.get(id)?.label ?? id.replace(/^lead:/, "");
+// a departed helper keeps the name filed with its outcome, never its raw id (X5)
+const nameOf = (id: string) => meta.get(id)?.name ?? actors.get(id)?.label ?? state.outcomes?.find((o) => o.agentId === id)?.name ?? id.replace(/^lead:/, "");
+/** Session identity tone for seat states (pod pad and trim): the same hue as sessionColor everywhere else (R4). */
+const toneOf = (sid: string) => { const t = sessionTone(sid); return { hue: t.h, tone: t.dl }; };
 const lastSeat = new Map<string, string>(); // agent id -> its last desk; dropped once its outcome is filed
 let outT = 0; // newest outcome already filed
 /** New outcomes since the last snapshot leave a filed card on the reporting helper's desk (history on load is not news). */
@@ -262,7 +265,7 @@ function relayout(l: Layout) {
   scene = new Scene(layout, world, ysort, uiLayer, grew);
   setFloorBounds(scene.floorRect());
   tether = new Graphics();
-  fx.addChild(tether);
+  world.addChildAt(tether, world.getChildIndex(ysort)); // on the floor, under every figure and desk (R6)
   const cd = layout.decor.find((d) => d.kind === "cooler");
   cooler = cd ? { x: cd.x * T + 8, y: cd.y * T } : null;
   world.addChild(fx);
@@ -429,6 +432,8 @@ function syncActors() {
   const live = new Set<string>();
   const kids = new Map<string, string[]>();
   const sessions = Object.values(state.sessions).sort((a, b) => a.startedAt - b.startedAt);
+  for (const s of sessions) sessionTone(s.id); // identity hues in start order, before any surface asks (R4)
+  const waits = waitsFor(state, leadId);
   const baseName = (ag: (typeof state.agents)[string]) => (ag.seat?.name ?? `${ag.role} (queued)`);
   // identical names get "name 1", "name 2" so canvas tags and the roster stay distinguishable (#F2); queued agents carry their ordinal chip instead
   const uniq = uniqueNames([
@@ -450,14 +455,15 @@ function syncActors() {
       if (!quiet) { a.hopNow(); if (fxk("routine", "arrive")) pulse(a.pos.x, a.pos.y - 12, 0x9ad7f5); }
     }
     errored(id, s.errors, a, quiet);
-    if (!s.waiting) waitRung.delete(id);
+    const lw = waits.get(id); // the lead's own wait, never a helper's (R2)
+    if (!lw) waitRung.delete(id);
     else if (!waitRung.has(id)) {
       waitRung.add(id);
-      if (!quiet && s.waitKind !== "turn" && fxk("routine", "wait")) { pulse(a.pos.x, a.pos.y - 12, ST("permission")); pulse(a.pos.x, a.pos.y - 12, ST("permission"), 200); } // your turn is calm: no pulse
+      if (!quiet && lw.kind !== "turn" && fxk("routine", "wait")) { pulse(a.pos.x, a.pos.y - 12, ST("permission")); pulse(a.pos.x, a.pos.y - 12, ST("permission"), 200); } // your turn is calm: no pulse
     }
     if (s.busyAt) a.busyAt = Math.max(a.busyAt, s.busyAt);
     const key = `lobby#${idx}`;
-    seatStates.set(key, { used: true, working: false, tool: s.doing, count: (tray.get(id) ?? 0) * TRAY_STEP, waiting: !!s.waiting && !(s as { waitBy?: string }).waitBy, waitKind: s.waitKind, role: "lead", flash: flashes.get(key), hue: sessionHue(s.id) });
+    seatStates.set(key, { used: true, working: false, tool: s.doing, count: (tray.get(id) ?? 0) * TRAY_STEP, waiting: !!lw, waitKind: lw?.kind, role: "lead", flash: flashes.get(key), ...toneOf(s.id) });
     bindings.push({ key, id });
     if (s.doing) running.add(id);
     if (s.busyAt && lastBusy.get(id) !== s.busyAt) {
@@ -465,7 +471,8 @@ function syncActors() {
       a.hit(s.busyAt);
       if (s.doing) a.tool(clip(`${s.doing}${s.detail ? " " + s.detail : ""}`, 44));
     }
-    if (s.waiting && a.emote?.e !== "question") a.showEmote("question", 3000);
+    const le = lw && !lw.soft ? (lw.kind === "turn" ? "question" : "exclaim") : null; // a finished turn is calm: no emote (R2)
+    if (le && a.emote?.e !== le) a.showEmote(le, 3000);
     // no "Claude needs your permission" bubble: NEEDS YOU says it, and the bubble covered the waiting lead's face and lamp
   });
 
@@ -487,8 +494,8 @@ function syncActors() {
     a.tagAbove = ag.seat ? Number(ag.seat.id.slice(1)) % 4 < 2 : false; // pod rows: seats 0,1 are the upper row
     if (ag.seat) { const sess = state.sessions[ag.session];
       seatStates.set(ag.seat.id, { used: true, working: false, tool: ag.doing, count: ag.toolCount, project: sess?.project ?? ag.session, role: ag.role, flash: flashes.get(ag.seat.id), prompt: sess?.prompt,
-        waiting: !!sess?.waiting && (sess as { waitBy?: string }).waitBy === ag.id, waitKind: sess?.waitKind, // the helper that raised the prompt gets the lamp (C1)
-        hue: sessionHue(ag.session), queueDepth: state.pending[`${ag.session}|${ag.agentType.slice(ag.agentType.lastIndexOf(":") + 1).toLowerCase()}`]?.length ?? 0 }); bindings.push({ key: ag.seat.id, id: ag.id }); }
+        waiting: waits.has(ag.id), waitKind: waits.get(ag.id)?.kind, // the helper that raised the prompt gets the lamp (C1)
+        ...toneOf(ag.session), queueDepth: state.pending[`${ag.session}|${ag.agentType.slice(ag.agentType.lastIndexOf(":") + 1).toLowerCase()}`]?.length ?? 0 }); bindings.push({ key: ag.seat.id, id: ag.id }); }
     if (ag.doing) running.add(ag.id);
     errored(ag.id, ag.errors, a, Date.now() < freshUntil);
     if (!a.queued) {
@@ -513,8 +520,6 @@ function syncActors() {
   queueOver = Math.max(0, qseen + 1 - layout.zones[0].queue.length);
   sessIdx.clear();
   sessions.forEach((s, i) => sessIdx.set(s.id, i + 1));
-  collapsed = collapseLatch(collapsed, Object.keys(state.agents).length);
-  if (!collapsed) expanded.clear();
   scene.setSeats(seatStates);
   minimap.set(layout, scene.podOwners());
 }
@@ -566,7 +571,7 @@ function exec(a: Action, now: number) {
     case "user": {
       const t = actors.get(a.id);
       t?.speak(`You: ${a.text}`, "user", 5000, "prompt"); // your words, not the agent talking to itself
-      t?.showEmote("exclaim", 1500);
+      t?.showEmote("message", 1500); // something arrived; amber "!" is only for "needs you" (R1)
       break;
     }
     case "say": {
@@ -621,8 +626,8 @@ function exec(a: Action, now: number) {
         const near = nearOf(t);
         f.queue({ k: "walk", to: near }, { k: "face", toward: t.pos });
         // ✓ and a burst only for an explicit DONE; partial asks, an unknown outcome stays plain (S3)
-        f.queue({ k: "say", text: dropOutcome(a.text), kind: "report", badge: a.done ? "report" : undefined, emote: a.done ? "check" : a.partial ? "question" : undefined, ms: Math.min(4500, 1400 + a.text.length * 35) });
-        if (a.done || a.partial) t.showEmote(a.partial ? "exclaim" : "check", 2500);
+        f.queue({ k: "say", text: dropOutcome(a.text), kind: "report", badge: a.done ? "report" : undefined, emote: a.done ? "check" : undefined, ms: Math.min(4500, 1400 + a.text.length * 35) });
+        if (a.done || a.partial) t.showEmote(a.partial ? "message" : "check", 2500); // a partial report arrives; it does not ask for you (R1)
         const k = a.done ? fxk("routine", "report") : 0;
         if (k) burst(feet(near).x, feet(near).y - 14, scaled(10, k), [GOLD, PAPER]);
       }
@@ -781,11 +786,10 @@ function onEnvelope(env: Envelope) {
   departing();
   releaseBlocked(now);
   fileOutcomes(state.outcomes ?? [], r.fresh);
-  const al = alertsFor(state, blocked.keys(), leadId);
+  const al = alertsFor(state, blocked.keys(), leadId), wt = waitsFor(state, leadId);
   for (const a of actors.values()) {
-    const before = a.alert;
-    const wk = (state.sessions[meta.get(a.id)?.session ?? ""] as { waitKind?: string } | undefined)?.waitKind; // set by the daemon from notification_type
-    a.setAlert(al.get(a.id) ?? null, wk === "turn" ? "turn" : "permission");
+    const before = a.alert, w = wt.get(a.id); // each actor's own wait (kind from the daemon's notification_type)
+    a.setAlert(al.get(a.id) ?? null, w?.kind ?? "permission", w?.soft);
     if (a.alert !== before) {
       if (a.lead && a.alert === "waiting" && !r.fresh) { a.steps = []; a.path = []; a.cur = null; } // back to its desk: the one place it waits for you
       gold(a);
@@ -859,8 +863,9 @@ function catSeat(now: number) {
 }
 
 // ---- session collapse (V4/G6) -------------------------------------------------------------------------------
-// Above 12 live helpers each crew folds into one badge on its first pod: helpers hide (their desks keep working), except alerts,
-// the selected agent and sessions the user opened. Default, not an option. Seats stay where they are.
+// When a figure would be under ~20 screen px (R5: legibility, not head count) each crew folds into one small plate above its first pod:
+// helpers hide (their desks keep working), except alerts, the selected agent and sessions the user opened. Default, not an option.
+// Seats stay where they are.
 let collapsed = false;
 const expanded = new Set<string>(); // sessions opened from a badge, an agent or the panel; Escape closes them all
 const sessIdx = new Map<string, number>(); // session id -> 1-based start order ("session N" when text is hidden)
@@ -875,7 +880,7 @@ function foldCrews() {
   for (const [id, a] of actors) a.setHidden(collapsed && !a.lead && !a.queued && !a.alert && id !== office.selected && !expanded.has(sessOf(id)));
 }
 function newBadge(sid: string): SBadge {
-  const st = (fill: number | string) => ({ fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: 10, fill, stroke: { color: KEY.env[0], width: 2 } });
+  const st = (fill: number | string) => ({ fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: 10, fill, stroke: outline(2) });
   const bd: SBadge = { c: new Container(), bg: new Graphics(), pips: new Container(), name: new Text({ text: "", style: st(KEY.text.fg) }), info: new Text({ text: "", style: st(KEY.text.soft) }), warn: new Text({ text: "", style: st(KEY.text.fg) }), more: new Text({ text: "", style: st(KEY.text.soft) }), key: "", w: 0, h: 0 };
   bd.c.addChild(bd.bg, bd.pips, bd.name, bd.info, bd.warn, bd.more);
   bd.c.eventMode = "static";
@@ -889,7 +894,7 @@ function newBadge(sid: string): SBadge {
   badges.set(sid, bd);
   return bd;
 }
-/** Badge per collapsed session on its first pod: name in the session hue, counts, worst state (glyph + word) unless working/idle, a pip per helper. */
+/** Plate per collapsed session above its first pod: name in the session hue and counts on one row, a pip per helper, worst state (glyph + word) unless working/idle. */
 function drawBadges(ui: View, W: number, H: number) {
   obstacles.length = 0;
   crews.clear();
@@ -915,29 +920,29 @@ function drawBadges(ui: View, W: number, H: number) {
     const key = `${name}|${working}|${worst}|${sts.map((x) => x.s + x.wait).join(",")}|${fs}|${+open}`;
     if (key !== bd.key) {
       bd.key = key;
-      for (const t of [bd.name, bd.info, bd.warn]) t.style.fontSize = fs;
+      for (const t of [bd.name, bd.info, bd.warn, bd.more]) { t.style.fontSize = fs; t.style.stroke = outline(2); }
       bd.name.text = `${open ? "\u25be" : "\u25b8"} ${name}`;
       bd.name.style.fill = sessionColor(sid);
       bd.info.text = working ? `${working}/${crew.list.length} working` : `${crew.list.length} idle`; // "0/12 working" read as broken
       const more = sts.length - PIPS_SHOWN, bad = worst !== "working" && worst !== "idle";
-      // rows: name / counts / a pip per helper (+N) / worst state when it needs you: narrow enough for one pod pitch
+      // rows: name and counts / a pip per helper (+N) / worst state when it needs you: a small plate, narrow enough for one pod pitch
       // pips are the 9x9 pixel pips at a whole-number scale, top-left corners on whole pixels
-      const row = Math.ceil(bd.name.height), shown = Math.min(PIPS_SHOWN, sts.length), P = PIP * pipScale(r), pt = pad + 2 * row + 2;
+      const row = Math.ceil(bd.name.height), shown = Math.min(PIPS_SHOWN, sts.length), P = PIP * pipScale(r), pt = pad + row + 1;
       bd.name.position.set(pad, pad - 1);
-      bd.info.position.set(pad, pad - 1 + row);
+      bd.info.position.set(pad + Math.ceil(bd.name.width) + 4, pad - 1);
       for (const c of bd.pips.removeChildren()) c.destroy();
       for (let i = 0; i < shown; i++) bd.pips.addChild(setPip(new Sprite(), sts[i].s, sts[i].wait, r)).position.set(pad + i * (P + 3) + P / 2, pt + P / 2);
       bd.warn.text = bad ? `${STATUS[worst].glyph} ${STATUS[worst].label}` : "";
       bd.warn.style.fill = bad ? STATUS[worst].color : KEY.text.soft;
       bd.warn.position.set(pad, pt + P + 2);
       // overflow on the pip row itself ("+4 more"), never on the state line, where it read as "4 more need permission"
-      bd.more.text = more > 0 ? `+${more} more` : ""; bd.more.style.fontSize = fs; bd.more.position.set(pad + shown * (P + 3) + 2, Math.round(pt + P / 2 - bd.more.height / 2));
-      bd.w = Math.ceil(Math.max(bd.name.width, bd.info.width, shown * (P + 3) + (bd.more.text ? bd.more.width + 2 : 0), bd.warn.text ? bd.warn.width : 0)) + 2 * pad;
+      bd.more.text = more > 0 ? `+${more} more` : ""; bd.more.position.set(pad + shown * (P + 3) + 2, Math.round(pt + P / 2 - bd.more.height / 2));
+      bd.w = Math.ceil(Math.max(bd.name.width + 4 + bd.info.width, shown * (P + 3) + (bd.more.text ? bd.more.width + 2 : 0), bd.warn.text ? bd.warn.width : 0)) + 2 * pad;
       bd.h = Math.ceil(Math.max(pt + P + 1, bd.warn.text ? bd.warn.y + bd.warn.height : 0)) + pad;
       // the border is the loud part only when the crew needs you (state colour); otherwise a quiet session-hue edge; drawn inside the plate
       bd.bg.clear().rect(0, 0, bd.w, bd.h).fill({ color: KEY.env[0], alpha: 0.84 }).stroke(bad ? { width: 2, color: STATUS[worst].color, alpha: 1, alignment: 1 } : { width: 1, color: sessionColor(sid, 0.65, 0.6), alpha: open ? 0.3 : 0.5, alignment: 1 });
     }
-    const cx = ui.ox + (pr.x + pr.w / 2) * ui.sc, bot = expanded.has(sid) ? ui.oy + (pr.y - 1) * ui.sc : ui.oy + (pr.y + pr.h / 2) * ui.sc + bd.h / 2; // centred on the folded pod (the crew's place); once opened it moves above the pod so it never covers the people it revealed
+    const cx = ui.ox + (pr.x + pr.w / 2) * ui.sc, bot = ui.oy + (pr.y - 1) * ui.sc; // above the pod: the plate never covers the desks it stands for
     bd.c.visible = cx >= 0 && cx <= W && bot >= TOP && bot - bd.h <= TOP + H; // off-screen pods keep their badge off-screen too
     if (!bd.c.visible) continue;
     badgeBoxes.push({ x: cx, y: bot - bd.h, w: bd.w, h: bd.h, pri: 3, own: bd });
@@ -968,20 +973,9 @@ const walkers: Actor[] = []; // per-frame scratch
 let vw = -1, vh = -1, viewAt = 0, viewDirty = false, activeUntil = 0;
 let lastV = { sc: 0, ox: 0, oy: 0 };
 let coolerT = 0;
-/** Dashed segment whose dashes drift from a to b: reads as data in flight, not a flat rule. Still under reduced motion. */
-function dash(ax: number, ay: number, bx: number, by: number, t: number) {
-  const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy);
-  if (len < 1) return;
-  const ux = dx / len, uy = dy / len, step = 6, on = 3.5;
-  for (let s = (settings.reducedMotion ? 0 : (t / 60) % step) - step; s < len; s += step) {
-    const p = Math.max(0, s), q = Math.min(len, s + on);
-    if (q > p) tether.moveTo(ax + ux * p, ay + uy * p).lineTo(ax + ux * q, ay + uy * q);
-  }
-}
-/** Tether from b's stem to a's (stems sit 8 px above the feet). */
-function tetherSeg(a: Actor | undefined, b: Actor | undefined, t = 0) {
-  if (a && b) dash(b.pos.x, b.pos.y - 8, a.pos.x, a.pos.y - 8, t);
-}
+/** Dotted pixel tether on the floor between two actors' feet; the dots drift toward b (still under reduced motion). */
+const dot = (x: number, y: number) => { tether.rect(x, y, 1, 1); };
+const dots = (a: Actor, b: Actor, t: number) => tetherDots(a.pos.x, a.pos.y - 1, b.pos.x, b.pos.y - 1, settings.reducedMotion ? 0 : t / 80, dot);
 // Performance probe for the CI gate (scripts/perf.mjs): main-thread ms per frame (update + render submit) and live display objects.
 const perf = { ms: new Float32Array(600), up: new Float32Array(600), n: 0, start: 0, upEnd: 0 };
 app.ticker.add(() => { perf.start = performance.now(); }, undefined, UPDATE_PRIORITY.INTERACTION);
@@ -1021,6 +1015,8 @@ app.ticker.add((tk) => {
   const v = camera.view(fitScale(layout, W, H), W, H, TOP, layout.cols * T, layout.rows * T, target, dt, dpr());
   world.scale.set(v.sc);
   world.position.set(v.ox, v.oy);
+  collapsed = collapseLatch(collapsed, FIGURE_ART * v.sc); // fold crews by legibility, not by head count (R5)
+  if (!collapsed) expanded.clear();
   const ui = camera.still; // text and plaques ride the un-shaken view: a shake moves the world only (rubric B7)
   { // pod plaques show only for a claimed pod the pointer is over (or the hovered agent's); touch has no hover, so the selected agent's pod
     let pod = -1;
@@ -1037,7 +1033,11 @@ app.ticker.add((tk) => {
   for (const a of actors.values()) a.setLod(lod || ((crowd || collapsed) && !a.lead && !a.alert && a.id !== office.selected && a.id !== hoverId && !(collapsed && expanded.has(sessOf(a.id)))));
   const hud = { w: app.screen.width, h: app.screen.height - bottomPx(), top: TOP };
   if (setBubbleBlank(hideText())) for (const a of actors.values()) a.refreshText(); // stream-safe blanks live canvas bubbles at once
-  if (setSceneScale(ui.sc)) { for (const a of actors.values()) a.refreshText(); doorTok.style.fontSize = fontPx(11); } // in-scene text keeps its size relative to the world
+  if (setSceneScale(ui.sc)) {
+    for (const a of actors.values()) a.refreshText();
+    doorTok.style.fontSize = fontPx(11);
+    for (const t of [doorTok, queueTok, ...recvBadges.values()]) t.style.stroke = outline(3); // strokes scale like the font (R3)
+  } // in-scene text keeps its size relative to the world
   if (frozen.on) { // paused: nothing advances, but pan/zoom/selection stay live (overlays re-follow the camera)
     minimap.draw(camera.still, W, TOP, H, frozen.since, isPresenter());
     foldCrews();
@@ -1129,18 +1129,17 @@ app.ticker.add((tk) => {
   tether.clear();
   for (const m of movers) {
     if (m.kind === "spark") continue;
-    const e = moverEnd(m);
-    dash(m.a.pos.x, m.a.pos.y - 8, e.x, e.y, now); // both ends follow the actors, not where the sender stood at launch
-    tether.stroke({ width: 1, color: 0x7fe3ff, alpha: 0.55 * tetherAlpha(m.life) });
+    dots(m.a, m.b, now); // both ends follow the actors, not where the sender stood at launch
+    tether.fill({ color: KEY.cyan, alpha: 0.55 * tetherAlpha(m.life) });
   }
   const fid = office.selected ?? hoverId;
   if (fid) {
     const chain = [fid, ...parentChain(state, fid)];
     for (let i = 0; i + 1 < chain.length; i++) {
       const p = actors.get(chain[i]), q = actors.get(chain[i + 1]);
-      if (p && q) tether.moveTo(p.pos.x, p.pos.y - 8).lineTo(q.pos.x, q.pos.y - 8);
+      if (p && q) dots(q, p, 0);
     }
-    tether.stroke({ width: 1, color: 0x7fe3ff, alpha: 0.3 });
+    tether.fill({ color: KEY.cyan, alpha: 0.3 });
   }
 
   // coffee steam is the machine's own two-frame wisp (scene.ts), not particles
@@ -1167,7 +1166,7 @@ app.ticker.add((tk) => {
     const b = actors.get(id);
     if (!b) continue;
     let t = recvBadges.get(id);
-    if (!t) { t = new Text({ text: "", style: { fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: 10, fill: 0x7fe3ff, stroke: { color: KEY.env[0], width: 3 } } }); t.anchor.set(0, 1); t.eventMode = "none"; uiLayer.addChild(t); recvBadges.set(id, t); }
+    if (!t) { t = new Text({ text: "", style: { fontFamily: "ui-monospace, Menlo, Consolas, monospace", fontSize: fontPx(10), fill: KEY.cyan, stroke: outline(3) } }); t.anchor.set(0, 1); t.eventMode = "none"; uiLayer.addChild(t); recvBadges.set(id, t); }
     t.visible = true;
     t.text = `+${n}`;
     if (t.style.fontSize !== fontPx(10)) t.style.fontSize = fontPx(10); // world-relative like every in-scene text (O3)

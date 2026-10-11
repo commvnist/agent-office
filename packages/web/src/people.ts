@@ -205,7 +205,7 @@ export function person(look0: Look, dir: Dir, pose: Pose, frame: number, o: Pose
   } else if (couch) { // forearms in, hands together on a phone
     g.rect(ax0, Y(10), 1, 4, look.shirt); g.rect(ax1, Y(10), 1, 4, look.shirt);
     g.rect(ax0 + 1, Y(13), 2, 1, look.shirt); g.rect(ax1 - 2, Y(13), 2, 1, look.shirt);
-    g.rect(6, Y(13), 4, 1, look.skin); g.rect(7, Y(11), 2, 2, "#7fe3ff");
+    g.rect(6, Y(13), 4, 1, look.skin); g.rect(7, Y(11), 2, 2, KEY.cyan);
   } else if (bs) {
     const ay = sit ? Y(11) : Y(10) + swing;
     arm(7, ay, 2, 5, cut === 2 ? sleeve : shade(look.shirt, 0.08)); g.rect(7, ay + 5, 2, 1, look.skin);
@@ -223,7 +223,7 @@ export function person(look0: Look, dir: Dir, pose: Pose, frame: number, o: Pose
     arm(ax0, Y(10) + swing, 1, 5); if (!hand) arm(ax1, Y(10) - swing, 1, 5);
     g.set(ax0, Y(15) + swing, look.skin); if (!hand) g.set(ax1, Y(15) - swing, look.skin);
   }
-  if (expr === "phone" && dir !== "up") g.rect(side ? 9 : 10, Y(side ? 12 : 13), 2, 1, "#7fe3ff"); // phone glow
+  if (expr === "phone" && dir !== "up") g.rect(side ? 9 : 10, Y(side ? 12 : 13), 2, 1, KEY.cyan); // phone glow: a machine emitter, not the your-turn cyan
   // head
   g.rect(4, HT(2), 8, 8 - hv, look.skin);
   const acc = look.accColor, wide = hooded || look.style === 7;

@@ -2,8 +2,7 @@
 // Everything is derived from state + timestamps; no text is invented, only hook-derived text is ever spoken.
 import type { Interaction, OfficeState, Task } from "@agent-office/core";
 import type { Alert, Badge } from "./actor.ts";
-import { hash } from "./color.ts";
-import { safeHue } from "./logic.ts";
+import { sessionTone } from "./logic.ts";
 import { STATUS_ORDER, type StatusKey } from "./theme.ts";
 
 export const HUDDLE_WINDOW_MS = 4000;
@@ -12,7 +11,7 @@ export const WORKING_MS = 5000;
 export type Action =
   | { k: "user"; id: string; text: string }
   | { k: "say"; id: string; text: string }
-  | { k: "notice"; id: string; emote: "exclaim" | "check"; ms: number; hop?: boolean }
+  | { k: "notice"; id: string; emote: "message" | "check"; ms: number; hop?: boolean }
   | { k: "visit"; from: string; to: string; text: string; badge: Badge }
   | { k: "huddle"; id: string; text: string; badge: Badge; members: string[] }
   | { k: "report"; from: string; to?: string; text: string; partial?: boolean; done?: boolean } // done: an explicit DONE report; anything else is neutral (no ✓, no burst)
@@ -150,7 +149,7 @@ export function planInteraction(it: Interaction, c: PlanCtx): Action[] {
       return c.has(it.to) ? [{ k: "user", id: it.to, text: it.text }] : [];
     case "delegate": {
       if (!c.has(it.to)) return [];
-      const out: Action[] = [{ k: "notice", id: it.to, emote: "exclaim", ms: 2600, hop: !c.has(it.from) }]; // with a sender the ticket's arrival hops instead
+      const out: Action[] = [{ k: "notice", id: it.to, emote: "message", ms: 2600, hop: !c.has(it.from) }]; // with a sender the ticket's arrival hops instead
       if (c.has(it.from) && it.text) {
         const badge: Badge = it.confidence === "guess" ? "guess" : "delegate";
         const burst = c.log.filter((x) => x.kind === "delegate" && x.from === it.from && !!x.text && x.t <= it.t && it.t - x.t <= HUDDLE_WINDOW_MS);
@@ -172,7 +171,7 @@ export function planInteraction(it: Interaction, c: PlanCtx): Action[] {
       // The lead talking to the person watching (its own narration or a task note): a bubble at its desk, no visit.
       if (c.has(it.from) && it.text && (it.to === "user" || !target)) return [{ k: "say", id: it.from, text: it.text }];
       if (!c.has(it.from) || !target || target === it.from || !it.text) return [];
-      return [{ k: "visit", from: it.from, to: target, text: it.text, badge: "message" }, { k: "notice", id: target, emote: "exclaim", ms: 2000 }];
+      return [{ k: "visit", from: it.from, to: target, text: it.text, badge: "message" }, { k: "notice", id: target, emote: "message", ms: 2000 }];
     }
     case "done": // a lead's turn ending is not a success claim (it may have errored): no ✓ or confetti; its result is an outcome (S8)
       return [];
@@ -225,11 +224,30 @@ export const couchSeats = (d: { x: number; y: number; w?: number }, tile: number
 /** Crowd LOD latch: on above 24 live agents, or heavy tag stacking (>8 displaced) from 18 up; off again below 18 (no flicker). */
 export const crowdLod = (prev: boolean, agents: number, displaced: number) => (prev ? agents >= 18 : agents > 24 || (agents >= 18 && displaced > 8));
 
-/** Alerts per actor id: waiting sessions' leads, and agents held as blocked (#64/#80). */
+export type Wait = { kind: "permission" | "turn"; soft: boolean };
+type WaitSrc = { agent?: string; kind?: string; soft?: boolean };
+/**
+ * Open waits per actor id. Each wait belongs to the agent that raised it (a helper's permission prompt), else the lead (C1/S1/S3).
+ * Reads the daemon's per-agent `waits` when present, else the one derived wait (waiting/waitKind/waitBy). An actor with two
+ * waits shows the louder one; `soft` = a finished turn (calm "your turn").
+ */
+export function waitsFor(s: OfficeState, leadOf: (session: string) => string): Map<string, Wait> {
+  const m = new Map<string, Wait>();
+  for (const x of Object.values(s.sessions)) {
+    const y = x as typeof x & { waits?: WaitSrc[]; waitSoft?: boolean };
+    const list: WaitSrc[] = y.waits ?? (x.waiting ? [{ agent: x.waitBy, kind: x.waitKind, soft: y.waitSoft }] : []);
+    for (const w of list) {
+      const id = w.agent && s.agents[w.agent] ? w.agent : leadOf(x.id), kind = w.kind === "permission" ? "permission" : "turn", prev = m.get(id);
+      if (!prev || (prev.kind === "turn" && kind === "permission")) m.set(id, { kind, soft: kind === "turn" && !!w.soft });
+    }
+  }
+  return m;
+}
+
+/** Alerts per actor id: whoever waits on you, and agents held as blocked (#64/#80). */
 export function alertsFor(s: OfficeState, blocked: Iterable<string>, leadOf: (session: string) => string): Map<string, Alert> {
   const m = new Map<string, Alert>();
-  // the wait belongs to the agent that raised it (a helper's permission prompt), else the lead (C1/S1)
-  for (const x of Object.values(s.sessions)) if (x.waiting) { const by = (x as { waitBy?: string }).waitBy; m.set(by && s.agents[by] ? by : leadOf(x.id), "waiting"); }
+  for (const id of waitsFor(s, leadOf).keys()) m.set(id, "waiting");
   for (const id of blocked) m.set(id, "blocked");
   return m;
 }
@@ -243,8 +261,10 @@ export function newAlerts(seen: Map<string, Alert>, cur: Map<string, Alert>): st
   return out;
 }
 
-/** Session collapse latch (V4/G6): crews fold into pod badges above 12 live helpers and unfold again at 10 (hysteresis). */
-export const collapseLatch = (prev: boolean, helpers: number) => (prev ? helpers > 10 : helpers > 12);
+/** Art px of a figure's height (seated ~20, standing 28) used to judge legibility. */
+export const FIGURE_ART = 24;
+/** Session collapse latch (R5): crews fold into a plate when a figure would be under 20 screen px, unfold again from 24 (hysteresis, no flicker on zoom). */
+export const collapseLatch = (prev: boolean, figurePx: number) => (prev ? figurePx < 24 : figurePx < 20);
 /** Worst state of a crew for its badge (STATUS order); a waiting status reads as its wait kind. */
 export function worstState(sts: Iterable<{ s: Status; wait: "permission" | "turn" }>): StatusKey {
   let best = STATUS_ORDER.length - 1;
@@ -318,6 +338,17 @@ export const doorHold = (a: P, o: P & { leaving: boolean }, door: { x: number; y
 export const TETHER_FADE_MS = 600;
 export const tetherAlpha = (lifeMs: number) => (lifeMs < TICKET_MS ? 1 : Math.max(0, 1 - (lifeMs - TICKET_MS) / TETHER_FADE_MS));
 
+/**
+ * Tether route (R6): a dotted pixel line on the floor from a's feet to b's, across then down (axis-aligned, so every dot sits on a
+ * whole art pixel), one dot every `step` px; `phase` (px) slides the dots along the route so it reads as something in flight.
+ */
+export function tetherDots(ax: number, ay: number, bx: number, by: number, phase: number, put: (x: number, y: number) => void, step = 3) {
+  ax = Math.round(ax); ay = Math.round(ay); bx = Math.round(bx); by = Math.round(by);
+  const h = Math.abs(bx - ax), len = h + Math.abs(by - ay);
+  for (let d = ((Math.round(phase) % step) + step) % step; d <= len; d += step)
+    d <= h ? put(ax + Math.sign(bx - ax) * d, ay) : put(bx, ay + Math.sign(by - ay) * (d - h));
+}
+
 /** Desk load step from tool calls in the last 30s: 0 idle, 1 light, 2 busy, 3 heavy. */
 export const loadLevel = (n: number): 0 | 1 | 2 | 3 => (n <= 0 ? 0 : n <= 2 ? 1 : n <= 5 ? 2 : 3);
 
@@ -325,7 +356,7 @@ export const loadLevel = (n: number): 0 | 1 | 2 | 3 => (n <= 0 ? 0 : n <= 2 ? 1 
  * Per-session identity hue, at least 25 degrees from every status hue (amber 39, green 154, cyan 193, red 354) and clear of
  * the magenta neon (~330): a maroon or green pod read as an alert or as "done" (final review). 162 degrees remain.
  */
-export const sessionHue = (id: string): number => safeHue(hash(id));
+export const sessionHue = (id: string): number => sessionTone(id).h;
 
 /** Client shrink ratchet: built desks only grow at once; a trailing row decays after sitting unused for `holdMs`, one step per hold. */
 export const SHRINK_HOLD_MS = 90_000;

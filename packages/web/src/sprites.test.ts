@@ -57,7 +57,7 @@ const OKABE = DEFAULT_THEME.roleColors;
 const nb = (g: { w: number; get(x: number, y: number): string | null }, x: number, y: number) => [g.get(x - 1, y), g.get(x + 1, y), g.get(x, y - 1), g.get(x, y + 1)];
 
 test("C4/C9 grayscale audit: skin never blends into the shirt, sleeve or hair next to it (luma delta >= 0.12)", () => {
-  const FEATURE = new Set(["#1e1a28", "#8fe0ff", "#7fe3ff", "#ffffff", "#171421"]); // eyes, sweat, phone glow, glyph halo (+ glyph ink below)
+  const FEATURE = new Set(["#1e1a28", "#8fe0ff", KEY.cyan, "#ffffff", "#171421"]); // eyes, sweat, phone glow, glyph halo (+ glyph ink below)
   let n = 0;
   for (const shirt of OKABE) for (const skin0 of DEFAULT_THEME.skins) for (const hair of DEFAULT_THEME.hairs)
     for (const style of STYLES) for (const dir of ["down", "up", "side"] as const) {
@@ -84,7 +84,7 @@ test("C6 no isolated single pixels inside hair or shirt clusters (deliberate fea
       for (const acc of ["none", "glasses", "headphones", "cap", "suit"] as const) {
         const look0: Look = { ...base, style, build, head: build, acc, hair: "#a86a2c", shirt: "#3355ff", team: 3, cut: ((style + frame) % 4) as 0 | 1 | 2 | 3 };
         const look = grade(look0);
-        const FEATURE = new Set(["#1e1a28", "#8fe0ff", "#7fe3ff", "#ffffff", glyphInk(look), "#171421", "#f2c14e", "#c23b4a", shade("#c23b4a", -0.12)]);
+        const FEATURE = new Set(["#1e1a28", "#8fe0ff", KEY.cyan, "#ffffff", glyphInk(look), "#171421", "#f2c14e", "#c23b4a", shade("#c23b4a", -0.12)]);
         const g = person(look0, dir, pose, frame, { raise: frame === 3 });
         g.cells.forEach((c, i) => {
           if (!c || FEATURE.has(c) || c === shade(teamColor(3), -0.3) || c === look.skin || c === look.pants || c === "#241d2e") return;
@@ -159,7 +159,7 @@ test("STATUS_HUES are the saturated STATUS colours, and shirts keep 30 degrees f
 });
 
 test("R2 grading: skin on the face band; no body pixel is brighter than the face (props, glare and emitters excepted)", () => {
-  const PROPS = new Set(["#7fe3ff", "#8fe0ff", "#f4f1e6", "#6b4a2e"]); // phone glow, sweat, mug
+  const PROPS = new Set([KEY.cyan, "#8fe0ff", "#f4f1e6", "#6b4a2e"]); // phone glow, sweat, mug
   for (const skin of DEFAULT_THEME.skins) for (const shirt of [...OKABE, "#ffffff"]) for (const hair of [...DEFAULT_THEME.hairs, "#000000"]) {
     const l = grade({ ...base, skin, shirt, hair, acc: "tie", accColor: "#f0f0a0" });
     assert.ok(luma(l.skin) >= KEY.char.face[0] - 0.01 && luma(l.skin) <= KEY.char.face[1] + 0.01, skin);
