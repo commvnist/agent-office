@@ -107,9 +107,16 @@ function events(p: Record<string, unknown>, session: string, agentId: string | u
         const raw = typeof p.prompt === "string" ? p.prompt : "";
         const text = clip(stripMeta(raw), 140);
         const sum = text ? "" : clip(metaSummary(raw), 120);
-        return sum
-          ? [{ type: "prompt", session, text: "", t }, { type: "message", session, to: "user", text: sum, t }]
-          : [{ type: "prompt", session, text, t }];
+        // A background helper killed or failed sends no SubagentStop; its task notification (task-id = agent id) is the
+        // only end we get, so it retires the helper now. A completed one has its own SubagentStop carrying the report.
+        const ended: OfficeEvent[] = [];
+        for (const m of raw.matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/gi)) {
+          const id = /<task-id>\s*([A-Za-z0-9_-]{1,64})\s*<\/task-id>/i.exec(m[1])?.[1], st = /<status>\s*(\w+)\s*<\/status>/i.exec(m[1])?.[1]?.toLowerCase();
+          if (id && st && /^(killed|failed|stopped|cancell?ed|error|timed_?out)$/.test(st)) ended.push({ type: "agent_stop", session, agentId: id, t });
+        }
+        return [...ended, ...(sum
+          ? [{ type: "prompt", session, text: "", t }, { type: "message", session, to: "user", text: sum, t }] as OfficeEvent[]
+          : [{ type: "prompt", session, text, t }] as OfficeEvent[])];
       }
     case "Stop": // the first line of the lead's answer becomes its turn's result (the daemon drops it in privacy)
       return [{ type: "turn_end", session, message: clip(String(p.last_assistant_message ?? "").split("\n")[0], 220) || undefined, t }];

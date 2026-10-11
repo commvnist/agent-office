@@ -111,6 +111,11 @@ test("UserPromptSubmit: harness notifications are not user prompts; their summar
   // text the user typed next to the markup is kept, markup and its content are not
   const mixed = adapt({ hook_event_name: "UserPromptSubmit", session_id: "s", prompt: `${note} now add tests` }, 6);
   assert.deepEqual(mixed, [{ type: "prompt", session: "s", text: "now add tests", t: 6 }]);
+  // a killed or failed background helper sends no SubagentStop: its notification retires it; a completed one has its own
+  const killed = note.replace("<summary>", "<status>killed</status><summary>");
+  assert.deepEqual(adapt({ hook_event_name: "UserPromptSubmit", session_id: "s", prompt: killed }, 8)[0], { type: "agent_stop", session: "s", agentId: "a1", t: 8 });
+  assert.equal(adapt({ hook_event_name: "UserPromptSubmit", session_id: "s", prompt: note.replace("<summary>", "<status>completed</status><summary>") }, 8)[0].type, "prompt");
+  assert.equal(adapt({ hook_event_name: "UserPromptSubmit", session_id: "s", prompt: killed.replace("<task-id>a1", "<task-id>a1/../x") }, 8)[0].type, "prompt", "an id that is not an id is ignored");
   // a plain prompt is untouched
   assert.deepEqual(adapt({ hook_event_name: "UserPromptSubmit", session_id: "s", prompt: "fix the header" }, 7), [{ type: "prompt", session: "s", text: "fix the header", t: 7 }]);
 });
