@@ -30,5 +30,5 @@ Claude Code hooks -> forwarder (curl today) -> daemon POST /event
 ## Extension points
 
 - **Event sources**: a `SourceAdapter` interface is in progress (#49); today `adapt()` in `adapter.ts` is the single seam.
-- **Theme packs**: in progress (#49, #71); config key `theme`.
+- **Themes**: removed. One built-in look; config key `theme` is parsed and ignored.
 - **Role packs**: JSON `{name, description, roles, agents}` applied by `scripts/apply-pack.mjs`; examples in `plugin/packs`.

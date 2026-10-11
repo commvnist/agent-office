@@ -1,12 +1,35 @@
-// Plays a fake multi-session scenario against the daemon. Usage: npm run demo
+// Plays a fake multi-session scenario. Usage: npm run demo [-- --live]
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-const HOME = process.env.AGENT_OFFICE_HOME ?? join(homedir(), ".agent-office");
-const PORT = process.env.AGENT_OFFICE_PORT ?? (() => { try { return readFileSync(join(HOME, "port"), "utf8").trim(); } catch { return 4747; } })();
-const TOKEN = readFileSync(join(HOME, "token"), "utf8").trim(); // the daemon requires it on /event
-const URL = `http://127.0.0.1:${PORT}/event`;
-const post = (e) => fetch(URL, { method: "POST", headers: { "x-agent-office-token": TOKEN }, body: JSON.stringify(e) }).catch(() => console.error("daemon not running?"));
+import { spawn as launch } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
+// Default: a throwaway daemon (temp HOME, free port) so the demo never mixes fake sessions into a live office.
+// `--live` posts to the configured daemon instead.
+let HOME = process.env.AGENT_OFFICE_HOME ?? join(homedir(), ".agent-office");
+let PORT = process.env.AGENT_OFFICE_PORT ?? (() => { try { return readFileSync(join(HOME, "port"), "utf8").trim(); } catch { return 4747; } })();
+let child, tmp;
+const cleanup = () => { child?.kill(); if (tmp) rmSync(tmp, { recursive: true, force: true }); };
+if (!process.argv.includes("--live")) {
+  tmp = mkdtempSync(join(tmpdir(), "ao-demo-"));
+  const main = fileURLToPath(new URL("../packages/server/src/main.ts", import.meta.url));
+  const [maj, min] = process.versions.node.split(".").map(Number);
+  child = launch(process.execPath, [...(maj === 22 && min < 18 ? ["--experimental-strip-types"] : []), main],
+    { env: { ...process.env, AGENT_OFFICE_HOME: tmp, AGENT_OFFICE_PORT: "0" }, stdio: ["ignore", "pipe", "inherit"] });
+  for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => { cleanup(); process.exit(130); });
+  process.on("exit", cleanup);
+  const out = await new Promise((res) => { let b = ""; child.stdout.on("data", (d) => { b += d; const m = /listening on (http:\/\/\S+)/.exec(b); if (m) res(m[1]); }); child.on("exit", () => res("")); });
+  if (!out) { console.error("could not start a throwaway daemon (is the web client's dependency install complete? try npm install)"); process.exit(1); }
+  HOME = tmp; PORT = new URL(out).port;
+  console.log(`demo daemon (isolated, your live daemon is untouched): ${out}\nOpen it now; it is removed when the demo ends. Use --live to post to the real daemon.`);
+}
+let TOKEN;
+try { TOKEN = readFileSync(join(HOME, "token"), "utf8").trim(); } // the daemon requires it on /event
+catch { console.error("no daemon token found: start the daemon first (npm run setup), or run without --live"); process.exit(1); }
+const EVENT_URL = `http://127.0.0.1:${PORT}/event`;
+const post = (e) => fetch(EVENT_URL, { method: "POST", headers: { "x-agent-office-token": TOKEN }, body: JSON.stringify(e) }).catch(() => console.error("daemon not running?"));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const start = (s, id, type) => post({ hook_event_name: "SubagentStart", session_id: s, agent_id: id, agent_type: `agent-office:${type}` });
 const stop = (s, id, msg) => post({ hook_event_name: "SubagentStop", session_id: s, agent_id: id, last_assistant_message: msg });
@@ -64,3 +87,4 @@ await post({ hook_event_name: "Stop", session_id: "s1" });
 await sleep(6000);
 await post({ hook_event_name: "SessionEnd", session_id: "s1" });
 await post({ hook_event_name: "SessionEnd", session_id: "s2" });
+cleanup();

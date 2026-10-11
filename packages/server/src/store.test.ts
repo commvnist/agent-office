@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { emptyState, reduce, type OfficeConfig, type OfficeEvent } from "@agent-office/core";
 import { appendRotating, loadEvents, replay } from "./store.ts";
-import { validateConfig } from "./config.ts";
+import { validateConfig, unknownKeys } from "./config.ts";
 import { readUsage } from "./usage.ts";
 import { publicState } from "./snapshot.ts";
 
@@ -28,6 +28,9 @@ test("replay rebuilds state and sweeps ghosts", () => {
   assert.ok(s.agents.a1);
   assert.equal(loadEvents(f, now - 2000).length, 2);
   assert.equal(loadEvents(f, 0, 1).length, 1);
+  // until is inclusive and applied before the limit: the newest event at or before `until` wins.
+  assert.deepEqual(loadEvents(f, now - 2000, 5000, now - 950).map((e) => e.type), ["session_start"]);
+  assert.equal(loadEvents(f, 0, 1, now - 950)[0].session, "live");
 });
 
 test("log rotates at the size cap", () => {
@@ -80,4 +83,23 @@ test("a config without roles keeps the default roles", () => {
   const defaults = { qa: { agent: "qa", count: 1 } };
   assert.deepEqual(validateConfig({ privacy: true }, defaults).roles, defaults);
   assert.throws(() => validateConfig({ privacy: true }), /roles/);
+});
+
+import { summarize, toMarkdown } from "./digest.ts";
+test("digest counts outcomes, tokens, errors per day", () => {
+  const t = new Date(2026, 0, 5, 10).getTime();
+  const rows = summarize([
+    { type: "session_start", session: "s", project: "p", t },
+    { type: "agent_start", session: "s", agentId: "a", agentType: "agent-office:qa-engineer", t: t + 1 },
+    { type: "tool_end", session: "s", agentId: "a", tool: "Bash", ok: false, t: t + 2 },
+    { type: "agent_stop", session: "s", agentId: "a", message: "PARTIAL: half", usage: { input: 5, output: 3, cacheRead: 100, cacheCreate: 2 }, t: t + 3 },
+  ]);
+  assert.deepEqual(rows.map((r) => [r.sessions, r.agents["qa-engineer"], r.outcomes.partial, r.tokens, r.errors, r.hours]), [[1, 1, 1, 10, 1, 1]]);
+  assert.match(toMarkdown(rows), /2026-01-05 \| 1 \| 1 \| 0 \| 0 \| 1 \| 10 \| 1 \| 1/);
+});
+
+test("unknownKeys flags typos at top, role and overflow level", () => {
+  assert.deepEqual(unknownKeys({ paralelism: "auto", roles: { qa: { agent: "q", count: 1, nmes: [], overflow: { max: 1, nam: [] } } } }),
+    ["paralelism", "roles.qa.nmes", "roles.qa.overflow.nam"]);
+  assert.deepEqual(unknownKeys({ roles: {}, theme: "x" }), []);
 });

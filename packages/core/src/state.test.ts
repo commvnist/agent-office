@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { emptyState, reduce, sweep, capacityFor, childrenOf, parentChain, LIMITS } from "./state.ts";
+import { emptyState, reduce, sweep, capacityFor, childrenOf, parentChain, roleFor, LIMITS } from "./state.ts";
+import { deskPos } from "./layout.ts";
 import type { OfficeConfig, OfficeEvent } from "./types.ts";
 
 const cfg: OfficeConfig = {
@@ -10,25 +11,63 @@ const start = (id: string, session = "s1"): OfficeEvent => ({ type: "agent_start
 const stop = (id: string): OfficeEvent => ({ type: "agent_stop", session: "s1", agentId: id, t: 0 });
 const run = (...evs: OfficeEvent[]) => evs.reduce((s, e) => reduce(cfg, s, e), emptyState());
 
-test("fills permanent desks, then overflow tiers, then queues", () => {
+test("core-team names first, then temps, all on one desk pool", () => {
   const s = run(start("a"), start("b"), start("c"), start("d"), start("e"));
-  const seats = ["a", "b", "c", "d", "e"].map((id) => s.agents[id].seat?.id ?? null);
-  assert.deepEqual(seats, ["qa#0", "qa#1", "qa+0", "qa+1", null]);
-  assert.equal(s.agents.a.seat?.name, "Quinn");
-  assert.equal(s.agents.c.seat?.name, "Temp 1");
-  assert.deepEqual(s.queue, ["e"]);
-});
-
-test("a freed seat is handed to the oldest queued agent", () => {
-  const s = run(start("a"), start("b"), start("c"), start("d"), start("e"), stop("b"));
-  assert.equal(s.agents.e.seat?.id, "qa#1");
+  const ag = ["a", "b", "c", "d", "e"].map((id) => s.agents[id].seat!);
+  assert.deepEqual(ag.map((x) => x.kind), ["permanent", "permanent", "overflow", "overflow", "overflow"]);
+  assert.deepEqual(ag.slice(0, 2).map((x) => x.name), ["Quinn", "Sam"]);
+  // temps are crew members, not "Temp N": distinct people, never a configured core name
+  assert.equal(new Set(ag.map((x) => x.name)).size, 5);
+  for (const x of ag.slice(2)) assert.ok(!["Quinn", "Sam", "Temp"].includes(x.name) && !/^Temp \d/.test(x.name), x.name);
+  assert.equal(new Set(ag.map((x) => x.id)).size, 5);
   assert.deepEqual(s.queue, []);
 });
 
-test("unmapped agent types become guests instead of vanishing", () => {
-  const s = reduce(cfg, emptyState(), { type: "agent_start", session: "s1", agentId: "x", agentType: "mystery", t: 0 });
-  assert.equal(s.agents.x.role, "guest");
-  assert.equal(s.agents.x.seat?.kind, "overflow");
+test("a freed core slot is reused by the next agent of that role", () => {
+  const s = run(start("a"), start("b"), start("c"), stop("a"), start("d"));
+  assert.equal(s.agents.d.seat?.name, "Quinn");
+});
+
+test("unmapped agent types keep their bare type as role and sit at their own desk", () => {
+  const ev = (i: number): OfficeEvent => ({ type: "agent_start", session: "s1", agentId: `x${i}`, agentType: i % 2 ? "plugin:Mystery" : "general-purpose", t: 0 });
+  assert.equal(roleFor(cfg, "plugin:Mystery"), "mystery");
+  assert.equal(roleFor(cfg, "agent-office:qa-engineer"), "qa");
+  const s = Array.from({ length: 30 }, (_, i) => ev(i)).reduce((st, e) => reduce(cfg, st, e), emptyState());
+  const seats = Object.values(s.agents).map((a) => a.seat!);
+  assert.equal(seats.length, 30);
+  assert.equal(new Set(seats.map((x) => x.id)).size, 30);
+  assert.equal(new Set(seats.map((x) => JSON.stringify(deskPos(Number(x.id.slice(1)))))).size, 30);
+  assert.equal(s.agents.x0.role, "general-purpose");
+  assert.equal(s.agents.x0.seat?.kind, "overflow");
+  const names = seats.map((x) => x.name);
+  assert.equal(new Set(names).size, 30, "30 workers, 30 different people");
+  assert.ok(names.every((n) => n !== "general-purpose" && n !== "mystery"));
+});
+
+test("same-session agents share a pod; a new session takes an empty pod", () => {
+  const pod = (s: ReturnType<typeof run>, id: string) => Math.floor(Number(s.agents[id].seat!.id.slice(1)) / 4);
+  const s = run(start("a"), start("b"), start("c"), start("d"), start("e", "s2"), start("f", "s2"), start("g"));
+  assert.deepEqual(["a", "b", "c", "d"].map((i) => pod(s, i)), [0, 0, 0, 0]);
+  assert.equal(pod(s, "e"), 1);
+  assert.equal(pod(s, "f"), 1);
+  assert.notEqual(pod(s, "g"), 0); // its pod is full, spills next to the mates
+});
+
+test("allocation is deterministic across replays", () => {
+  const evs = ["a", "b", "c", "d", "e", "f"].map((id, i) => start(id, i % 2 ? "s2" : "s1"));
+  const seats = (s: ReturnType<typeof run>) => Object.values(s.agents).map((a) => a.seat?.id);
+  assert.deepEqual(seats(run(...evs, stop("c"), start("g"))), seats(run(...evs, stop("c"), start("g"))));
+});
+
+test("the 65th agent queues and a freed desk promotes it", () => {
+  const ids = Array.from({ length: 65 }, (_, i) => `a${i}`);
+  const s = run(...ids.map((id, i) => start(id, `s${i % 5}`)));
+  assert.equal(s.agents.a64.seat, null);
+  assert.deepEqual(s.queue, ["a64"]);
+  assert.equal(capacityFor(cfg, s, "qa").canSpawn, false);
+  const after = reduce(cfg, s, { type: "agent_stop", session: "s0", agentId: "a0", t: 0 });
+  assert.equal(after.agents.a64.seat?.id, s.agents.a0.seat?.id);
+  assert.deepEqual(after.queue, []);
 });
 
 test("session_end removes its agents and frees seats for others", () => {
@@ -36,13 +75,13 @@ test("session_end removes its agents and frees seats for others", () => {
     { type: "session_end", session: "s1", t: 0 });
   assert.equal(Object.keys(s.agents).length, 3);
   assert.deepEqual(s.queue, []);
-  assert.equal(s.agents.e.seat?.kind, "permanent");
+  assert.equal(s.agents.e.seat?.kind, "overflow"); // seated agents keep their desk
 });
 
 test("namespaced plugin agent types map to their role", () => {
   const s = reduce(cfg, emptyState(), { type: "agent_start", session: "s1", agentId: "p", agentType: "agent-office:qa-engineer", t: 0 });
   assert.equal(s.agents.p.role, "qa");
-  assert.equal(s.agents.p.seat?.id, "qa#0");
+  assert.equal(s.agents.p.seat?.name, "Quinn");
 });
 
 test("a delegation is matched to the subagent it spawns and the report goes back to the parent", () => {
@@ -134,8 +173,9 @@ test("tool_end records duration and errors and clears doing", () => {
 });
 
 test("agent timing: queue wait and report metrics", () => {
-  const s = run({ ...start("a"), t: 0 }, { ...start("b"), t: 0 }, { ...start("c"), t: 0 }, { ...start("d"), t: 0 }, { ...start("e"), t: 10 },
-    { type: "tool", session: "s1", agentId: "e", tool: "Bash", t: 11 }, { type: "agent_stop", session: "s1", agentId: "b", t: 50 },
+  const fill = Array.from({ length: 64 }, (_, i) => ({ ...start(`f${i}`), t: 0 }));
+  const s = run(...fill, { ...start("e"), t: 10 },
+    { type: "tool", session: "s1", agentId: "e", tool: "Bash", t: 11 }, { type: "agent_stop", session: "s1", agentId: "f1", t: 50 },
     { type: "agent_stop", session: "s1", agentId: "e", message: "BLOCKED: no db", t: 90 });
   const r = s.log.at(-1)!;
   assert.deepEqual([r.outcome, r.stoppedAt, r.durationMs, r.toolCount, r.queueWaitMs, r.text], ["blocked", 90, 80, 1, 40, "BLOCKED: no db"]);
@@ -144,6 +184,9 @@ test("agent timing: queue wait and report metrics", () => {
 test("outcome parsing", () => {
   const out = (m?: string) => run(start("a"), { type: "agent_stop", session: "s1", agentId: "a", message: m, t: 1 }).log.at(-1)!.outcome;
   assert.deepEqual([out("DONE: ok"), out("blocked - x"), out(""), out("whatever")], ["done", "blocked", "empty", undefined]);
+  assert.equal(out("PARTIAL: half the tests"), "partial");
+  const p = run(start("a"), { type: "agent_stop", session: "s1", agentId: "a", message: "partial: x", t: 1 });
+  assert.notEqual(p.tasks?.at(-1)?.status ?? "done", "blocked");
 });
 
 test("tasks follow delegate -> start -> stop and are bounded", () => {
@@ -200,11 +243,71 @@ test("same-file writes by two agents within the window record a possible conflic
 
 test("capacityFor, childrenOf, parentChain", () => {
   const s = run(start("a"), start("b"), start("c"));
-  assert.deepEqual(capacityFor(cfg, s, "qa"), { free: 1, total: 4, canSpawn: true });
-  assert.equal(capacityFor(cfg, run(start("a"), start("b"), start("c"), start("d")), "qa").canSpawn, false);
-  assert.deepEqual(capacityFor(cfg, s, "guest"), { free: Infinity, total: Infinity, canSpawn: true });
+  assert.deepEqual(capacityFor(cfg, s, "qa"), { free: 61, total: 64, canSpawn: true });
+  assert.deepEqual(capacityFor(cfg, s, "mystery"), { free: 61, total: 64, canSpawn: true });
   assert.deepEqual(childrenOf(s, "lead:s1").map((a) => a.id), ["a", "b", "c"]);
   const t = run({ type: "delegate", session: "s1", agentType: "qa-engineer", text: "x", t: 1 }, start("a"),
     { type: "delegate", session: "s1", from: "a", agentType: "qa-engineer", text: "y", t: 1 }, start("b"));
   assert.deepEqual(parentChain(t, "b"), ["a", "lead:s1"]);
+});
+
+test("pod cohesion: 4 interleaved sessions x 6 same-role agents each own a pod; no desk is shared", () => {
+  const ids = Array.from({ length: 24 }, (_, i) => ({ id: `a${i}`, s: `s${i % 4}` }));
+  const run1 = () => run(...ids.map((x) => start(x.id, x.s)));
+  const s = run1();
+  const pod = (id: string) => Math.floor(Number(s.agents[id].seat!.id.slice(1)) / 4);
+  for (let k = 0; k < 4; k++) {
+    const mine = ids.filter((x) => x.s === `s${k}`).map((x) => x.id);
+    assert.equal(new Set(mine.slice(0, 4).map(pod)).size, 1, `s${k} first 4 share a pod`);
+  }
+  const firstPods = [0, 1, 2, 3].map((k) => pod(ids.find((x) => x.s === `s${k}`)!.id));
+  assert.equal(new Set(firstPods).size, 4);
+  assert.equal(new Set(Object.values(s.agents).map((a) => a.seat!.id)).size, 24);
+  assert.deepEqual(Object.values(run1().agents).map((a) => a.seat!.id), Object.values(s.agents).map((a) => a.seat!.id));
+});
+
+test("70 interleaved agents: 64 seated on distinct desks, 6 queued", () => {
+  const s = run(...Array.from({ length: 70 }, (_, i) => start(`a${i}`, `s${i % 5}`)));
+  assert.equal(new Set(Object.values(s.agents).filter((a) => a.seat).map((a) => a.seat!.id)).size, 64);
+  assert.equal(s.queue.length, 6);
+});
+
+test("every seat the allocator hands out is a desk the layout actually builds (no one sits on open floor)", async () => {
+  const { buildLayout } = await import("./layout.ts");
+  const big: OfficeConfig = { roles: { qa: { agent: "qa-engineer", count: 2, names: ["Quinn", "Sam"] }, backend: { agent: "backend-dev", count: 2 } } };
+  const mk = (id: string, session: string, type: string): OfficeEvent => ({ type: "agent_start", session, agentId: id, agentType: type, t: 0 });
+  // the sample scenario that seated Sam at d24 (below Quinn) with only 16 desks built, then growth and shrink
+  let s = emptyState();
+  const check = (why: string) => {
+    const agents = Object.keys(s.agents).length;
+    let top = -1;
+    for (const a of Object.values(s.agents)) if (a.seat) top = Math.max(top, Number(a.seat.id.slice(1)));
+    const l = buildLayout(big, { demand: { agents }, minDesks: top + 1 });
+    const built = new Set(l.props.map((p) => p.seat));
+    for (const a of Object.values(s.agents)) if (a.seat) assert.ok(built.has(a.seat.id), `${why}: ${a.id} seat ${a.seat.id} has no desk (built ${l.props.length})`);
+  };
+  const steps: OfficeEvent[] = [
+    mk("dev", "demo1", "backend-dev"), mk("maya", "demo1", "frontend-dev"), mk("quinn", "demo1", "qa-engineer"), mk("sam", "demo2", "qa-engineer"),
+    ...Array.from({ length: 40 }, (_, i) => mk(`g${i}`, `s${i % 5}`, i % 3 ? "general-purpose" : "qa-engineer")),
+  ];
+  for (const [i, e] of steps.entries()) { s = reduce(big, s, e); check(`add ${i}`); }
+  for (const id of ["g3", "g10", "g20", "quinn", "g30"]) { s = reduce(big, s, { type: "agent_stop", session: s.agents[id].session, agentId: id, t: 0 } as OfficeEvent); check(`stop ${id}`); }
+});
+
+test("crew names are deterministic per project|role|slot, unique among live agents, and need no stored data", () => {
+  const start = (id: string, session: string, type = "general-purpose"): OfficeEvent => ({ type: "agent_start", session, agentId: id, agentType: type, t: 0 });
+  const sess = (id: string, cwd: string): OfficeEvent => ({ type: "session_start", session: id, project: cwd.split("/").pop()!, cwd, t: 0 });
+  const runA = [sess("sA", "/work/shop"), start("a1", "sA"), start("a2", "sA"), start("a3", "sA")].reduce((s, e) => reduce(cfg, s, e), emptyState());
+  // a different run (new session id, new agent ids) in the same project gets the same crew in the same order
+  const runB = [sess("sB", "/work/shop"), start("b1", "sB"), start("b2", "sB"), start("b3", "sB")].reduce((s, e) => reduce(cfg, s, e), emptyState());
+  const n = (s: typeof runA, ids: string[]) => ids.map((id) => s.agents[id].seat!.name);
+  assert.deepEqual(n(runA, ["a1", "a2", "a3"]), n(runB, ["b1", "b2", "b3"]));
+  assert.equal(new Set(n(runA, ["a1", "a2", "a3"])).size, 3);
+  // another project gets (very likely) different people for the same slots
+  const runC = [sess("sC", "/work/landing-page"), start("c1", "sC"), start("c2", "sC"), start("c3", "sC")].reduce((s, e) => reduce(cfg, s, e), emptyState());
+  assert.notDeepEqual(n(runA, ["a1", "a2", "a3"]), n(runC, ["c1", "c2", "c3"]));
+  // 60 workers across projects: still all different
+  let s = emptyState();
+  for (let i = 0; i < 60; i++) s = reduce(cfg, s, start(`w${i}`, `s${i % 4}`, i % 2 ? "reviewer" : "general-purpose"));
+  assert.equal(new Set(Object.values(s.agents).map((a) => a.seat!.name)).size, 60);
 });

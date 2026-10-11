@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Claude Code hook forwarder: stdin hook payload -> allowlisted JSON -> local Agent Office daemon.
 // Zero dependencies. Always exits 0 and never prints anything except a schema-checked daemon reply.
-import { readFileSync, appendFileSync, mkdirSync, statSync, unlinkSync, existsSync } from "node:fs";
+import { readFileSync, appendFileSync, mkdirSync, statSync, unlinkSync, existsSync, writeFileSync, renameSync } from "node:fs";
 import { request } from "node:http";
 import { spawn } from "node:child_process";
 import { homedir } from "node:os";
@@ -90,6 +90,8 @@ function post(path, body, wantReply, method = "POST") {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+let note; // why autostart gave up, recorded in last-hook.json for `doctor`
+
 /** Start the daemon detached when its entry is known; wait up to 2 s for /health. */
 async function autostart() {
   const [major, minor] = process.versions.node.split(".").map(Number);
@@ -97,7 +99,7 @@ async function autostart() {
   // `npm run setup` records the daemon entry in $AGENT_OFFICE_HOME/daemon, because an installed plugin lives in
   // Claude Code's plugin cache, away from the repo. The relative path only works with --plugin-dir ./plugin.
   const entry = process.env.AGENT_OFFICE_DAEMON || read("daemon") || join(dirname(dirname(dirname(fileURLToPath(import.meta.url)))), "packages", "server", "src", "main.ts");
-  if (!existsSync(entry)) return false;
+  if (!existsSync(entry)) { note = `daemon entry missing: ${entry} (rerun npm run setup)`; return false; }
   const args = major === 22 && minor < 18 ? ["--experimental-strip-types", entry] : [entry];
   spawn(process.execPath, args, { detached: true, stdio: "ignore", env: process.env }).unref();
   for (let i = 0; i < 13; i++) {
@@ -128,6 +130,10 @@ async function main() {
   let r = await post("/event", json, wantReply);
   if (!r.ok && r.refused && ev === "SessionStart" && (await autostart())) r = await post("/event", json, wantReply);
   if (ev === "SessionEnd" && typeof body.session_id === "string") try { unlinkSync(join(home(), "seq", body.session_id.replace(/:/g, "_"))); } catch { /* none */ }
+  // Marker for `doctor`: proves hooks fire inside real sessions. Names and outcome only, no content.
+  // Temp file (exclusive create, no symlink follow) then rename, so a planted link at the fixed path is replaced, not written through.
+  const last = join(home(), "last-hook.json"), tmp = `${last}.${process.pid}.tmp`;
+  try { mkdirSync(home(), { recursive: true }); writeFileSync(tmp, JSON.stringify({ t: Date.now(), event: ev, delivered: !!r.ok, note, session: String(body.session_id ?? "").slice(0, 8) }), { flag: "wx", mode: 0o600 }); renameSync(tmp, last); } catch { /* best effort */ }
   const out = r.text ? checkReply(r.text) : undefined;
   if (out) process.stdout.write(out);
 }

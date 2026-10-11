@@ -1,29 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { easeSpeed, stackBubbles, type BubbleBox } from "./settings.ts";
-import { parseTheme, DEFAULT_THEME, setRoles, roleColor, roleIndex } from "./theme.ts";
+import { DEFAULT_THEME, setRoles, roleColor } from "./theme.ts";
 import { mix, luma } from "./color.ts";
 
-test("parseTheme validates, clamps and ignores unknown keys", () => {
-  const t = parseTheme({ name: "x<y>", nightMax: 9, outline: "red", evil: 1, wall: { face: "#112233", bogus: "#fff" }, skins: ["#000000", "nope"] })!;
-  assert.equal(t.name, "xy");
-  assert.equal(t.nightMax, 1);
-  assert.equal(t.outline, DEFAULT_THEME.outline);
-  assert.equal(t.wall.face, "#112233");
-  assert.equal(t.wall.top, DEFAULT_THEME.wall.top);
-  assert.deepEqual(t.skins, ["#000000"]);
-  assert.equal((t as any).evil, undefined);
-  assert.equal(parseTheme("not json"), null);
-  assert.equal(parseTheme([]), null);
-});
-
-test("roles get stable palette slots by sorted name; unknown roles are hashed", () => {
-  setRoles(["qa", "backend", "frontend"]);
-  assert.equal(roleIndex("backend"), 0);
-  assert.equal(roleColor("backend"), DEFAULT_THEME.roleColors[0]);
-  assert.equal(roleColor("qa"), DEFAULT_THEME.roleColors[2]);
-  assert.match(roleColor("guest"), /^#[0-9a-f]{6}$/);
-  assert.equal(roleColor("guest"), roleColor("guest"));
+test("roles get palette slots in first-seen order and keep them; unregistered roles are hashed", () => {
+  setRoles(["qa", "backend"]);
+  setRoles(["frontend", "qa"]);
+  assert.equal(roleColor("backend"), DEFAULT_THEME.roleColors[1]);
+  assert.equal(roleColor("frontend"), DEFAULT_THEME.roleColors[2]);
+  assert.match(roleColor("general-purpose"), /^#[0-9a-f]{6}$/);
+  assert.equal(roleColor("general-purpose"), roleColor("general-purpose"));
 });
 
 test("easeSpeed accelerates, brakes near the end and never stalls", () => {
@@ -45,4 +32,23 @@ test("stackBubbles stacks overlaps, speech wins, caps tool bubbles per zone", ()
 test("colour helpers", () => {
   assert.equal(mix("#000000", "#ffffff", 0.5), "#808080");
   assert.ok(luma("#ffffff") > 0.99);
+});
+
+test("freeze records when it started and clears on thaw; repeats are no-ops", async () => {
+  const { frozen, setFrozen } = await import("./settings.ts");
+  setFrozen(true, 1234);
+  assert.deepEqual({ ...frozen }, { on: true, since: 1234 });
+  setFrozen(true, 9999);
+  assert.equal(frozen.since, 1234);
+  setFrozen(false);
+  assert.deepEqual({ ...frozen }, { on: false, since: 0 });
+});
+
+test("follow only accepts known modes", async () => {
+  const { settings, setFollow } = await import("./settings.ts");
+  setFollow("busiest");
+  assert.equal(settings.follow, "busiest");
+  setFollow("sideways" as never);
+  assert.equal(settings.follow, "busiest");
+  setFollow("off");
 });

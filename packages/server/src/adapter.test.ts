@@ -70,3 +70,10 @@ test("tool_end, why, seq, session_start fields", () => {
   const [s] = adapt({ hook_event_name: "SessionStart", session_id: "s", cwd: "/w/shop", git_branch: "main", source: "resume" }, 1);
   assert.deepEqual(s, { type: "session_start", session: "s", project: "shop", cwd: "/w/shop", branch: "main", source: "resume", t: 1 });
 });
+
+test("hook envelope tags are stripped from shown text", () => {
+  assert.equal(clip('<agent-message from="qa" to="lead">DONE: ok</agent-message><system-reminder>x</system-reminder>', 100), "DONE: ok x");
+  assert.equal(clip("<task-notification>a < b</task-notification>", 100), "a < b");
+  assert.equal(clip("<my-component>x</my-component>", 100), "<my-component>x</my-component>");
+  assert.equal(clip("a<b-c && d>e", 100), "a<b-c && d>e");
+});

@@ -1,0 +1,330 @@
+// Full-area views that sit over the stage: compact wall (#198, no canvas drawing, bare `wall` token in the URL hash) and daily timeline (#194).
+// shortcut: the canvas keeps running underneath (hiding it would give pixi a 0x0 resize); stop the ticker if CPU matters on a wall display.
+import { office } from "./api.ts";
+import { btn, el, renderIf } from "./dom.ts";
+import { MIN_SPAN, fetchHistory, pickRange, panView, rangeStats, waterfall, zoomView, type View as Span } from "./history.ts";
+import { roleColor } from "./theme.ts";
+import { ignoreKey } from "./camera.ts";
+import { fmtAge, fmtTokens } from "./logic.ts";
+import { t } from "./i18n.ts";
+import { group } from "./toolbar.ts";
+import { buildLink, parseLink } from "./sharelogic.ts";
+import { cycleFollow, following } from "./actions.ts";
+import { register } from "./palette.ts";
+import { hideText } from "./stream.ts";
+
+type View = "" | "wall" | "timeline";
+let pipGrid: HTMLElement | null = null; // the floating window's tile grid, while it is open
+const HOUR = 3600e3, REFRESH_MS = 30_000;
+/** Keeps the other hash tokens (sel, s, k, a written by ui.ts) and sets the view token: bare `wall`, `v=timeline`. */
+function setViewToken(v: View) {
+  const h = buildLink({ ...parseLink(location.hash), v });
+  if (location.hash !== h) history.replaceState(null, "", h || location.pathname + location.search);
+}
+
+function renderWall(box: HTMLElement) {
+  if (box === wallGrid && pipGrid) renderWall0(pipGrid);
+  renderWall0(box);
+}
+let wallGrid: HTMLElement;
+function renderWall0(box: HTMLElement) {
+  const e = office.getEnvelope(), now = Date.now();
+  if (!e) return;
+  const acts = office.actors();
+  const tiles = office.sessions().map((s) => {
+    const mine = acts.filter((a) => a.session === s.id);
+    const state = mine.some((a) => a.status === "blocked") ? "blocked" : s.waiting ? "waiting"
+      : mine.some((a) => a.status === "working" || a.status === "thinking") ? "working" : "idle";
+    const errors = e.state.sessions[s.id]?.errors ?? 0;
+    return { s, state, age: fmtAge(now - s.startedAt), tok: fmtTokens(s.usage), errors };
+  });
+  renderIf(box, JSON.stringify(tiles.map((x) => [x.s.id, x.s.project, x.state, x.age, x.tok, x.errors, x.s.agents])), () =>
+    tiles.length ? tiles.map((x) => {
+      const b = el("button", `tile ${x.state}`);
+      b.type = "button";
+      b.append(el("b", "", x.s.project), el("span", "", x.state), el("span", "k", `${x.age} · ${t("agent", { n: x.s.agents })}`),
+        el("span", "k", x.tok || "no tokens yet"), el("span", x.errors ? "er" : "k", `${x.errors} errors`));
+      b.addEventListener("click", () => { office.select(x.s.lead); setView(""); });
+      return b;
+    }) : [el("div", "k pad", "No sessions yet. Start Claude Code with the plugin, or press Sample in the panel.")]);
+}
+
+// ---- waterfall timeline: canvas 2D, only the visible rows are drawn ----
+const RH = 20, AXIS = 22, STEPS = [1, 5, 10, 30, 60, 300, 600, 1800, 3600, 3 * 3600, 6 * 3600].map((x) => x * 1000);
+const OUT_GLYPH = { done: "✓", blocked: "✕", partial: "~" } as const;
+type TL = { w: ReturnType<typeof waterfall>; full: Span; view: Span; sel: Span | null; limited: boolean; fit: boolean };
+let tl: TL | null = null, tlToken = 0;
+const hm = (ms: number, sec = false) => new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", ...(sec ? { second: "2-digit" } : {}) });
+
+async function loadTimeline(msg: HTMLElement, redraw: () => void) {
+  const my = ++tlToken;
+  try {
+    const { events, limited } = await fetchHistory(Date.now() - 24 * HOUR, 0, office.source.private);
+    if (my !== tlToken) return;
+    const w = waterfall(events), full = { t0: w.t0, t1: Math.max(w.t1, w.t0 + MIN_SPAN) };
+    // keep a zoomed range across the 30 s refresh; a fitted view follows the data
+    tl = { w, full, limited, view: tl && !tl.fit ? tl.view : full, sel: tl?.sel ?? null, fit: !tl || tl.fit };
+    msg.hidden = true;
+    if (!w.rows.length) { msg.hidden = false; msg.textContent = "No stored events in the last 24 hours. Run a Claude Code session; the daemon keeps its history."; }
+    redraw();
+  } catch (e) {
+    if (my === tlToken) { msg.hidden = false; msg.className = "warn pad"; msg.textContent = `Could not load history: ${(e as Error).message}. Check that the daemon is running (node scripts/office.mjs status).`; }
+  }
+}
+
+function buildTimeline(root: HTMLElement) {
+  const msg = el("div", "k pad", "loading…"), info = el("div", "k pad"), legend = el("div", "tl-legend");
+  const wrap = el("div", "tlwrap"), cv = el("canvas"), sizer = el("div");
+  cv.setAttribute("role", "img");
+  cv.setAttribute("aria-label", "Timeline of sessions and agents over the last 24 hours. Bars are coloured by role; the legend lists outcomes.");
+  wrap.append(cv, sizer);
+  const css = (n: string) => getComputedStyle(document.documentElement).getPropertyValue(n).trim() || "#888";
+  const left = () => Math.min(150, Math.max(70, Math.floor(wrap.clientWidth * 0.28)));
+  const plot = () => ({ l: left(), w: Math.max(10, wrap.clientWidth - left() - 10) });
+  const timeAt = (x: number) => { const p = plot(), v = tl!.view; return v.t0 + (Math.max(0, Math.min(p.w, x - p.l)) / p.w) * (v.t1 - v.t0); };
+  const priv = hideText;
+
+  function infoText() {
+    if (!tl || !tl.w.rows.length) return "";
+    const r = tl.sel ?? tl.view, st = rangeStats(tl.w, r);
+    const dur = st.ms < 60_000 ? `${(st.ms / 1000).toFixed(st.ms < 10_000 ? 1 : 0)}s` : fmtAge(st.ms);
+    const what = `${hm(r.t0, true)} to ${hm(r.t1, true)} · ${dur} · ${t("event", { n: st.events })} · ${t("agent", { n: st.agents })}`;
+    return (tl.sel ? `Selected ${what} (double-click to zoom)` : `Showing ${what}`) + (tl.limited ? " · limit reached: older events are not shown" : "");
+  }
+  function draw() {
+    if (!tl || !tl.w.rows.length) { info.textContent = ""; cv.width = cv.height = 0; return; }
+    const dpr = devicePixelRatio || 1, W = wrap.clientWidth, H = wrap.clientHeight;
+    if (!W || !H) return;
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    cv.style.width = `${W}px`; cv.style.height = `${H}px`;
+    sizer.style.height = `${Math.max(0, tl.w.rows.length * RH + AXIS - H)}px`;
+    const g = cv.getContext("2d")!;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const fg = css("--fg"), mute = css("--mute"), line = css("--line"), panel = css("--panel"), acc = css("--acc"), bad = css("--bad"), warn = css("--warn"), good = css("--good");
+    g.fillStyle = panel; g.fillRect(0, 0, W, H);
+    g.font = `${11 * (Number(css("--ts")) || 1)}px ui-monospace,Menlo,monospace`; g.textBaseline = "middle";
+    const { l, w: pw } = plot(), v = tl.view, span = v.t1 - v.t0, x = (t: number) => l + ((t - v.t0) / span) * pw;
+    // time grid
+    const step = STEPS.find((s) => (s / span) * pw >= 70) ?? STEPS[STEPS.length - 1];
+    g.fillStyle = mute; g.textAlign = "center";
+    for (let t = Math.ceil(v.t0 / step) * step; t <= v.t1; t += step) {
+      const px = Math.round(x(t)) + 0.5;
+      g.strokeStyle = line; g.beginPath(); g.moveTo(px, AXIS - 4); g.lineTo(px, H); g.stroke();
+      g.fillText(hm(t, step < 60_000), px, AXIS / 2 - 2);
+    }
+    // rows: cull to the scrolled window
+    const top = wrap.scrollTop, i0 = Math.max(0, Math.floor(top / RH)), i1 = Math.min(tl.w.rows.length, Math.ceil((top + H - AXIS) / RH));
+    const clipL = (txt: string, maxW: number) => { while (txt.length > 1 && g.measureText(txt).width > maxW) txt = txt.slice(0, -2) + "…"; return txt; };
+    let sess = 0;
+    for (let i = 0; i < i1; i++) {
+      const r = tl.w.rows[i];
+      if (r.kind === "session") sess++;
+      if (i < i0) continue;
+      const y = AXIS + i * RH - top, mid = y + RH / 2;
+      g.textAlign = "start"; g.fillStyle = r.kind === "session" ? fg : mute;
+      g.fillText(clipL(priv() ? (r.kind === "session" ? `session ${sess}` : r.role) : r.label, l - 12 - (r.kind === "agent" ? 10 : 0)), (r.kind === "agent" ? 14 : 4), mid);
+      if (r.e < v.t0 || r.s > v.t1) continue;
+      const a = Math.max(l, x(r.s)), b = Math.min(l + pw, x(r.e)), bw = Math.max(2, b - a);
+      if (r.kind === "session") { g.fillStyle = line; g.fillRect(a, y + 7, bw, RH - 14); continue; }
+      g.fillStyle = roleColor(r.role); g.globalAlpha = r.open ? 0.55 : 0.9;
+      g.fillRect(a, y + 3, bw, RH - 6); g.globalAlpha = 1;
+      if (r.open) { g.setLineDash([3, 3]); g.strokeStyle = fg; g.strokeRect(a + 0.5, y + 3.5, bw - 1, RH - 7); g.setLineDash([]); }
+      if (r.outcome) {
+        g.strokeStyle = r.outcome === "blocked" ? bad : r.outcome === "partial" ? warn : good; g.lineWidth = 2;
+        g.strokeRect(a + 1, y + 4, Math.max(1, bw - 2), RH - 8); g.lineWidth = 1;
+        if (bw > 16) { g.fillStyle = fg; g.textAlign = "right"; g.fillText(OUT_GLYPH[r.outcome], a + bw - 3, mid); }
+      }
+    }
+    // axis strip stays on top of scrolled rows
+    g.fillStyle = panel; g.fillRect(0, 0, W, AXIS - 4); g.fillStyle = mute; g.textAlign = "center";
+    for (let t = Math.ceil(v.t0 / step) * step; t <= v.t1; t += step) g.fillText(hm(t, step < 60_000), Math.round(x(t)), AXIS / 2 - 2);
+    if (tl.sel) {
+      const a = x(Math.max(tl.sel.t0, v.t0)), b = x(Math.min(tl.sel.t1, v.t1));
+      g.fillStyle = acc; g.globalAlpha = 0.2; g.fillRect(a, 0, Math.max(1, b - a), H); g.globalAlpha = 1;
+      g.strokeStyle = acc; g.strokeRect(a + 0.5, 0.5, Math.max(1, b - a), H - 1);
+    }
+    info.textContent = infoText();
+  }
+  const set = (v: Span, sel: Span | null = tl!.sel) => { tl!.view = v; tl!.sel = sel; tl!.fit = v.t0 === tl!.full.t0 && v.t1 === tl!.full.t1; draw(); };
+  const reset = () => tl && set(tl.full, null);
+  const zoom = (f: number, anchor?: number) => {
+    if (!tl) return;
+    const c = anchor ?? (tl.sel ? (tl.sel.t0 + tl.sel.t1) / 2 : (tl.view.t0 + tl.view.t1) / 2);
+    set(zoomView(tl.view, f, c, tl.full));
+  };
+
+  // pointer: drag selects, two pointers pinch, wheel zooms (shift/horizontal pans)
+  const ptrs = new Map<number, number>();
+  let drag: number | null = null, pinch: { d: number; v: Span; c: number } | null = null, moved = false;
+  cv.style.touchAction = "none";
+  cv.addEventListener("pointerdown", (e) => {
+    const x = e.clientX - cv.getBoundingClientRect().left;
+    if (!tl || x < plot().l) return;
+    cv.setPointerCapture(e.pointerId);
+    ptrs.set(e.pointerId, x);
+    if (ptrs.size === 2) {
+      const [a, b] = [...ptrs.values()];
+      pinch = { d: Math.max(1, Math.abs(a - b)), v: tl.view, c: timeAt((a + b) / 2) };
+      drag = null;
+    } else { drag = x; moved = false; }
+  });
+  cv.addEventListener("pointermove", (e) => {
+    if (!tl || !ptrs.has(e.pointerId)) return;
+    const x = e.clientX - cv.getBoundingClientRect().left;
+    ptrs.set(e.pointerId, x);
+    if (pinch && ptrs.size === 2) {
+      const [a, b] = [...ptrs.values()];
+      tl.view = zoomView(pinch.v, Math.abs(a - b) / pinch.d, pinch.c, tl.full);
+      tl.fit = false; draw();
+    } else if (drag !== null) {
+      if (Math.abs(x - drag) > 3) moved = true;
+      if (moved) { tl.sel = pickRange(drag, x, plot().l, plot().w, tl.view); draw(); }
+    }
+  });
+  const up = (e: PointerEvent) => {
+    ptrs.delete(e.pointerId);
+    if (ptrs.size < 2) pinch = null;
+    if (drag !== null && !moved && tl?.sel) { tl.sel = null; draw(); } // a plain click clears the selection
+    if (!ptrs.size) drag = null;
+  };
+  cv.addEventListener("pointerup", up);
+  cv.addEventListener("pointercancel", up);
+  cv.addEventListener("dblclick", (e) => {
+    if (!tl) return;
+    const x = e.clientX - cv.getBoundingClientRect().left;
+    if (x < plot().l) return;
+    if (tl.sel && tl.sel.t1 - tl.sel.t0 > 0) set(zoomView({ t0: tl.sel.t0, t1: tl.sel.t1 }, 1, 0, tl.full), null);
+    else zoom(2, timeAt(x));
+  });
+  cv.addEventListener("wheel", (e) => {
+    if (!tl) return;
+    const x = e.clientX - cv.getBoundingClientRect().left;
+    if (x < plot().l) return; // over the labels: normal vertical scroll
+    e.preventDefault();
+    if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+      set(panView(tl.view, ((e.deltaX || e.deltaY) / plot().w) * (tl.view.t1 - tl.view.t0), tl.full));
+    } else zoom(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)), timeAt(x)); // ctrl+wheel is a trackpad pinch: deltas are small
+  }, { passive: false });
+  wrap.addEventListener("scroll", draw, { passive: true });
+  new ResizeObserver(draw).observe(wrap);
+  // keys while the view is open: + / - zoom, 0 resets, arrows pan; the camera must not also zoom the hidden office
+  addEventListener("keydown", (e) => {
+    if (root.hidden || ignoreKey(e) || !tl) return;
+    const k = e.key;
+    if (k === "+" || k === "=") zoom(1.5);
+    else if (k === "-" || k === "_") zoom(1 / 1.5);
+    else if (k === "0") reset();
+    else if (k === "ArrowLeft" || k === "ArrowRight") set(panView(tl.view, (k === "ArrowRight" ? 0.2 : -0.2) * (tl.view.t1 - tl.view.t0), tl.full));
+    else return;
+    e.preventDefault(); e.stopPropagation();
+  }, true);
+
+  const bar = el("div", "pad tlbar");
+  bar.append(el("b", "", "Timeline, last 24 hours"),
+    btn("Fit", "Fit the whole range to the screen", () => tl && set(tl.full)),
+    btn("Reset", "Fit and clear the selection (0)", reset),
+    btn("−", "Zoom out (-)", () => zoom(1 / 1.5)), btn("+", "Zoom in (+)", () => zoom(1.5)),
+    btn("Close", "Close the timeline", () => setView("")));
+  root.append(bar, info, legend, msg, wrap);
+  const legendFill = () => {
+    const roles = [...new Set((tl?.w.rows ?? []).filter((r) => r.kind === "agent").map((r) => r.role))].slice(0, 10);
+    legend.replaceChildren(...roles.map((r) => { const i = el("span", "lgi"); const sw = el("i", "sw"); sw.style.background = roleColor(r); i.append(sw, el("span", "", priv() ? "role" : r)); return i; }),
+      el("span", "lgi", "✓ done"), el("span", "lgi", "✕ blocked"), el("span", "lgi", "~ partial"), el("span", "lgi", "dashed = still running"), el("span", "lgi", "grey bar = session"),
+      el("span", "lgi k", "Drag to select, double-click to zoom, wheel/pinch zoom, +/-/0 keys. Times are local."));
+  };
+  return { load: async () => { await loadTimeline(msg, () => { legendFill(); draw(); }); }, draw };
+}
+
+let setView: (v: View) => void = () => {};
+let shown: View = "";
+/** For kiosk.ts and the palette: switch views without clicking toolbar buttons. */
+export const showView = (v: View) => setView(v);
+export const currentView = () => shown;
+export function bindViews(tools: HTMLElement) {
+  const wall = el("div", "view"), tlRoot = el("div", "view tlview");
+  wall.id = "wall"; tlRoot.id = "timeline";
+  wall.hidden = tlRoot.hidden = true;
+  const grid = el("div", "wallgrid");
+  wallGrid = grid;
+  wall.append(grid);
+  document.body.append(wall, tlRoot);
+  const timeline = buildTimeline(tlRoot);
+  const bw = btn("Wall", "Compact wall of session tiles, no office drawing (#wall in the URL)", () => setView(cur === "wall" ? "" : "wall"));
+  const bt = btn("Timeline", "Waterfall of the last 24 hours of stored sessions and agents", () => setView(cur === "timeline" ? "" : "timeline"));
+  bw.setAttribute("aria-pressed", "false"); bt.setAttribute("aria-pressed", "false");
+  // freeze: hold incoming snapshots and show the last applied state; the chip counts what is waiting
+  const bf = btn("Freeze", "Hold the view on what it shows now; new activity waits until you resume (.)", () => office.freeze.toggle());
+  bf.setAttribute("aria-pressed", "false");
+  const chip = el("div", "frozen-chip"), chipText = el("span");
+  chip.id = "frozen";
+  chip.setAttribute("role", "status");
+  chip.hidden = true;
+  chip.append(chipText, " ", btn("Resume", "Apply the newest state now (.)", () => office.freeze.set(false), "b sm"));
+  document.body.append(chip);
+  office.freeze.onChange(() => {
+    const on = office.freeze.on;
+    bf.setAttribute("aria-pressed", String(on));
+    chip.hidden = !on;
+    chipText.textContent = `Frozen · ${office.freeze.held} new`;
+  });
+  const g = group(tools, "View");
+  const bfo = btn("Follow", "Camera follows the busiest agent (Shift+F)", cycleFollow);
+  const syncFollow = () => bfo.setAttribute("aria-pressed", String(following()));
+  syncFollow();
+  document.addEventListener("ao:follow", syncFollow);
+  office.subscribe(syncFollow);
+  g.append(bw, bt, bf, bfo);
+  register("View: Office", () => setView(""));
+  register("View: Wall", () => setView(cur === "wall" ? "" : "wall"));
+  register("View: Timeline", () => setView(cur === "timeline" ? "" : "timeline"));
+  register("View: Freeze", () => office.freeze.toggle());
+  register("View: Follow busiest (Shift+F)", cycleFollow);
+  // floating compact window: Document Picture-in-Picture (Chromium); feature-detected, absent elsewhere
+  const dpip = (window as unknown as { documentPictureInPicture?: { requestWindow(o: { width: number; height: number }): Promise<Window> } }).documentPictureInPicture;
+  if (dpip) {
+    let win: Window | null = null, back: View = "";
+    g.append(btn("Float", "Open the compact wall in a small always-on-top window", async () => {
+      if (win) { win.close(); return; }
+      try {
+        const w = await dpip.requestWindow({ width: 360, height: 440 });
+        for (const sheet of Array.from(document.styleSheets)) { // copy the page styles: cssRules text, else the link href
+          const st = w.document.createElement("style");
+          try { st.textContent = Array.from(sheet.cssRules).map((r) => r.cssText).join("\n"); w.document.head.append(st); }
+          catch { if (sheet.href) { const lk = w.document.createElement("link"); lk.rel = "stylesheet"; lk.href = sheet.href; w.document.head.append(lk); } }
+        }
+        w.document.documentElement.style.cssText = document.documentElement.style.cssText;
+        w.document.body.className = document.body.className;
+        const pg = el("div", "wallgrid");
+        pg.style.cssText = "padding:6px";
+        w.document.body.append(pg);
+        win = w; pipGrid = pg; back = cur;
+        setView(""); // the main window shows the office again while the wall floats
+        renderWall(grid);
+        w.addEventListener("pagehide", () => { win = null; pipGrid = null; if (back === "wall") setView("wall"); });
+      } catch { /* denied: the main view simply stays */ }
+    }));
+  }
+  let cur: View = "";
+  setView = (v) => {
+    cur = shown = v;
+    wall.hidden = v !== "wall"; tlRoot.hidden = v !== "timeline";
+    bw.setAttribute("aria-pressed", String(v === "wall")); bt.setAttribute("aria-pressed", String(v === "timeline"));
+    if (v !== "timeline") tlToken++; // drop a fetch still in flight
+    setViewToken(v);
+    if (v === "wall") renderWall(grid);
+    if (v === "timeline") void timeline.load();
+  };
+  office.subscribe(() => { if (cur === "wall" || pipGrid) renderWall(grid); });
+  setInterval(() => { if (cur === "wall" || pipGrid) renderWall(grid); }, 1000); // ages tick between snapshots
+  setInterval(() => { if (cur === "timeline") void timeline.load(); }, REFRESH_MS);
+  addEventListener("keydown", (e) => { if (e.key === "." && !ignoreKey(e)) office.freeze.toggle(); });
+  addEventListener("hashchange", () => { const v = parseLink(location.hash).v; if (v !== cur) setView(v); });
+  const v0 = parseLink(location.hash).v;
+  if (v0) setView(v0);
+  // Escape: the top layer only. Dialogs stop the event first (dialog.ts); presenter preventDefaults it; leaving presenter takes the Esc, not the Wall.
+  addEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || !cur || e.defaultPrevented || document.body.classList.contains("presenter")) return;
+    e.preventDefault(); e.stopPropagation();
+    setView("");
+  });
+}

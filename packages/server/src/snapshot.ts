@@ -5,9 +5,9 @@ export function publicState(state: OfficeState, priv: boolean): Omit<OfficeState
   const { track: _, ...rest } = state;
   if (!priv) return rest;
   const sessions = Object.fromEntries(Object.entries(rest.sessions).map(([k, x]) => [k,
-    { ...x, prompt: undefined, why: undefined, detail: undefined, waitingText: undefined, lastError: undefined, cwd: undefined, branch: undefined }]));
+    { ...x, prompt: undefined, why: undefined, detail: undefined, waitingText: undefined, lastError: undefined, cwd: undefined, branch: undefined, files: undefined, loopKey: undefined }]));
   const agents = Object.fromEntries(Object.entries(rest.agents).map(([k, a]) => [k,
-    { ...a, task: undefined, why: undefined, detail: undefined, lastError: undefined }]));
+    { ...a, task: undefined, why: undefined, detail: undefined, lastError: undefined, loopKey: undefined }]));
   return {
     ...rest, sessions, agents,
     log: rest.log.map((i) => ({ ...i, text: "" })),

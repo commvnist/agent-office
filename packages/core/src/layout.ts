@@ -1,8 +1,8 @@
 import type { OfficeConfig } from "./types.ts";
 
 export type Tile = { x: number; y: number };
-export type Prop = Tile & { role: string; kind: "permanent" | "overflow"; tier: number };
-export type Decor = Tile & { kind: "plant" | "coffee" | "cooler" | "couch" | "bookshelf"; w?: number };
+export type Prop = Tile & { role: string; kind: "permanent" | "overflow"; tier: number; seat?: string };
+export type Decor = Tile & { kind: "plant" | "coffee" | "cooler" | "couch" | "bookshelf" | "rack"; w?: number };
 export type Zone = { role: string; label: string; x: number; w: number; y: number; queue: Tile[] };
 export type Layout = {
   cols: number;
@@ -18,59 +18,69 @@ export type Layout = {
   blocked: Set<string>;
 };
 
-const GUEST_SLOTS = 4;
 const key = (t: Tile) => `${t.x},${t.y}`;
 
+export const MAX_DESKS = 64;
+export const PODS_PER_ROW = 6;
+const POD = 4; // desks per pod: a 2x2 cluster of chair+desk pairs
+const WALL = 2, LOBBY_Y = 3, Y0 = 7, X0 = 2; // pod grid origin; pod stride is 4 wide (3 + aisle), 5 tall (4 + aisle)
+
+/**
+ * Chair tile of desk `i` (its desk is the tile below). Pure and append-only: independent of config, demand and window,
+ * so a desk never moves when the office grows. Pod p = i/4 sits at column p%4, row p/4 (row-major); desks go 2x2 inside it.
+ */
+export function deskPos(i: number): Tile {
+  const pod = Math.floor(i / POD), k = i % POD;
+  return { x: X0 + (pod % PODS_PER_ROW) * 4 + (k % 2) * 2, y: Y0 + Math.floor(pod / PODS_PER_ROW) * 5 + Math.floor(k / 2) * 2 };
+}
+
 export type LayoutOpts = {
-  /** Wrap role zones into this many horizontal bands (more bands = narrower, taller office). */
+  /** Ignored: the pod grid has a fixed width (kept so older callers still compile). */
   bands?: number;
   /** Lead desks along the top; sized to the number of live sessions. */
   lobbySlots?: number;
+  /** Live load; the office gets agents + 4 spare desks (never fewer than the configured roles ask for). */
+  demand?: { agents: number; sessions?: number };
+  /** Build at least this many desks (the highest desk index in use + 1). */
+  minDesks?: number;
 };
 
-const BAND_H = 9;
+/**
+ * Desks built for `agents` live agents (whole pods, 8..MAX_DESKS): the configured headcount or agents + 4 spare.
+ * Shared by buildLayout and allocate(): the allocator must never hand out a desk that is not built.
+ */
+export function deskCount(cfg: OfficeConfig, agents: number): number {
+  const want = Math.max(Object.values(cfg.roles).reduce((n, r) => n + r.count + (r.overflow?.max ?? 0), 0), agents > 0 ? agents + 4 : 0);
+  return Math.min(MAX_DESKS, Math.max(2 * POD, Math.ceil(want / POD) * POD));
+}
 
 /**
- * Deterministic floor plan from the office config.
- * Agents sit facing the camera: seat tile on top, desk tile directly below it.
+ * Deterministic floor plan: `total` desks (whole pods, 8..MAX_DESKS) at deskPos(0..total-1), seat ids `d<N>`.
+ * Agents sit facing the camera: seat tile on top, desk tile directly below it. `zones` are pod rows ("wings") that
+ * share one waiting-area queue below the last row; `props[i].seat` is the seat id of that desk.
  */
 export function buildLayout(cfg: OfficeConfig, opts: LayoutOpts = {}): Layout {
-  const bands = Math.max(1, opts.bands ?? 1);
-  const roles = Object.entries(cfg.roles).map(([role, r]) => ({
-    role, label: r.agent, count: r.count, over: r.overflow?.max ?? 0,
-  }));
-  roles.push({ role: "guest", label: "guests", count: 0, over: GUEST_SLOTS });
-
-  const WALL = 2, LOBBY_Y = 3, ZONE_Y = 7, X0 = 2;
-  const widthOf = (r: (typeof roles)[number]) => Math.max(r.count, r.over, 1) * 2;
-  const total = roles.reduce((n, r) => n + widthOf(r) + 1, 0);
-  const limit = Math.max(Math.ceil(total / bands), Math.max(...roles.map(widthOf)) + 1);
+  // minDesks keeps every desk an agent still sits at (agents may have left, shrinking demand, while a high desk is in use)
+  const total = Math.min(MAX_DESKS, Math.max(deskCount(cfg, opts.demand?.agents ?? 0), Math.ceil((opts.minDesks ?? 0) / POD) * POD));
+  const podRows = Math.ceil(total / POD / PODS_PER_ROW);
 
   const seats: Layout["seats"] = {};
   const props: Prop[] = [];
-  const zones: Zone[] = [];
-  let x = X0, band = 0, maxX = X0;
-  for (const r of roles) {
-    const w = widthOf(r);
-    if (x - X0 + w > limit && x > X0 && band < bands - 1) { band++; x = X0; }
-    const zy = ZONE_Y + band * BAND_H;
-    for (let i = 0; i < r.count; i++) {
-      seats[`${r.role}#${i}`] = { x: x + i * 2, y: zy };
-      props.push({ x: x + i * 2, y: zy + 1, role: r.role, kind: "permanent", tier: 0 });
-    }
-    for (let i = 0; i < r.over; i++) {
-      seats[`${r.role}+${i}`] = { x: x + i * 2, y: zy + 3 };
-      props.push({ x: x + i * 2, y: zy + 4, role: r.role, kind: "overflow", tier: i });
-    }
-    const queue = Array.from({ length: Math.max(r.count, r.over, 1) }, (_, i) => ({ x: x + i * 2, y: zy + 6 }));
-    zones.push({ role: r.role, label: r.label, x, w, y: zy, queue });
-    x += w + 1;
-    maxX = Math.max(maxX, x);
+  for (let i = 0; i < total; i++) {
+    const t = deskPos(i);
+    seats[`d${i}`] = t;
+    props.push({ x: t.x, y: t.y + 1, role: "desk", kind: "permanent", tier: 0, seat: `d${i}` });
   }
+
   const lobbyN = Math.max(1, opts.lobbySlots ?? 4);
-  const cols = Math.max(maxX + 1, lobbyN * 2 + 5, 16);
-  const rows = ZONE_Y + bands * BAND_H;
-  const lobbyX0 = Math.floor((cols - lobbyN * 2) / 2) + 0;
+  const cols = Math.max(X0 + PODS_PER_ROW * 4 + 2, lobbyN * 2 + 5);
+  const qy = Y0 + podRows * 5; // waiting row, one aisle below the last pod row
+  const rows = qy + 4;
+  const queue = Array.from({ length: 8 }, (_, i) => ({ x: X0 + i * 2, y: qy }));
+  const zones: Zone[] = Array.from({ length: podRows }, (_, r) => ({
+    role: `wing${r + 1}`, label: `Wing ${r + 1}`, x: X0, w: PODS_PER_ROW * 4 - 1, y: Y0 + r * 5, queue,
+  }));
+  const lobbyX0 = Math.floor((cols - lobbyN * 2) / 2);
   const lobby = Array.from({ length: lobbyN }, (_, i) => ({ x: lobbyX0 + i * 2, y: LOBBY_Y }));
   const door = { x: Math.floor(cols / 2), y: rows - 1 };
 
@@ -80,8 +90,9 @@ export function buildLayout(cfg: OfficeConfig, opts: LayoutOpts = {}): Layout {
     { kind: "cooler", x: cols - 2, y: WALL },
     { kind: "bookshelf", x: 0, y: WALL },
     { kind: "plant", x: 1, y: WALL },
-    { kind: "plant", x: 0, y: ZONE_Y },
-    { kind: "plant", x: cols - 1, y: ZONE_Y },
+    { kind: "rack", x: 2, y: WALL },
+    { kind: "plant", x: 0, y: Y0 },
+    { kind: "plant", x: cols - 1, y: Y0 },
     { kind: "plant", x: 0, y: rows - 3 },
     { kind: "plant", x: cols - 1, y: rows - 3 },
     { kind: "couch", x: door.x - 5, y: rows - 2, w: 2 },
@@ -100,12 +111,10 @@ export function buildLayout(cfg: OfficeConfig, opts: LayoutOpts = {}): Layout {
   };
 }
 
-/** Seat tile, falling back to the zone's last slot when an unlimited role outgrows the plan. */
+/** Chair tile of a seat id; ids beyond the built desks (office grew since) still resolve through deskPos. */
 export function seatTile(l: Layout, seatId: string): Tile {
-  if (l.seats[seatId]) return l.seats[seatId];
-  const role = seatId.split(/[#+]/)[0];
-  const z = l.zones.find((z) => z.role === role) ?? l.zones[l.zones.length - 1];
-  return z.queue[z.queue.length - 1];
+  const n = /^d(\d+)$/.exec(seatId)?.[1];
+  return l.seats[seatId] ?? (n !== undefined ? deskPos(Number(n)) : l.zones[0].queue[0]);
 }
 
 /** A free tile next to `t` to stand on when talking to whoever sits there; `k` rotates the choice so visitors spread out. */
@@ -117,7 +126,10 @@ export function standNear(l: Layout, t: Tile, k = 0): Tile {
   return free.length ? free[((k % free.length) + free.length) % free.length] : t;
 }
 
-/** 4-neighbour BFS around blocked tiles. Returns tiles after `from`, ending at `to`; [] if unreachable. */
+/**
+ * 4-neighbour BFS around blocked tiles. Returns tiles after `from`, ending at `to`; [] if unreachable.
+ * shortcut: string keys, fine to ~2,000 tiles (a full 64-desk office is ~600); switch to y*cols+x indices above that.
+ */
 export function findPath(l: Layout, from: Tile, to: Tile): Tile[] {
   const start = key(from), goal = key(to);
   const prev = new Map<string, string | null>([[start, null]]);

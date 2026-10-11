@@ -46,5 +46,5 @@ All events have `session`, `t`, optional `seq`.
 
 ## Exports (core)
 
-`SCHEMA_VERSION`, `LIMITS`, `LOG_MAX`, `emptyState`, `reduce`, `safeId`, `sweep(state, now, ttlMs, cfg?)` -> `{state, removed: {sessions, agents}}` (ends sessions with no event for ttlMs; pass `cfg` to seat queued agents), `capacityFor(cfg, state, role)` -> `{free, total, canSpawn}` (unmapped/guest roles: `Infinity`, true; keyed by role, not agent type; queued agents hold no seat), `childrenOf(state, id)`, `parentChain(state, id)` (ancestors, nearest first, ends at `lead:<session>`), types `SourceAdapter`, `Task`, `Conflict`.
+`SCHEMA_VERSION`, `LIMITS`, `LOG_MAX`, `emptyState`, `reduce`, `safeId`, `sweep(state, now, ttlMs, cfg?)` -> `{state, removed: {sessions, agents}}` (ends sessions with no event for ttlMs; pass `cfg` to seat queued agents), `capacityFor(cfg, state, role)` -> `{free, total, canSpawn}` (one global pool of `MAX_DESKS` = 64 desks; `role` is ignored; queued agents hold no seat), `allocate(cfg, state, role, session?)` (cheapest free desk id `d<N>`; unmapped agent types keep their bare type as role), layout: `deskPos(i)`, `buildLayout(cfg, {demand?})`, `childrenOf(state, id)`, `parentChain(state, id)` (ancestors, nearest first, ends at `lead:<session>`), types `SourceAdapter`, `Task`, `Conflict`.
 Server adapter: `adapt`, `clip`, `redact`.

@@ -20,3 +20,11 @@ test("reports differing role and existing agent file as conflicts", () => {
 test("identical existing role is not a conflict", () => {
   assert.deepEqual(planPack(pack, { roles: pack.roles }, "/p", "/out", () => false).conflicts, []);
 });
+
+test("planPack rejects traversal names and absolute or non-md sources", () => {
+  const mk = (agents) => () => planPack({ roles: {}, agents }, {}, "/p", "/out", () => false);
+  assert.throws(mk({ "../x": "a.md" }), /bad agent name/);
+  assert.throws(mk({ ok: "/etc/passwd" }), /bad agent source/);
+  assert.throws(mk({ ok: "a.txt" }), /bad agent source/);
+  assert.doesNotThrow(mk({ ok: "../../agents/ok.md" }));
+});

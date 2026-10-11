@@ -1,0 +1,81 @@
+/* Styles for the chrome modules that add their own elements (toolbar groups, dialogs, views, stale strip). */
+/* Toolbar: each group is a block, its caption on its own line with a hairline under it, buttons below. */
+#tools{flex-direction:column;flex-wrap:nowrap;align-items:stretch;gap:10px}
+#tools > .b{align-self:flex-start}
+.tgrp{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:0;width:100%}
+.tcap{flex:0 0 100%;display:block;font-size:calc(11px * var(--ts,1));letter-spacing:.08em;text-transform:uppercase;color:var(--mute);padding-bottom:4px;border-bottom:1px solid var(--line)}
+.dlg{position:absolute;right:calc(var(--swx,340px) + 8px);top:40px;z-index:6;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px;width:300px;max-height:80vh;overflow:auto;display:flex;flex-direction:column;gap:8px}
+kbd{font:inherit;border:1px solid var(--line);border-radius:3px;padding:0 4px;white-space:nowrap}
+#settings{max-height:80vh;overflow:auto}
+#stale{position:fixed;left:0;right:0;bottom:0;z-index:40;background:#e0524a;color:#fff;font-weight:700;text-align:center;padding:4px 8px}
+.view{position:fixed;left:0;top:var(--top-h,34px);right:var(--sw,0px);bottom:0;z-index:4;background:var(--bg);overflow:auto}
+/* #top's gradient is transparent at its bottom edge; under a view it must be solid or the moving canvas shows through */
+body:has(.view:not([hidden])) #top{background:var(--bg)}
+.wallgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(190px,100%),1fr));gap:8px;padding:12px}
+.tile{display:flex;flex-direction:column;gap:4px;text-align:left;background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--mute);border-radius:4px;padding:8px 12px;cursor:pointer}
+.tile.working{border-left-color:var(--good)} .tile.waiting{border-left-color:var(--warn)} .tile.blocked{border-left-color:var(--bad)}
+.tile .er{color:var(--bad-ink)}
+.tlview{display:flex;flex-direction:column;overflow:hidden}
+.tlbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.tlwrap{flex:1;min-height:0;overflow-y:auto;position:relative}
+.tlwrap canvas{position:sticky;top:0;display:block;cursor:crosshair}
+.tl-legend{display:flex;flex-wrap:wrap;gap:4px 12px;padding:0 16px 8px;font-size:calc(11px * var(--ts,1))}
+.tl-legend .sw{display:inline-block;width:10px;height:10px;margin-inline-end:4px;border-radius:2px}
+.frozen-chip{position:fixed;left:12px;top:calc(var(--top-h,34px) + 6px);z-index:41;background:var(--warn);color:#14121f;font-weight:700;padding:4px 8px;border-radius:6px;display:flex;gap:8px;align-items:center}
+#settings input[type=number]{width:96px;background:var(--raise);color:inherit;border:1px solid var(--line);border-radius:4px}
+.sess.pc{border-inline-start:3px solid var(--pc)} /* project accent; radar and feed rows keep their kind stripe and get a dot */
+.rdw.pc::before,.it.pc::before{content:"";flex:none;align-self:flex-start;width:8px;height:8px;margin:12px 0 0 8px;border-radius:50%;background:var(--pc)}
+#tg.hot{background:var(--warn);color:#14121f;font-weight:700}
+#mm{position:absolute;right:8px;bottom:8px;z-index:3;display:flex;align-items:flex-end;gap:4px;opacity:.8}
+#mm[hidden],#minimap[hidden]{display:none}
+#minimap{border:1px solid var(--line);border-radius:4px;cursor:crosshair;touch-action:none;max-width:120px;max-height:80px}
+#mm button{font:11px/1 inherit;padding:4px 4px;border:1px solid var(--line);border-radius:4px;background:var(--panel);color:inherit;cursor:pointer}
+@media (max-width:800px){
+  #side{height:100dvh;padding-bottom:env(safe-area-inset-bottom)}
+  #top{padding-top:env(safe-area-inset-top)}
+  .dlg{right:8px}
+}
+/* fun layer (fundom.ts, colonists.ts, palette.ts): quiet, below dialogs (z 6) and above the canvas */
+#colony{position:absolute;inset-inline:0 var(--sw);top:var(--top-h,40px);z-index:3;display:flex;gap:4px;align-items:center;padding:4px 12px;box-sizing:border-box;overflow:hidden;background:color-mix(in srgb,var(--panel) 82%,transparent);border-bottom:1px solid var(--line)}
+.cb{position:relative;flex:none;display:grid;place-items:center;box-sizing:border-box;width:24px;height:24px;padding:0;border:2px solid var(--ring,var(--line));border-radius:50%;background:var(--panel);cursor:pointer}
+.cb canvas{width:18px;height:18px;image-rendering:pixelated;border-radius:50%}
+.cb.working{--ring:var(--good)} .cb.thinking{--ring:var(--acc)} .cb.waiting{--ring:var(--warn)} .cb.blocked{--ring:var(--bad)} .cb.idle{--ring:var(--line)}
+.cb.queued{--ring:var(--mute);border-style:dashed}
+.cb.loop::after{content:"";position:absolute;top:-3px;inset-inline-end:-3px;width:7px;height:7px;border-radius:50%;background:var(--warn);border:1px solid var(--bg)}
+.cb[aria-pressed=true]{box-shadow:0 0 0 2px var(--acc)}
+.cb.more{width:auto;min-width:24px;padding:0 4px;border:0;border-radius:3px;color:var(--mute);cursor:default;font-size:calc(11px * var(--ts,1))}
+#hl{position:absolute;inset-inline-end:calc(var(--sw) + 12px);top:calc(var(--top-h,40px) + var(--cb-h,0px) + 8px);z-index:3;display:flex;flex-direction:column;gap:8px;align-items:flex-end;pointer-events:none}
+.hl,.toast{pointer-events:auto;display:flex;gap:8px;align-items:flex-start;text-align:start;max-width:min(340px,80vw);box-sizing:border-box;background:var(--panel);border:1px solid var(--line);border-inline-start:3px solid var(--glow);border-radius:6px;padding:8px 12px;cursor:pointer;animation:fx-in .25s ease-out}
+.toast{flex-direction:column;align-items:stretch;gap:4px;cursor:default} .toast .tmain{display:flex;gap:8px;align-items:flex-start;background:none;border:0;padding:0;text-align:start;cursor:pointer} .toast .b{align-self:flex-start}
+.hl.done{border-inline-start-color:var(--good)} .hl.blocked{border-inline-start-color:var(--bad)} .hl.partial{border-inline-start-color:var(--warn)}
+.hl.still,.toast.still{animation:fade .15s ease-out}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+.hl .hg,.toast .ti{flex:none;font-size:calc(16px * var(--ts,1));line-height:1.2}
+.tt{display:flex;flex-direction:column;min-width:0;word-break:break-word} .tt span{color:var(--soft)}
+@keyframes fx-in{from{opacity:0;transform:translateX(calc(16px * var(--dir)))}to{opacity:1;transform:none}}
+#fxbl{position:absolute;inset-inline-start:12px;bottom:12px;z-index:3;display:flex;flex-direction:column;gap:8px;align-items:flex-start;pointer-events:none}
+body.tick #fxbl{bottom:38px} body.tick.presenter #caption{bottom:44px}
+#toasts{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+#ticker{position:absolute;inset-inline:0 var(--sw);bottom:0;z-index:3;height:26px;display:flex;align-items:center;padding:0 16px;box-sizing:border-box;overflow:hidden;white-space:nowrap;background:color-mix(in srgb,var(--panel) 88%,transparent);border-top:1px solid var(--line);color:var(--soft)}
+#ticker{visibility:hidden;opacity:0;transition:opacity .4s,visibility .4s} #ticker.show{visibility:visible;opacity:1}
+#ticker span{overflow:hidden;text-overflow:ellipsis}
+body.overlay #colony,body.overlay #toasts,body.overlay #hl{display:none}
+.sp{display:flex;align-items:center;gap:8px;padding:4px 16px;color:var(--acc)} .sp .k:first-child{min-width:78px}
+#spark:empty{display:none} #spark{padding:4px 0;border-bottom:1px solid var(--line)}
+.sess{position:relative} .sess.hasr{padding-inline-end:48px} .sess .rings{position:absolute;inset-inline-end:12px;top:8px}
+.pal{position:fixed;left:50%;right:auto;top:14vh;transform:translateX(-50%);width:min(520px,92vw);z-index:50}
+.pal input{width:100%;box-sizing:border-box;background:var(--raise);border:1px solid var(--line);border-radius:4px;padding:8px 8px}
+.pal ul{list-style:none;margin:8px 0 0;padding:0;max-height:50vh;overflow:auto}
+.pi{padding:8px 8px;border-radius:3px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pi[aria-selected=true]{background:var(--acc);color:var(--bg)}
+.srow>span:first-child{min-width:0}
+/* per-agent tool timeline in the selected card */
+.tcalls ul.tc{list-style:none;margin:4px 0;padding:0;max-height:12em;overflow:auto;font-size:calc(11px * var(--ts,1))}
+.tc li{padding:4px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
+.tc .ok{color:var(--good-ink)} .tc .er{color:var(--bad-ink)}
+#intro .b{color:var(--fg)}
+#filters label{display:inline-flex;align-items:center;gap:4px;min-block-size:24px}
+input[type=range]{min-block-size:24px}
+input[type=number],input[type=text],input:not([type]){box-sizing:border-box;padding:4px;min-block-size:24px}
+.srow{min-block-size:24px}
+#help{width:min(420px,92vw)} #help kbd{white-space:normal}

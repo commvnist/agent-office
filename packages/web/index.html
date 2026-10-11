@@ -1,112 +1,193 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>Agent Office</title>
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<script>
+/* before the app: ?overlay (bare), ?preset=obs[-1080|-720] mean overlay=1; overlay loads Private unless ?streamsafe=0 or the Settings choice is off */
+(function(){try{var q=new URLSearchParams(location.search),ov=/^obs(-(1080|720))?$/.test(q.get("preset")||"")||(q.has("overlay")&&q.get("overlay")!=="0");if(!ov)return;
+var ss=q.get("streamsafe"),st=null;try{st=localStorage.getItem("ao.streamsafe")}catch(e){}
+var off=ss==="0"||(ss===null&&st==="0"),ch=false;
+if(q.get("overlay")!=="1"){q.set("overlay","1");ch=true}
+if(!off&&q.get("private")!=="1"){q.set("private","1");ch=true}
+if(ch)history.replaceState(null,"","?"+q+location.hash)}catch(e){}})();
+</script>
 <style>
-  :root{--bg:#14121f;--panel:#1d1a2e;--line:#322d4d;--fg:#e8e6f5;--mute:#8d89ab;--acc:#8fb7ff;--warn:#ffb86b;--bad:#ff8a80;--good:#5be37d}
+  :root{--bg:#14121f;--panel:#1d1a2e;--line:#322d4d;--fg:#e8e6f5;--mute:#aaa6c6;--acc:#4de8ff;--glow:#4de8ff;--glow2:#ff3ea5;--warn:#ffb86b;--warn-ink:color-mix(in srgb,var(--warn) 35%,var(--fg));--bad:#ff8a80;--bad-ink:color-mix(in srgb,var(--bad) 45%,var(--fg));--good-ink:color-mix(in srgb,var(--good) 45%,var(--fg));--good:#5be37d;--raise:#2a2645;--soft:#cfcde6;--off:#e0524a;--prompt:#ffd84a;--msg:#d58cff;--dir:1}
+  :root[dir=rtl]{--dir:-1}
   body{--sw:var(--swx,340px)}
-  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:13px ui-monospace,Menlo,Consolas,monospace;overflow:hidden}
+  html,body{margin:0;height:100%;height:100dvh;background:var(--bg);color:var(--fg);font-family:var(--font,ui-monospace,Menlo,Consolas,monospace);font-size:calc(13px * var(--ts,1));line-height:var(--lh,normal);letter-spacing:var(--ls,normal);overflow:hidden}
   button,select,input{font:inherit;color:inherit}
   :focus-visible{outline:2px solid var(--acc);outline-offset:1px}
   .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
   [hidden]{display:none!important}
-  #stage{position:absolute;inset:0 var(--sw) 0 0}
+  #stage{position:absolute;inset-block:0;inset-inline:0 var(--sw)}
   #stage canvas{display:block}
-  #top{position:absolute;left:0;right:var(--sw);top:0;height:34px;display:flex;align-items:center;gap:12px;padding:0 14px;background:linear-gradient(#14121fee,#14121f00)}
-  #top b{letter-spacing:.08em}
-  #top .live{width:8px;height:8px;border-radius:50%;background:var(--good);box-shadow:0 0 8px var(--good)}
-  #top .live.off{background:#e0524a;box-shadow:0 0 8px #e0524a}
-  #top .sp{flex:1}
-  #badge{background:var(--warn);color:#14121f;font-weight:700;padding:2px 8px;border-radius:3px;letter-spacing:.06em}
-  #empty{position:absolute;left:0;right:var(--sw);top:42%;text-align:center;color:var(--mute);line-height:1.8;pointer-events:none}
+  #top{position:absolute;inset-inline:0 var(--sw);top:0;min-height:40px;display:flex;align-items:center;gap:16px;padding:env(safe-area-inset-top) 16px 0;padding-inline-end:max(16px,env(safe-area-inset-right));padding-inline-start:max(16px,env(safe-area-inset-left));box-sizing:border-box}
+  /* flat and sleek with one cyan detail: solid bar, hairline, a short lit segment; :root:root keeps this ahead of later chrome.css rules */
+  /* not fully opaque: an opaque header over the canvas makes Chromium drop the canvas' bottom header-height rows from screenshots */
+  :root:root #top{background:color-mix(in srgb,var(--panel) 99%,transparent) linear-gradient(90deg,var(--glow),var(--glow)) left bottom/56px 1px no-repeat;border-bottom:1px solid var(--line);font-size:calc(11px * var(--ts,1));text-transform:uppercase;letter-spacing:.08em}
+  #top .wm{display:inline-flex;align-items:center;gap:8px;font-size:calc(12px * var(--ts,1));font-weight:600;letter-spacing:.16em;white-space:nowrap}
+  #top .wm::before{content:"";width:3px;height:12px;background:var(--glow);box-shadow:0 0 6px var(--glow)}
+  #top .live{width:7px;height:7px;border-radius:1px;background:var(--good);flex:none}
+  #top .live.off{background:var(--off);width:auto;height:auto;padding:0 8px;color:#14121f;font-size:calc(11px * var(--ts,1))}
+  #top .live.off::after{content:"offline"}
+  #stats{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--mute);font-variant-numeric:tabular-nums;letter-spacing:.06em}
+  #stats:empty{display:none}
+  #badge{background:var(--warn);color:#14121f;font-weight:700;padding:4px 8px;border-radius:3px;letter-spacing:.06em;white-space:nowrap}
+  #empty{display:none;position:absolute;inset-inline:0 var(--sw);top:36%;text-align:center;pointer-events:none}
+  #empty .card{display:inline-block;max-width:min(420px,86%);box-sizing:border-box;padding:16px 20px;background:var(--panel);border:1px solid var(--line);border-radius:8px;color:var(--soft);line-height:1.6;pointer-events:auto}
+  #empty h2{margin:0 0 8px;font-size:calc(15px * var(--ts,1));color:var(--fg)}
   #empty code{color:var(--acc)}
-  #caption{position:absolute;left:5%;right:calc(var(--sw) + 5%);bottom:5%;text-align:center;font-size:30px;line-height:1.3;background:#14121fcc;padding:12px 18px;border-radius:8px;pointer-events:none}
-  #caption b{display:block;color:var(--acc);font-size:.7em}
-  #side{position:absolute;right:0;top:0;bottom:0;width:var(--swx,340px);background:var(--panel);border-left:1px solid var(--line);display:flex;transition:transform .2s}
-  #handle{width:6px;margin-left:-3px;cursor:ew-resize;flex:none;background:transparent}
-  #handle:hover,#handle:focus-visible{background:var(--acc)}
+  #empty .b{margin-top:12px}
+  #caption{position:absolute;inset-inline:5% calc(var(--sw) + 5%);bottom:max(12px,env(safe-area-inset-bottom));text-align:center;font-size:30px;line-height:1.3;background:#14121fcc;color:#e8e6f5;padding:12px 18px;border-radius:8px;pointer-events:none}
+  #caption b{display:block;color:#8fb7ff;font-size:.7em}
+  #caption b:empty,#caption span:empty{display:none}
+  #cap-stats{display:none;font-size:.6em;color:#cfcde6}
+  body.presenter #cap-stats{display:block}
+  #side{position:absolute;inset-inline-end:0;top:0;bottom:0;width:var(--swx,340px);padding-inline-end:env(safe-area-inset-right);padding-bottom:env(safe-area-inset-bottom);box-sizing:border-box;background:var(--panel);border-inline-start:1px solid var(--line);display:flex;transition:transform .2s}
+  #handle{position:relative;z-index:2;width:24px;margin-inline:-12px;cursor:ew-resize;flex:none}
+  #handle::after{content:"";position:absolute;inset-block:0;inset-inline:11px;background:transparent}
+  #handle:hover::after,#handle:focus-visible::after{background:var(--acc)}
   #pbody{flex:1;overflow-y:auto;min-width:0}
-  #tools{display:flex;flex-wrap:wrap;gap:4px;padding:8px 10px;border-bottom:1px solid var(--line)}
-  .b{background:#2a2645;border:1px solid var(--line);border-radius:4px;padding:3px 8px;cursor:pointer}
-  .b:hover{border-color:var(--acc)} .b[aria-pressed=true]{background:var(--acc);color:#14121f}
-  .b.sm{padding:0 6px;font-size:11px}
-  #tg{position:absolute;right:8px;top:6px;z-index:5}
-  body:not(.collapsed) #tg{right:calc(var(--swx,340px) + 8px)}
-  .note{padding:2px 12px;color:var(--mute);font-size:11px}
-  section h2,#legend summary{margin:0;padding:10px 14px;font-size:12px;letter-spacing:.1em;color:var(--mute);border-bottom:1px solid var(--line)}
-  #legend summary{cursor:pointer}
-  #radar.hot h2{color:var(--warn)}
-  .rd{display:block;width:100%;text-align:left;background:none;border:0;border-left:3px solid var(--warn);padding:7px 14px;cursor:pointer}
-  .rd.blocked{border-color:var(--bad)} .rd.stuck{border-color:var(--mute)}
-  .rd:hover{background:#2a2645}
-  .k{color:var(--mute)} .pad{padding:8px 14px}
-  #banner .warn,#explain{padding:8px 14px;border-bottom:1px solid var(--line);color:var(--warn);line-height:1.5}
-  #explain{color:var(--fg)}
-  #card{padding:10px 14px;border-bottom:1px solid var(--line);line-height:1.5}
-  #card .n{font-size:15px;font-weight:700}
-  #card .full{margin-top:6px} #card .tx{white-space:pre-wrap;word-break:break-word;max-height:9em;overflow:auto;color:#cfcde6}
-  #sessions .sess{padding:8px 14px;border-bottom:1px solid var(--line);line-height:1.5}
-  .sname{background:none;border:0;padding:0;font-weight:700;cursor:pointer;text-decoration:underline;color:var(--acc)}
-  .badge{display:inline-block;margin-right:4px;padding:0 6px;border:1px solid var(--line);border-radius:8px;font-size:11px;color:var(--mute)}
-  .badge.warn{color:var(--warn);border-color:var(--warn)}
-  .cwd{display:flex;gap:6px;align-items:center;word-break:break-all}
+  #tools{display:flex;flex-wrap:wrap;gap:4px;padding:8px 12px;border-bottom:1px solid var(--line)}
+  .b{background:var(--raise);border:1px solid var(--line);border-radius:2px;padding:4px 8px;cursor:pointer}
+  .b:hover{border-color:var(--glow);box-shadow:0 0 0 1px color-mix(in srgb,var(--glow) 35%,transparent)} .b[aria-pressed=true]{background:var(--acc);color:var(--bg)}
+  .b.sm{padding:0 8px;font-size:calc(11px * var(--ts,1));min-block-size:24px;min-inline-size:24px}
+  #tg{position:absolute;inset-inline-end:8px;top:6px;z-index:5}
+  body:not(.collapsed) #tg{inset-inline-end:calc(var(--swx,340px) + 8px)}
+  .note{padding:4px 12px;color:var(--mute);font-size:calc(11px * var(--ts,1));text-wrap:balance}
+  .cnt{font-weight:400}
+  section h2,.sec>summary,#legend summary{margin:0;padding:12px 16px;font-size:calc(12px * var(--ts,1));letter-spacing:.1em;color:var(--mute);border-bottom:1px solid var(--line)}
+  .sec>summary,#legend summary{cursor:pointer}
+  #need{position:sticky;top:0;z-index:2;display:block;inline-size:100%;box-sizing:border-box;text-align:start;background:var(--warn);color:#14121f;border:0;padding:8px 16px;font-weight:700;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #need.blocked{background:var(--bad)}
+  #radar.hot h2{color:var(--warn-ink)}
+  .rdw{display:flex;border-inline-start:3px solid var(--warn)}
+  .rdw.blocked{border-color:var(--bad)} .rdw.stuck{border-color:var(--mute)}
+  .rdw.t1{background:#ffb86b14} .rdw.t2{background:#ffb86b2e}
+  .rd{display:block;flex:1;min-width:0;text-align:start;background:none;border:0;padding:7px 16px;cursor:pointer}
+  .rd .why{display:block;color:var(--soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rd:hover{background:var(--raise)}
+  .rdw .b{align-self:center;margin-inline-end:8px}
+  .k{color:var(--mute)} .pad{padding:8px 16px}
+  #banner .warn,#intro{padding:8px 16px;border-bottom:1px solid var(--line);color:var(--warn-ink);line-height:1.5}
+  #intro{color:var(--mute);font-size:calc(12px * var(--ts,1))}
+  #card{padding:12px 16px;border-bottom:1px solid var(--line);line-height:1.5}
+  #card .n{font-size:calc(15px * var(--ts,1));font-weight:700}
+  #card .al{margin:8px 0;padding:8px 8px;border-inline-start:3px solid var(--warn);background:#ffffff0d;font-weight:600} #card .al.blocked{border-color:var(--bad)}
+  #card .full{margin-top:8px} #card .tx{white-space:pre-wrap;word-break:break-word;max-height:9em;overflow:auto;color:var(--soft)}
+  #card summary{cursor:pointer;color:var(--mute)}
+  .sess{padding:8px 16px;border-bottom:1px solid var(--line);line-height:1.5}
+  .sess .pr{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--soft)}
+  .sess .burn.hot{color:var(--warn-ink);font-weight:700}
+  .sname{display:inline-flex;align-items:center;min-block-size:24px;background:none;border:0;padding:0;font-weight:700;cursor:pointer;text-decoration:underline;color:var(--acc)}
+  .sname[aria-pressed=true]{outline:1px solid var(--acc)}
+  .badge{display:inline-block;margin-inline-end:4px;padding:0 8px;border:1px solid var(--line);border-radius:8px;font-size:calc(11px * var(--ts,1));color:var(--mute)}
+  .badge.warn{color:var(--warn-ink);border-color:var(--warn)}
+  .cwd{display:flex;gap:8px;align-items:center;word-break:break-all}
   #roster{list-style:none;margin:0;padding:4px 0}
-  .r{display:block;width:100%;text-align:left;background:none;border:0;border-left:3px solid transparent;padding:4px 14px;cursor:pointer}
-  .r:hover{background:#2a2645} .r[aria-pressed=true]{border-color:var(--acc);background:#2a2645}
-  .r.waiting{color:var(--warn)} .r.blocked{color:var(--bad)} .r.queued,.r.idle{color:var(--mute)}
-  #filters{display:flex;flex-wrap:wrap;gap:4px;padding:6px 10px;border-bottom:1px solid var(--line)}
-  #filters select{background:#2a2645;border:1px solid var(--line);border-radius:4px;max-width:120px}
+  .rdw.loop{border-color:var(--warn)} #card .lp,.r .lp{color:var(--warn-ink);font-weight:700} .r .lp:empty{display:none}
+  #roster .gh{display:block;width:100%;text-align:start;background:none;border:0;border-top:1px solid var(--line);padding:8px 16px;font:inherit;font-size:calc(12px * var(--ts,1));letter-spacing:.1em;text-transform:uppercase;color:var(--mute);cursor:pointer}
+  #files{padding:4px 0} .hf{display:flex;gap:8px;align-items:baseline;width:100%;text-align:start;background:none;border:0;border-inline-start:3px solid var(--pc,transparent);padding:4px 16px;cursor:pointer;min-width:0}
+  .hf:hover{background:var(--raise)} .hf .dir{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap} .hf .n{color:var(--soft)}
+  #roster .h{padding:8px 16px 4px;font-size:calc(12px * var(--ts,1));color:var(--mute);letter-spacing:.1em;text-transform:uppercase}
+  .r{display:block;width:100%;text-align:start;background:none;border:0;border-inline-start:3px solid transparent;padding:4px 16px;cursor:pointer}
+  .r .sub{display:block;font-size:calc(11px * var(--ts,1));color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .r:hover,.r.hov,.it.hov{background:var(--raise)} .r[aria-pressed=true]{border-color:var(--acc);background:var(--raise)}
+  .r.waiting{color:var(--warn-ink)} .r.blocked{color:var(--bad-ink)} .r.queued,.r.idle{color:var(--mute)}
+  #filters{display:flex;flex-wrap:wrap;gap:4px;align-items:center;padding:8px 12px;border-bottom:1px solid var(--line)}
+  #filters select{background:var(--raise);border:1px solid var(--line);border-radius:4px;max-width:120px;min-block-size:24px}
   #feed{max-height:45vh;overflow:auto;padding:4px 0}
-  #feed h3{margin:6px 14px 2px;font-size:11px;color:var(--mute);letter-spacing:.08em}
-  .it{display:flex;border-left:3px solid transparent;animation:in .25s ease-out}
-  .it .row{flex:1;text-align:left;background:none;border:0;padding:6px 14px;cursor:pointer;line-height:1.45;min-width:0}
-  .it .row:hover{background:#2a2645}
-  .it .who{color:var(--acc)} .it .t{color:var(--mute);font-size:11px;float:right}
-  .it .tx{color:#cfcde6;display:block;margin-top:2px;word-break:break-word}
-  .it .mute{align-self:center;margin-right:6px;opacity:.6}
-  .it.delegate{border-color:#8fb7ff} .it.report{border-color:#5be37d} .it.prompt{border-color:#ffd84a} .it.message{border-color:#d58cff} .it.done{border-color:#5be37d;color:var(--mute)}
-  @keyframes in{from{opacity:0;transform:translateX(10px)}to{opacity:1;transform:none}}
-  .lg{padding:5px 14px;line-height:1.4} .lg b{display:block;color:var(--fg)} .lg span{color:var(--mute)}
-  #settings{position:absolute;right:calc(var(--swx,340px) + 8px);top:40px;z-index:6;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:10px;width:240px;display:flex;flex-direction:column;gap:8px}
+  #feed h3{margin:8px 16px 4px;font-size:calc(12px * var(--ts,1));color:var(--mute);letter-spacing:.1em;text-transform:uppercase}
+  #feed .gap{margin:4px 16px;text-align:center;color:var(--mute);font-size:calc(11px * var(--ts,1));border-top:1px dashed var(--line)}
+  .it{display:flex;border-inline-start:3px solid transparent;animation:in .25s ease-out}
+  .it .row{flex:1;text-align:start;background:none;border:0;padding:8px 16px;cursor:pointer;line-height:1.45;min-width:0}
+  .it .row:hover{background:var(--raise)}
+  .it .who{color:var(--acc)} .it .t{color:var(--mute);font-size:calc(11px * var(--ts,1));float:inline-end}
+  .it .tx{color:var(--soft);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden;margin-top:4px;word-break:break-word}
+  .it.open .tx{-webkit-line-clamp:unset;display:block}
+  .it .more,.it .mute{align-self:center;margin-inline-end:8px}
+  .it .mute{opacity:.75}
+  .it.delegate{border-color:var(--acc)} .it.report{border-color:var(--good)} .it.prompt{border-color:var(--prompt)} .it.message{border-color:var(--msg)} .it.done{border-color:var(--good);color:var(--mute)}
+  @keyframes in{from{opacity:0;transform:translateX(calc(10px * var(--dir)))}to{opacity:1;transform:none}}
+  .lg{padding:4px 16px;line-height:1.4} .lg b{display:block;color:var(--fg)} .lg span{color:var(--mute)}
+  #settings{position:absolute;inset-inline-end:calc(var(--swx,340px) + 8px);top:40px;z-index:6;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:12px;width:240px;display:flex;flex-direction:column;gap:8px}
   .srow{display:flex;justify-content:space-between;align-items:center;gap:8px}
-  #modebar .rp{padding:8px 10px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;border-bottom:1px solid var(--line)}
+  #modebar .rp{padding:8px 12px;display:flex;flex-wrap:wrap;gap:4px;align-items:center;border-bottom:1px solid var(--line)}
   .rp-ctl{display:flex;flex-wrap:wrap;gap:4px;align-items:center;width:100%} .rp-ctl input{flex:1;min-width:100px}
-  select{background:#2a2645;border:1px solid var(--line);border-radius:4px}
+  select{background:var(--raise);border:1px solid var(--line);border-radius:4px;min-block-size:24px}
+  input[type=range]{block-size:24px;margin:0}
+  input[type=checkbox]{margin:4px}
+  summary{min-block-size:24px}
   /* privacy: blur free text in the DOM too (the canvas is blanked by ?private=1) */
-  body.priv #card .tx,body.priv #card .k+*,body.priv .it .tx,body.priv .cwd .k,body.priv #sessions .k{filter:blur(5px)}
-  body.collapsed{--sw:0px} body.collapsed #side{transform:translateX(100%);border-left:0}
-  body.presenter #side,body.presenter #tools,body.overlay #side,body.overlay #top,body.overlay #empty,body.overlay #tg{display:none}
-  body.presenter,body.overlay{--sw:0px}
+  body.priv #card .tx,body.priv #card .k+*,body.priv .it .tx,body.priv .cwd .k,body.priv #sessions .k,body.priv .rd .why,body.priv .sess .pr,body.priv .r .sub,body.priv .trow .tl,body.priv .tile,body.priv #files .hf{filter:blur(5px)}
+  body.collapsed{--sw:0px} body.collapsed #side{transform:translateX(calc(100% * var(--dir)));border-inline-start:0}
+  body.presenter #side,body.presenter #tools,body.presenter #top,body.overlay #side,body.overlay #top,body.overlay #empty,body.overlay #tg{display:none}
+  body.presenter,body.overlay,body.kiosk{--sw:0px}
+  body.kiosk #side,body.kiosk #top,body.kiosk #tg,body.kiosk #colony{display:none}
+  body.obs #ticker{display:none}
+  body.obs-fixed #stage{inset:0 auto auto 0;width:var(--ow);height:var(--oh)}
   body.presenter #tg{display:none}
+  #px{position:fixed;top:10px;inset-inline-end:10px;z-index:30;opacity:.55}
+  #px:hover,#px:focus-visible{opacity:1}
+  body.presenter #px{display:block}
   body.overlay,body.overlay html{background:transparent}
   body.overlay #caption{font-size:36px}
   .b:disabled{opacity:.45;cursor:not-allowed}
   @media (max-width:800px){
     body,body.collapsed{--sw:0px}
     #side{width:min(var(--swx,340px),92vw);box-shadow:-8px 0 24px #0008}
-    body:not(.collapsed) #tg{right:min(var(--swx,340px),92vw)}
-    #settings{right:8px}
+    body:not(.collapsed) #tg{inset-inline-start:8px;inset-inline-end:auto}
+    #tg{white-space:nowrap}
+    #settings{inset-inline-end:8px}
+    #top{padding-inline-end:170px;gap:8px}
+    #top b{flex:none;overflow:visible}
+    .wm2{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+    #top .wm{font-size:calc(14px * var(--ts,1))}
+  }
+  @media (pointer:coarse){
+    .b,.b.sm,#filters select,.r,.rd,.sname{min-block-size:44px;min-inline-size:44px}
+    #handle{width:24px;margin-inline-start:-12px}
+  }
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important} .it,.hl,.toast{animation:fade .15s ease-out!important}} /* no movement, keep a fade (A16) */
+  @media (prefers-contrast:more){:root{--line:#8d86bd;--mute:#d6d3ec;--soft:#efeefa}}
+  @media (forced-colors:active){
+    .b[aria-pressed=true],.r[aria-pressed=true]{outline:2px solid Highlight}
+    .rdw,.it,.r{border-inline-start-color:CanvasText}
+    #top .live{forced-color-adjust:none}
+    #need{border:1px solid CanvasText}
   }
 </style></head>
 <body>
 <div id="stage"></div>
-<div id="top"><span class="live" id="live"></span><b>AGENT OFFICE</b><span id="stats"></span><span id="badge" hidden></span></div>
+<div id="top"><span class="live" id="live" role="img" aria-label="connected" title="connected"></span><b class="wm">AGENT<span class="wm2"> OFFICE</span></b><span id="stats" role="img"></span><span id="badge" hidden></span><button id="stop-sample" class="b sm" type="button" hidden>Stop sample</button></div>
 <button id="tg" class="b" type="button" aria-controls="side" aria-expanded="true">Hide panel</button>
-<div id="empty">The office is empty.<br>Start Claude Code with <code>--plugin-dir plugin</code> and it moves in.</div>
-<div id="caption" hidden aria-hidden="true"></div>
+<button id="px" class="b" type="button" hidden>Exit presenter (Esc / P)</button>
+<div id="empty"><div class="card" role="region" aria-label="Getting started"><h2>The office is empty</h2>
+  Agent Office shows your Claude Code sessions as a small office: each session is a lead at the door, subagents sit at desks.<br>
+  Run <code>npm run setup</code> once, then start Claude Code.<br>
+  <button id="empty-sample" class="b" type="button">Sample</button></div></div>
+<div id="colony" hidden role="group" aria-label="Agents"></div>
+<div id="hl"></div>
+<div id="fxbl"><div id="toasts" aria-live="polite"></div></div>
+<div id="ticker" role="status" aria-live="off"><span></span></div>
+<div id="caption" hidden aria-hidden="true"><small id="cap-stats"></small><b id="cap-who"></b><span id="cap-text"></span></div>
 <div id="live-region" class="sr" role="status" aria-live="polite"></div>
+<div id="alert-region" class="sr" role="alert" aria-live="assertive"></div>
 <div id="settings" role="dialog" aria-label="Settings" hidden></div>
 <aside id="side" aria-label="Agent Office panel">
   <div id="handle" role="separator" aria-orientation="vertical" aria-label="Resize panel (arrow keys)" tabindex="0"></div>
   <div id="pbody">
+    <button id="need" type="button" hidden></button>
     <div id="tools" role="toolbar" aria-label="Tools"></div>
     <div id="modebar"></div>
     <div id="banner" role="status" hidden></div>
-    <div id="explain" hidden></div>
-    <section id="radar" aria-label="Needs you"><h2>NEEDS YOU</h2><div id="radar-list" role="list"></div></section>
+    <section id="radar" aria-label="Needs you"><h2>NEEDS YOU <span class="cnt" id="n-radar"></span></h2><div id="radar-opts" class="note"></div><div id="radar-list" role="list"></div></section>
+    <div id="intro" hidden>Each Claude Code session is a lead at the door; subagents sit at desks. Speech bubbles are prompts, delegations and reports. Gold ring = waiting for you, red = blocked. Click anyone to inspect them. NEEDS YOU lists blocked agents, sessions waiting on a permission or input, and sessions silent too long.</div>
     <section id="card-sec" aria-label="Selected" hidden><h2>SELECTED</h2><div id="card" aria-live="off"></div></section>
-    <section aria-label="Sessions"><h2>SESSIONS</h2><div id="sessions"></div></section>
-    <section aria-label="Agents"><h2>AGENTS</h2><ul id="roster" role="list" aria-label="Agents"></ul></section>
-    <section aria-label="Activity"><h2>ACTIVITY</h2><div id="filters"></div><div id="feed" role="list" aria-label="Activity feed"></div></section>
+    <details class="sec" id="sec-sessions" open><summary>SESSIONS <span class="cnt" id="n-sess"></span></summary><div id="spark"></div><div id="sessions"></div></details>
+    <details class="sec" id="sec-agents" open><summary>AGENTS <span class="cnt" id="n-agents"></span></summary><ul id="roster" role="list" aria-label="Agents"></ul></details>
+    <details class="sec" id="sec-files" open><summary>HOT FILES <span class="cnt" id="n-files"></span></summary><div id="files"></div></details>
+    <details class="sec" id="sec-feed" open><summary>ACTIVITY <span class="cnt" id="n-feed"></span></summary><div id="filters"></div><div id="feed" role="list" aria-label="Activity feed"></div></details>
     <details id="legend"></details>
   </div>
 </aside>

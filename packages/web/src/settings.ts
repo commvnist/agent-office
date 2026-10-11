@@ -1,21 +1,43 @@
 // Visual settings + pure motion/text/bubble helpers (no pixi/DOM so they are testable under node).
 //
-// API for main.ts (all additive; nothing here is required for the old behaviour):
+// API for main.ts:
 //   settings.reducedMotion / settings.textScale  mutable; call actor.refreshText() on every actor after changing textScale
 //   setTextScale(n)                              clamps to 0.8..2
 //   burstAllowed()                               false under reduced motion: skip confetti/puff bursts
-//   theme.ts: THEMES, applyTheme(t), parseTheme(json), setRoles(names), roleColor(role), theme()
-//             after applyTheme the scene must be rebuilt (same path as the band-count rebuild) and actors' looks refreshed via lookFor
+//   theme.ts: setRoles(names), roleColor(role), theme() (one built-in palette)
 //   actor.ts: Actor.setAlert("waiting"|"blocked"|null), setHover(b), setSelected(b), refreshText(), idleStroll(tile, ms),
 //             speak(text, kind, ms, badge?) with kind "blocked" and badge "prompt"|"delegate"|"report"|"tool"|"message",
 //             Step {k:"say", badge?}, layoutBubbles(actors) (call after every actor.syncUi each frame)
 //   Scene: constructor registers zone roles via setRoles; Scene.night is the overlay (UI layer sits above it already)
 //   Decorative effects (puffs, confetti) must never carry text; only hook-derived bubbles carry text + a badge.
 
+export type FollowMode = "off" | "busiest";
+const KEY = "agent-office.settings";
+const saved = (() => { try { return JSON.parse(localStorage.getItem(KEY) ?? "{}") ?? {}; } catch { return {}; } })();
 export const settings = {
   reducedMotion: typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches,
   textScale: 1,
+  /** WCAG 2.2.2 pause: stops ambient loops only (dust, steam, bubbles, breath, quirks, strolls); real activity still animates. */
+  ambientPaused: saved.ambientPaused === true,
+  /** Camera eases to the busiest agent; a manual pan/zoom pauses it for FOLLOW_PAUSE_MS. */
+  follow: (saved.follow === "busiest" ? "busiest" : "off") as FollowMode,
 };
+const persist = () => { try { localStorage.setItem(KEY, JSON.stringify({ ambientPaused: settings.ambientPaused, follow: settings.follow })); } catch { /* storage may be blocked */ } };
+// Boot cleanup: keys of the removed fun-level/CRT/auto-focus/theme options.
+if (["funLevel", "crt", "autoFocusAlerts", "attentionPulse"].some((k) => k in saved)) persist();
+try { localStorage.removeItem("ao.theme"); } catch { /* storage may be blocked */ }
+export const setFollow = (m: FollowMode) => { if (m === "off" || m === "busiest") { settings.follow = m; persist(); } };
+export const setAmbientPaused = (b: boolean) => { settings.ambientPaused = b; persist(); };
+/** Ambient loops run only when neither reduced motion nor the pause control is on. */
+export const ambientOn = () => !settings.reducedMotion && !settings.ambientPaused;
+
+/** Freeze: main.ts stops advancing animation and holds snapshots while `on`; `since` is the wall time it froze (the clock the scene keeps showing). */
+export const frozen = { on: false, since: 0 };
+export function setFrozen(on: boolean, now = Date.now()) {
+  if (frozen.on === on) return;
+  frozen.on = on;
+  frozen.since = on ? now : 0;
+}
 export const burstAllowed = () => !settings.reducedMotion;
 export const setTextScale = (n: number) => { settings.textScale = Math.max(0.8, Math.min(2, Number.isFinite(n) ? n : 1)); };
 

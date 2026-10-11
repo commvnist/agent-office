@@ -54,8 +54,15 @@ test("auth, host and origin checks; cookie grants read access", async () => {
   assert.ok(st.state.sessions.s1);
   assert.deepEqual(Object.keys(st.config.roles).slice(-3), ["devops", "docs-writer", "security-auditor"]);
   assert.match((await call(d.port, "/status", { headers: { "x-agent-office-token": d.token } })).body, /^\d+ working, \d+ waiting, \d+ queued\n$/);
+  const tk = { "x-agent-office-token": d.token };
+  const sj = JSON.parse((await call(d.port, "/status?format=json&session=proj", { headers: tk })).body);
+  assert.deepEqual([sj.events, sj.sessions.map((x: any) => x.project)], [1, ["proj"]]);
+  assert.deepEqual(sj.desks, { used: 0, total: 64, cap: 64 });
+  assert.equal(JSON.parse((await call(d.port, "/outcomes?days=1", { headers: tk })).body).days[0].sessions, 1);
   const h = JSON.parse((await call(d.port, "/history?limit=5", { headers: { "x-agent-office-token": d.token } })).body);
   assert.equal(h.events[0].type, "session_start");
+  assert.equal(JSON.parse((await call(d.port, "/history?until=0", { headers: tk })).body).events.length, 0);
+  assert.equal(JSON.parse((await call(d.port, "/history?until=abc", { headers: tk })).body).events.length, 1);
   const priv = await call(d.port, "/state?private=1", { headers: { "x-agent-office-token": d.token } });
   assert.equal(JSON.parse(priv.body).privacy, true);
 });
@@ -73,13 +80,12 @@ test("bad input never kills the daemon", async () => {
 test("seat enforcement denies, then allows after 3 denials", async () => {
   const d = await boot({ roles: { qa: { agent: "qa-engineer", count: 1 } }, enforceSeats: true });
   await post(d, { hook_event_name: "SessionStart", session_id: "s" });
-  await post(d, { hook_event_name: "PreToolUse", session_id: "s", tool_name: "Agent", tool_input: { subagent_type: "qa-engineer", description: "x" } });
-  await post(d, { hook_event_name: "SubagentStart", session_id: "s", agent_id: "a1", agent_type: "qa-engineer" });
+  for (let i = 0; i < 64; i++) await post(d, { hook_event_name: "SubagentStart", session_id: "s", agent_id: `a${i}`, agent_type: i % 2 ? "qa-engineer" : "general-purpose" });
   const spawnTry = () => post(d, { hook_event_name: "PreToolUse", session_id: "s", tool_name: "Agent", tool_input: { subagent_type: "qa-engineer", description: "y" } });
   for (let i = 0; i < 3; i++) {
     const o = JSON.parse((await spawnTry()).body).hookSpecificOutput;
     assert.equal(o.permissionDecision, "deny");
-    assert.match(o.permissionDecisionReason, /All qa seats are busy/);
+    assert.match(o.permissionDecisionReason, /office is full/);
   }
   assert.equal((await spawnTry()).body, "");
 });

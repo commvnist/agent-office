@@ -46,13 +46,32 @@ export function validateConfig(raw: unknown, defaultRoles?: OfficeConfig["roles"
     if (typeof raw[k] !== "boolean") throw new Error(`${k} must be a boolean`);
     cfg[k] = raw[k] as boolean;
   }
-  if (raw.theme !== undefined) {
+  if (raw.theme !== undefined) { // ignored (one built-in look); still validated so old files keep loading
     if (typeof raw.theme !== "string" || !/^[\w-]{1,40}$/.test(raw.theme)) throw new Error("theme must match ^[\\w-]{1,40}$");
     cfg.theme = raw.theme;
   }
   if (raw.idleTtlMinutes !== undefined) {
     if (!int(raw.idleTtlMinutes, 1, 1440)) throw new Error("idleTtlMinutes must be an integer 1-1440");
-    (cfg as OfficeConfig & { idleTtlMinutes?: number }).idleTtlMinutes = raw.idleTtlMinutes as number;
+    cfg.idleTtlMinutes = raw.idleTtlMinutes as number;
+  }
+  if (raw.spendAlarmTokens !== undefined) {
+    if (!int(raw.spendAlarmTokens, 0, 1e9)) throw new Error("spendAlarmTokens must be an integer 0-1000000000");
+    cfg.spendAlarmTokens = raw.spendAlarmTokens as number;
   }
   return cfg;
+}
+
+const KNOWN = ["roles", "parallelism", "enforceSeats", "privacy", "theme", "idleTtlMinutes", "spendAlarmTokens"];
+const ROLE_KEYS = ["agent", "count", "names", "overflow"];
+
+/** Paths of keys validateConfig would silently drop (typos like "paralelism"). Non-fatal; cap 5. */
+export function unknownKeys(raw: unknown): string[] {
+  if (!isObj(raw)) return [];
+  const out = Object.keys(raw).filter((k) => !KNOWN.includes(k));
+  if (isObj(raw.roles)) for (const [k, r] of Object.entries(raw.roles)) {
+    if (!isObj(r)) continue;
+    out.push(...Object.keys(r).filter((x) => !ROLE_KEYS.includes(x)).map((x) => `roles.${k}.${x}`));
+    if (isObj(r.overflow)) out.push(...Object.keys(r.overflow).filter((x) => x !== "max" && x !== "names").map((x) => `roles.${k}.overflow.${x}`));
+  }
+  return out.slice(0, 5);
 }

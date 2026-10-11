@@ -1,10 +1,10 @@
 export type RoleConfig = {
   /** Subagent type (agents/*.md name) that maps to this role. */
   agent: string;
-  /** Permanent desks. */
+  /** Core-team slots (named seats); further workers of this role are temps. Does not limit where or how many may sit. */
   count: number;
   names?: string[];
-  /** Extra seats (laptop, folding table, ...) once permanent desks are full; beyond max agents queue. */
+  /** Temp naming ("Temp 1", ...) once the core team is full; `max` is also a hint for the initial office size. */
   overflow?: { max: number; names?: string[] };
 };
 
@@ -12,13 +12,27 @@ export type OfficeConfig = {
   roles: Record<string, RoleConfig>;
   /** How hard the lead is nudged to fan out: "off" = no nudge, "auto" = only when worthwhile (default). */
   parallelism?: "off" | "auto" | "aggressive";
-  /** Deny Agent-tool spawns when no seat (incl. overflow) is free instead of queueing visually. */
+  /** Deny Agent-tool spawns when no desk is free (office at MAX_DESKS) instead of queueing visually. */
   enforceSeats?: boolean;
   /** Hide prompt/tool text in the stream (tool names and structure only). */
   privacy?: boolean;
-  /** Theme pack name (from ~/.agent-office/themes/<name>.json), default built-in. */
+  /** Ignored: there is one built-in look. Still parsed so old config files keep working. */
   theme?: string;
+  /** Minutes of silence (1-1440, default 45) before an idle session is swept. */
+  idleTtlMinutes?: number;
+  /** Lead-session token total (see usageTotalOf) at which the client raises a spend alarm; 0 or absent = off. Validated 0..1e9. */
+  spendAlarmTokens?: number;
 };
+
+/*
+ * Web contract (derived from hook tool events only; observer-only, read-side):
+ * - Agent.loop / Session.loop: { tool, n } while the same tool+detail repeated n >= LOOP_MIN (4) times in a row; cleared on a different call, agent stop, or lead turn end.
+ *   (loopKey/loopN are reducer bookkeeping, not for display.)
+ * - Session.files: edit counts per file path (Edit/Write/MultiEdit/NotebookEdit), <= 50 paths. Blanked (undefined) in privacy mode.
+ * - Session.toolCounts: calls per tool name, <= 24 names.
+ * - Helpers from core: hotFiles(state, session?, limit=8) -> {path,count,session}[]; topTools(state, n=5) -> {tool,count}[]; usageTotalOf(session) -> number.
+ * - OfficeConfig.spendAlarmTokens: compare usageTotalOf(session) against it; 0/absent = off.
+ */
 
 /** Summed assistant token usage from a transcript (local telemetry only). */
 export type Usage = { input: number; output: number; cacheRead: number; cacheCreate: number };
@@ -60,8 +74,8 @@ export type Interaction = {
   text: string;
   /** delegate: was the spawned agent matched to exactly one outstanding delegation. */
   confidence?: "exact" | "guess";
-  /** report: parsed from a DONE:/BLOCKED: prefix, "empty" for no message; absent when unrecognized. */
-  outcome?: "done" | "blocked" | "empty";
+  /** report: parsed from a DONE:/BLOCKED:/PARTIAL: prefix, "empty" for no message; absent when unrecognized. A partial report ends its task as "done" (task status has no partial); read the outcome here. */
+  outcome?: "done" | "blocked" | "partial" | "empty";
   /** report only. */
   stoppedAt?: number;
   durationMs?: number;
@@ -71,7 +85,7 @@ export type Interaction = {
 };
 
 export type Seat = {
-  id: string; // "qa#0" permanent, "qa+0" overflow
+  id: string; // global desk id "d<N>" (see deskPos)
   role: string;
   kind: "permanent" | "overflow";
   index: number; // overflow index doubles as the visual tier (0 laptop, 1 folding table, ...)
@@ -98,6 +112,9 @@ export type Agent = {
   errors?: number;
   lastError?: string;
   lastDurationMs?: number; // duration of the last finished tool
+  loop?: { tool: string; n: number };
+  loopKey?: string;
+  loopN?: number;
 };
 
 export type Session = {
@@ -125,6 +142,11 @@ export type Session = {
   lastDurationMs?: number;
   /** Token usage of the lead's transcript as of the last turn end. */
   usage?: Usage;
+  loop?: { tool: string; n: number };
+  loopKey?: string;
+  loopN?: number;
+  files?: Record<string, number>;
+  toolCounts?: Record<string, number>;
 };
 
 export type Task = {

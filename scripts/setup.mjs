@@ -3,9 +3,10 @@
 // Installs the plugin through Claude Code's own `claude plugin` commands (plugin management only; it never prompts
 // Claude), records where the daemon lives so hooks can auto-start it, builds the web client, and starts the daemon.
 import { spawnSync, spawn } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, dirname } from "node:path";
+import { installedVersion } from "./plugin-version.mjs";
 import { fileURLToPath } from "node:url";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -15,10 +16,12 @@ const dry = process.argv.includes("--dry-run"), uninstall = process.argv.include
 
 const [major, minor] = process.versions.node.split(".").map(Number);
 if (major < 22 || (major === 22 && minor < 6)) {
-  console.error(`agent-office needs Node 22.6 or newer (found ${process.versions.node}).`);
+  console.error(`agent-office needs Node 22.6 or newer (found ${process.versions.node}). Upgrade with nvm (nvm install 22), fnm (fnm install 22) or from nodejs.org.`);
   process.exit(1);
 }
 
+// A custom-port daemon records its port in HOME/port; env wins, then that file, then the default.
+const port = () => process.env.AGENT_OFFICE_PORT ?? (() => { try { return readFileSync(join(HOME, "port"), "utf8").trim() || 4747; } catch { return 4747; } })();
 const say = (ok, msg) => console.log(`${ok ? "ok  " : "..  "} ${msg}`);
 const run = (cmd, args, opts = {}) => {
   if (dry) { console.log(`     would run: ${cmd} ${args.join(" ")}`); return { status: 0, stdout: "" }; }
@@ -43,6 +46,8 @@ if (uninstall) {
     plugin(["marketplace", "remove", MARKET]);
     say(true, "plugin and marketplace removed");
   }
+  // Without this a still-loaded plugin's hooks would relaunch the daemon from the recorded path.
+  if (!dry) rmSync(join(HOME, "daemon"), { force: true });
   run(process.execPath, [join(ROOT, "scripts/office.mjs"), "stop"], { stdio: "inherit" });
   console.log(`State in ${HOME} was left in place (delete it with: node scripts/office.mjs uninstall --purge).`);
   process.exit(0);
@@ -50,9 +55,10 @@ if (uninstall) {
 
 // 1. web client (the daemon serves it)
 if (!existsSync(join(ROOT, "packages/web/dist/index.html"))) {
+  if (!existsSync(join(ROOT, "node_modules"))) { console.error("dependencies are not installed: run `npm install` in the repo, then rerun setup"); process.exit(1); }
   say(false, "building the web client (npm run build:web)");
   const r = run("npm", ["run", "build:web"], { stdio: "inherit", shell: process.platform === "win32" });
-  if (r.status !== 0) { console.error("web build failed; run `npm install` first"); process.exit(1); }
+  if (r.status !== 0) { console.error("web build failed (see the output above); fix it and run `npm run build:web`"); process.exit(1); }
 } else say(true, "web client built");
 
 // 2. tell the hook forwarder where the daemon is (an installed plugin lives in Claude Code's plugin cache)
@@ -70,10 +76,15 @@ if (hasClaude()) {
   if (listed(["list"]).includes(PLUGIN)) say(true, "plugin already installed (updating from this checkout)");
   const r = plugin(["install", PLUGIN, "--scope", "user"]);
   say(r.status === 0, r.status === 0 ? "plugin installed" : `plugin install failed: ${(r.stderr || r.stdout || "").trim()}`);
+  // A cached copy can stay old after "install": compare with this checkout and ask for an update once.
+  const want = JSON.parse(readFileSync(join(ROOT, "plugin/.claude-plugin/plugin.json"), "utf8")).version;
+  let have = installedVersion(listed(["list"]));
+  if (!dry && have && have !== want) { plugin(["update", PLUGIN]); have = installedVersion(listed(["list"])); }
+  if (!dry && have) say(have === want, have === want ? `plugin v${have} matches this checkout` : `installed plugin is v${have}, checkout is v${want}: run /plugin update in Claude Code, then /reload-plugins`);
 }
 
 // 4. start the daemon now (hooks would also start it at the next session)
-const up = async () => { try { return (await fetch(`http://127.0.0.1:${process.env.AGENT_OFFICE_PORT ?? 4747}/health`, { signal: AbortSignal.timeout(800) })).ok; } catch { return false; } };
+const up = async () => { try { return (await fetch(`http://127.0.0.1:${port()}/health`, { signal: AbortSignal.timeout(800) })).ok; } catch { return false; } };
 if (!dry && !(await up())) {
   spawn(process.execPath, [entry], { detached: true, stdio: "ignore", env: process.env }).unref();
   for (let i = 0; i < 20 && !(await up()); i++) await new Promise((r) => setTimeout(r, 150));
@@ -82,5 +93,5 @@ say(dry || (await up()), dry ? "would start the daemon" : "daemon running");
 
 console.log(`
 Done. In Claude Code run /reload-plugins (or start a new session), then open:
-     http://localhost:${process.env.AGENT_OFFICE_PORT ?? 4747}
+     http://localhost:${port()}
 Check anything with: node scripts/office.mjs doctor`);

@@ -11,8 +11,8 @@ export function appendRotating(file: string, line: string, max = MAX_BYTES) {
   if (fresh) try { chmodSync(file, 0o600); } catch { /* best effort on non-POSIX */ }
 }
 
-/** Stored events (oldest first) with t >= since, at most the last `limit`. Bad lines are skipped. */
-export function loadEvents(file: string, since = 0, limit = 5000): OfficeEvent[] {
+/** Stored events (oldest first) with since <= t <= until, at most the last `limit`. Bad lines are skipped. */
+export function loadEvents(file: string, since = 0, limit = 5000, until = Infinity): OfficeEvent[] {
   const out: OfficeEvent[] = [];
   for (const f of [file + ".1", file]) {
     let text = "";
@@ -20,7 +20,7 @@ export function loadEvents(file: string, since = 0, limit = 5000): OfficeEvent[]
     for (const line of text.split("\n")) {
       try {
         const e = JSON.parse(line);
-        if (e && typeof e.t === "number" && typeof e.type === "string" && e.t >= since) out.push(e);
+        if (e && typeof e.t === "number" && typeof e.type === "string" && e.t >= since && e.t <= until) out.push(e);
       } catch { /* skip */ }
     }
   }

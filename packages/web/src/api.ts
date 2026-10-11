@@ -1,7 +1,7 @@
 // Public client API for UI chrome (side panel, legend, alerts, recording, replay, settings).
 // main.ts owns the scene and fills `hooks`; chrome code only imports `office` from here and never touches pixi.
 //
-//   office.getEnvelope()        last accepted snapshot {epoch, rev, theme, privacy, configError?, state, config} | null
+//   office.getEnvelope()        last accepted snapshot {epoch, rev, privacy, configError?, state, config} | null
 //   office.subscribe(fn)        fn(envelope) after each accepted snapshot (stale/equal rev are dropped); returns unsubscribe
 //   office.actors()             ActorInfo[]: id, label, role, session, project, status (working|thinking|queued|waiting|blocked|idle),
 //                               lead, task, why, confidence ("guess" = attribution is ambiguous), doing, detail, cwd, branch,
@@ -10,7 +10,7 @@
 //   office.parentChain(id) / office.children(id)   ids
 //   office.select(id|null), office.selected, office.onSelect(fn)   fn(id|null); selection is also drawn on the actor
 //   office.focus(id)            camera follows that actor at >= 2x (office.camera.setFollow(null) stops)
-//   office.camera               { zoomBy(factor), reset(), setFollow(id|null), get zoom }; manual drag/wheel/pinch/0/dblclick built in
+//   office.camera               { zoomBy(factor), reset(), fitAll() (whole office; key 0), setFollow(id|null), get zoom }; manual drag/wheel/pinch/0/dblclick built in
 //   office.feed                 FeedItem[] newest first (cap 100): kind prompt|delegate|report|message|done|conflict, from/to (names),
 //                               text, t, outcome, confidence, possible (conflicts are flagged "possible"); office.onFeed(fn(item))
 //   office.tasks()              state.tasks (pending|running|done|blocked, owner)
@@ -21,13 +21,16 @@
 //   office.connection           { state: "connecting"|"live"|"retrying", onChange(fn) }
 //   office.snapshotCanvas()     the Pixi canvas (for MediaRecorder.captureStream / toBlob)
 //   office.pulse(id)            hop the actor (feed click)
-//   office.setTheme(name)       local theme override (built-in or daemon /themes), persisted by the chrome
+//   office.freeze               {on, held, set(on), toggle(), onChange(fn)}: while on, incoming snapshots are held (newest kept) and
+//                               the panel/canvas keep the last applied state; set(false) applies the newest at once
 //   office.source               pluggable data source: mode "live"|"demo"|"replay"; begin(mode) -> push(envelope)* -> end();
 //                               onMode(fn), onLive(fn) (every live envelope, even while simulating), liveEnvelope(),
 //                               private + setPrivate(b) (persists, reloads: the stream is reopened with ?private=1)
 import { childrenOf, parentChain, type Task } from "@agent-office/core";
 import { camera } from "./camera.ts";
-import { settings } from "./settings.ts";
+import { frozen, settings, setFrozen } from "./settings.ts";
+import { holder } from "./logic.ts";
+import { store } from "./dom.ts";
 import type { ConnState, Envelope } from "./net.ts";
 import type { FeedItem, Status } from "./choreo.ts";
 
@@ -49,7 +52,6 @@ export const hooks = {
   canvas: (): HTMLCanvasElement | null => null,
   applyTextScale: (_n: number) => {},
   pulse: (_id: string) => {},
-  setTheme: (_name: string) => {},
   ingest: (_e: Envelope) => {},
 };
 export type Mode = "live" | "demo" | "replay";
@@ -66,9 +68,11 @@ let mode: Mode = "live";
 let live: Envelope | null = null;
 const modeSubs = new Set<(m: Mode) => void>();
 const liveSubs = new Set<(e: Envelope) => void>();
-const isPrivate = (() => {
-  try { return localStorage.getItem("ao.private") === "1" || new URLSearchParams(location.search).get("private") === "1"; } catch { return false; }
-})();
+const isPrivate = store.get("private") === "1" || new URLSearchParams(location.search).get("private") === "1";
+const freezeSubs = new Set<() => void>();
+const hold = holder<Envelope>(() => frozen.on);
+/** The single gate into the engine: a frozen view keeps only the newest snapshot. */
+const apply = (e: Envelope) => { if (hold.offer(e)) freezeSubs.forEach((f) => f()); else hooks.ingest(e); };
 const on = <T,>(set: Set<T>, fn: T) => { set.add(fn); return () => void set.delete(fn); };
 
 export const office = {
@@ -89,6 +93,7 @@ export const office = {
   camera: {
     zoomBy: (f: number) => camera.zoomBy(f),
     reset: () => camera.reset(),
+    fitAll: () => camera.reset(),
     setFollow: (id: string | null) => camera.setFollow(id),
     get zoom() { return camera.zoom; },
   },
@@ -110,20 +115,38 @@ export const office = {
   },
   snapshotCanvas: () => hooks.canvas(),
   pulse: (id: string) => hooks.pulse(id),
-  setTheme: (n: string) => hooks.setTheme(n),
+  freeze: {
+    get on() { return frozen.on; },
+    get held() { return hold.n; },
+    set(b: boolean) {
+      if (b === frozen.on) return;
+      setFrozen(b);
+      const e = hold.take();
+      if (!b && e) hooks.ingest(e);
+      freezeSubs.forEach((f) => f());
+    },
+    toggle() { office.freeze.set(!frozen.on); },
+    onChange: (fn: () => void) => on(freezeSubs, fn),
+  },
   source: {
     get mode() { return mode; },
     get private() { return isPrivate; },
     setPrivate(b: boolean) {
-      try { localStorage.setItem("ao.private", b ? "1" : "0"); } catch { /* ignore */ }
+      store.set("private", b ? "1" : "0");
+      // the URL param wins over the stored flag, so it must go too or privacy can never turn off
+      const u = new URL(location.href);
+      u.searchParams.delete("private");
+      if (b) u.searchParams.set("private", "1");
+      history.replaceState(null, "", u);
       location.reload(); // shortcut: reload reopens the stream with ?private=1 and drops cached text; upgrade if replay state must survive
     },
     liveEnvelope: () => live,
     onLive: (fn: (e: Envelope) => void) => on(liveSubs, fn),
     onMode: (fn: (m: Mode) => void) => on(modeSubs, fn),
-    begin(m: Mode) { mode = m; office.feed.length = 0; modeSubs.forEach((f) => f(m)); },
-    push: (e: Envelope) => hooks.ingest(e),
+    begin(m: Mode) { office.freeze.set(false); mode = m; office.feed.length = 0; modeSubs.forEach((f) => f(m)); },
+    push: apply,
     end() {
+      hold.take();
       mode = "live";
       office.feed.length = 0;
       modeSubs.forEach((f) => f("live"));
@@ -146,7 +169,7 @@ export function pushFeed(i: FeedItem) {
 export function liveIn(e: Envelope) {
   live = e;
   liveSubs.forEach((f) => f(e));
-  if (mode === "live") hooks.ingest(e);
+  if (mode === "live") apply(e);
 }
 export function setConnection(s: ConnState) {
   if (s === conn) return;

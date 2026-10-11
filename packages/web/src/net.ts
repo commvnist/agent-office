@@ -2,8 +2,9 @@
 import type { Interaction, OfficeConfig, OfficeState } from "@agent-office/core";
 
 export type Envelope = {
-  schema: number; version: string; epoch: string; rev: number; theme?: string; privacy?: boolean;
+  schema: number; version: string; epoch: string; rev: number; privacy?: boolean;
   configError?: { message: string; t: number };
+  configWarning?: string;
   state: OfficeState; config: OfficeConfig;
 };
 export type Cursor = { epoch: string | null; rev: number; seen: number };

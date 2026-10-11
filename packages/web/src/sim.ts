@@ -50,8 +50,8 @@ export class Playback {
   }
 }
 
-export function simEnvelope(state: OfficeState, config: OfficeConfig, epoch: string, rev: number, theme?: string): Envelope {
-  return { schema: 1, version: "sim", epoch, rev, theme, privacy: false, state, config };
+export function simEnvelope(state: OfficeState, config: OfficeConfig, epoch: string, rev: number): Envelope {
+  return { schema: 1, version: "sim", epoch, rev, privacy: false, state, config };
 }
 
 /** The scripted scenario (event shapes as in scripts/demo.mjs, already normalized). Times are offsets in ms. */

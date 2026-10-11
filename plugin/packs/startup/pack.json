@@ -1,13 +1,16 @@
 {
   "name": "startup",
-  "description": "The default roster: architect, two frontend, two backend, two QA, reviewer, researcher.",
+  "description": "The default roster: architect, two frontend, two backend, two QA, reviewer, researcher, devops, docs-writer, security-auditor.",
   "roles": {
     "architect": { "agent": "architect", "count": 1, "names": ["Ada"] },
     "frontend": { "agent": "frontend-dev", "count": 2, "names": ["Maya", "Leo"], "overflow": { "max": 1, "names": ["Temp"] } },
     "backend": { "agent": "backend-dev", "count": 2, "names": ["Dev", "Priya"], "overflow": { "max": 1, "names": ["Temp"] } },
     "qa": { "agent": "qa-engineer", "count": 2, "names": ["Quinn", "Sam"], "overflow": { "max": 2, "names": ["Temp"] } },
     "reviewer": { "agent": "reviewer", "count": 1, "names": ["Rex"] },
-    "researcher": { "agent": "researcher", "count": 1, "names": ["Ziv"], "overflow": { "max": 1, "names": ["Temp"] } }
+    "researcher": { "agent": "researcher", "count": 1, "names": ["Ziv"], "overflow": { "max": 1, "names": ["Temp"] } },
+    "devops": { "agent": "devops", "count": 1, "names": ["Otto"] },
+    "docs-writer": { "agent": "docs-writer", "count": 1, "names": ["Wren"] },
+    "security-auditor": { "agent": "security-auditor", "count": 1, "names": ["Sloane"] }
   },
   "agents": {
     "architect": "../../agents/architect.md",
@@ -15,6 +18,9 @@
     "backend-dev": "../../agents/backend-dev.md",
     "qa-engineer": "../../agents/qa-engineer.md",
     "reviewer": "../../agents/reviewer.md",
-    "researcher": "../../agents/researcher.md"
+    "researcher": "../../agents/researcher.md",
+    "devops": "../../agents/devops.md",
+    "docs-writer": "../../agents/docs-writer.md",
+    "security-auditor": "../../agents/security-auditor.md"
   }
 }

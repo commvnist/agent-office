@@ -5,6 +5,9 @@ import { safeId } from "@agent-office/core";
 const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b./g;
 const INVISIBLE = /[​-‏‪-‮⁠-⁩﻿؜]/g; // zero-width, bidi marks/overrides/isolates
 const CONTROL = /[\x00-\x1f\x7f-\x9f]/g;
+// Harness markup wrapped around messages (<agent-message ...>, <system-reminder>, ...); shown text keeps the inside only.
+// Allowlisted so user text such as <my-component> or a<b-c && d>e survives.
+const ENVELOPE = /<\/?(?:agent-message|system-reminder|task-notification|subagent-hand-back|function_results|command-name|local-command-stdout)(?:\s[^<>]*)?>/gi;
 
 const SECRETS: [RegExp, string][] = [
   [/(authorization\s*[:=]\s*)(?:(?:bearer|basic|token)\s+)?\S+/gi, "$1[redacted]"],
@@ -23,16 +26,16 @@ export const redact = (s: string) => SECRETS.reduce((t, [re, to]) => t.replace(r
 export const clip = (v: unknown, n: number) => {
   if (typeof v !== "string") return "";
   // Bound regex work on huge inputs; output is at most n anyway.
-  const s = redact(v.slice(0, n * 4 + 64).replace(ANSI, "").replace(INVISIBLE, "").replace(CONTROL, " ")).replace(/\s+/g, " ").trim();
+  const s = redact(v.slice(0, n * 4 + 64).replace(ANSI, "").replace(INVISIBLE, "").replace(ENVELOPE, " ").replace(CONTROL, " ")).replace(/\s+/g, " ").trim();
   return s.length > n ? s.slice(0, n - 1) + "…" : s;
 };
 
-const isObj = (v: unknown): v is Record<string, any> => typeof v === "object" && v !== null && !Array.isArray(v);
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const NAME = /^[\w.:-]{1,64}$/;
 const name = (v: unknown, fallback: string) => (typeof v === "string" && NAME.test(v) ? v : fallback);
 
 /** What a tool call is acting on, in a few words, for bubbles. */
-function detail(tool: string, i: Record<string, any>): string {
+function detail(tool: string, i: Record<string, unknown>): string {
   switch (tool) {
     case "Bash": return clip(i.command, 48);
     case "Read": case "Edit": case "Write": case "MultiEdit": case "NotebookEdit":
@@ -51,7 +54,7 @@ const VERBS = new Map([
   ["Agent", "Delegating:"], ["Task", "Delegating:"], ["Bash", "Running"],
 ]);
 /** Plain-English reason: Bash's own description, else a verb phrase from tool + detail. */
-function why(tool: string, i: Record<string, any>, d: string): string | undefined {
+function why(tool: string, i: Record<string, unknown>, d: string): string | undefined {
   const own = tool === "Bash" ? clip(i.description, 80) : "";
   const verb = VERBS.get(tool);
   return own || (verb && d ? `${verb} ${d}` : undefined);
@@ -79,7 +82,7 @@ export const adapt: SourceAdapter = (payload, now = Date.now()) => {
   }
 };
 
-function events(p: Record<string, any>, session: string, agentId: string | undefined, id: string | undefined, t: number): OfficeEvent[] {
+function events(p: Record<string, unknown>, session: string, agentId: string | undefined, id: string | undefined, t: number): OfficeEvent[] {
   const input = isObj(p.tool_input) ? p.tool_input : {};
   const tool = name(p.tool_name, "?");
   switch (p.hook_event_name) {

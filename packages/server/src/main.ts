@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { readFileSync, statSync, mkdirSync, existsSync, writeFileSync, readdirSync, unlinkSync } from "node:fs";
+import { readFileSync, statSync, mkdirSync, existsSync, writeFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, normalize, extname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -9,7 +9,8 @@ import {
   type OfficeConfig, type OfficeEvent, type OfficeState,
 } from "@agent-office/core";
 import { adapt } from "./adapter.ts";
-import { validateConfig } from "./config.ts";
+import { validateConfig, unknownKeys } from "./config.ts";
+import { summarize } from "./digest.ts";
 import { appendRotating, loadEvents, replay } from "./store.ts";
 import { publicState } from "./snapshot.ts";
 import { readUsage } from "./usage.ts";
@@ -45,23 +46,28 @@ const DEFAULT: OfficeConfig = {
 // Re-read office.json when its mtime changes. Invalid files keep the last good config and set configError.
 let cfg = DEFAULT, cfgMtime = -1;
 let configError: { message: string; t: number } | undefined;
+let configWarning: string | undefined;
 function reloadConfig(): boolean {
   try {
     const m = statSync(CONFIG).mtimeMs;
     if (m === cfgMtime) return false;
     cfgMtime = m;
-    try { cfg = validateConfig(JSON.parse(readFileSync(CONFIG, "utf8")), DEFAULT.roles); configError = undefined; }
-    catch (e) { configError = { message: String((e as Error).message).slice(0, 200), t: Date.now() }; }
+    try {
+      const raw = JSON.parse(readFileSync(CONFIG, "utf8"));
+      cfg = validateConfig(raw, DEFAULT.roles); configError = undefined;
+      const u = unknownKeys(raw);
+      configWarning = u.length ? `office.json: unknown key${u.length > 1 ? "s" : ""} ignored: ${u.join(", ")}` : undefined;
+    } catch (e) { configError = { message: `${String((e as Error).message).slice(0, 200)} (${CONFIG}; the last good config stays active)`, t: Date.now() }; }
     return true;
   } catch { return false; /* missing file: keep what we have */ }
 }
-const ttlMs = () => ((cfg as OfficeConfig & { idleTtlMinutes?: number }).idleTtlMinutes ?? 45) * 60_000;
+const ttlMs = () => (cfg.idleTtlMinutes ?? 45) * 60_000;
 reloadConfig();
 
 // State: rebuilt from the stored event log, then swept so quiet sessions do not come back.
 const EVENTS = join(DIR, "events.jsonl");
 let state: OfficeState = replay(cfg, loadEvents(EVENTS, Date.now() - 24 * 3600_000), Date.now(), ttlMs());
-let rev = 0;
+let rev = 0, events = 0, lastEventAt = 0;
 let lastProto: unknown;
 type Client = { priv: boolean };
 const clients = new Map<ServerResponse, Client>();
@@ -71,8 +77,8 @@ function envelope(priv: boolean): string {
   const k = priv ? "priv" : "json";
   const hide = priv || !!cfg.privacy;
   return (cache[k] ??= JSON.stringify({
-    schema: SCHEMA_VERSION, version: VERSION, epoch: EPOCH, rev, theme: cfg.theme, privacy: hide,
-    configError, state: publicState(state, hide), config: cfg,
+    schema: SCHEMA_VERSION, version: VERSION, epoch: EPOCH, rev, privacy: hide,
+    configError, configWarning, state: publicState(state, hide), config: cfg,
   }));
 }
 const write = (res: ServerResponse, chunk: string) => {
@@ -119,13 +125,14 @@ function onEvent(payload: any, res: ServerResponse) {
   if (payload && payload.ao_proto !== undefined) lastProto = payload.ao_proto;
   const c = (reloadConfig(), cfg);
   const evs = adapt(payload);
+  if (evs.length) { events++; lastEventAt = Date.now(); }
   for (const e of evs) {
     if (e.type === "agent_stop") e.usage = readUsage(payload.agent_transcript_path, payload.cwd);
     else if (e.type === "turn_end") e.usage = readUsage(payload.transcript_path, payload.cwd);
     if ("usage" in e && !e.usage) delete e.usage;
   }
   const hook = String(payload?.hook_event_name);
-  // Seat enforcement: deny an Agent spawn whose role has no free seat, but never more than 3 times in a row.
+  // Seat enforcement: deny an Agent spawn when every desk is taken, but never more than 3 times in a row.
   const del = evs.find((e) => e.type === "delegate");
   if (c.enforceSeats && hook === "PreToolUse" && del?.type === "delegate") {
     const role = roleFor(c, del.agentType), key = `${del.session}|${role}`;
@@ -135,7 +142,7 @@ function onEvent(payload: any, res: ServerResponse) {
         if (denials.size > 200) denials.clear();
         denials.set(key, n + 1);
         return json(res, 200, { hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny",
-          permissionDecisionReason: `All ${role} seats are busy; wait for one to free up or do other work first.` } });
+          permissionDecisionReason: "The office is full (every desk is taken); wait for one to free up or do other work first." } });
       }
     }
     denials.delete(key);
@@ -154,24 +161,6 @@ function onEvent(payload: any, res: ServerResponse) {
   res.writeHead(200, { "content-type": "application/json" }).end(out ? JSON.stringify(out) : "");
 }
 
-function themes() {
-  const dir = join(DIR, "themes"), out = new Map<string, string>();
-  try {
-    for (const f of readdirSync(dir)) {
-      const name = f.slice(0, -5);
-      if (!f.endsWith(".json") || !/^[\w-]{1,40}$/.test(name)) continue;
-      try {
-        const p = join(dir, f);
-        if (statSync(p).size > 64 * 1024) continue;
-        const text = readFileSync(p, "utf8");
-        const v = JSON.parse(text);
-        if (typeof v === "object" && v && !Array.isArray(v)) out.set(name, text);
-      } catch { /* skip invalid theme */ }
-    }
-  } catch { /* no themes dir */ }
-  return out;
-}
-
 const NO_DIST = `<!doctype html><title>Agent Office</title><body style="font:14px monospace;background:#111;color:#ddd"><h3>Agent Office</h3><p>The web client is not built. Run <code>npm run build:web</code> in the repo and reload.</p><p>Live state (debug):</p><pre id=o>waiting…</pre><script>new EventSource("/stream").onmessage=e=>o.textContent=JSON.stringify(JSON.parse(e.data),null,2)</script>`;
 
 function handle(req: IncomingMessage, res: ServerResponse, allowedHosts: Set<string>) {
@@ -182,7 +171,7 @@ function handle(req: IncomingMessage, res: ServerResponse, allowedHosts: Set<str
   const path = u.pathname, get = req.method === "GET";
 
   if (get && path === "/health") {
-    const warning = lastProto !== undefined && lastProto !== SCHEMA_VERSION ? `forwarder protocol ${String(lastProto)} differs from daemon ${SCHEMA_VERSION}` : undefined;
+    const warning = lastProto !== undefined && lastProto !== SCHEMA_VERSION ? `forwarder protocol ${String(lastProto)} differs from daemon ${SCHEMA_VERSION}` : configWarning;
     return json(res, 200, { ok: true, version: VERSION, pid: process.pid, schema: SCHEMA_VERSION, warning });
   }
   if (req.method === "POST" && (path === "/event" || path === "/shutdown")) {
@@ -209,7 +198,7 @@ function handle(req: IncomingMessage, res: ServerResponse, allowedHosts: Set<str
   }
   if (!get) return void res.writeHead(404).end();
 
-  if (path === "/state" || path === "/stream" || path === "/history" || path === "/status" || path.startsWith("/themes")) {
+  if (path === "/state" || path === "/stream" || path === "/history" || path === "/status" || path === "/outcomes") {
     if (!canRead(req)) return void res.writeHead(401).end();
     const priv = u.searchParams.get("private") === "1" || !!cfg.privacy;
     if (path === "/state") { reloadConfig(); return void res.writeHead(200, { "content-type": "application/json" }).end(envelope(priv)); }
@@ -227,22 +216,32 @@ function handle(req: IncomingMessage, res: ServerResponse, allowedHosts: Set<str
     if (path === "/history") {
       const since = Number(u.searchParams.get("since")) || 0;
       const limit = Math.min(Math.max(Number(u.searchParams.get("limit")) || 500, 1), 2000);
-      const events = loadEvents(EVENTS, since, limit);
+      const untilParam = u.searchParams.get("until");
+      const until = untilParam && Number.isFinite(+untilParam) ? +untilParam : Infinity;
+      const events = loadEvents(EVENTS, since, limit, until);
       return json(res, 200, { schema: SCHEMA_VERSION, epoch: EPOCH, events: priv ? events.map(strip) : events });
     }
     if (path === "/status") {
       const agents = Object.values(state.agents).filter((a) => a.seat);
       const working = agents.filter((a) => a.doing).length + Object.values(state.sessions).filter((s) => s.doing).length;
       const s = { working, waiting: Object.values(state.sessions).filter((x) => x.waiting).length, queued: state.queue.length,
-        sessions: Object.keys(state.sessions).length, agents: agents.length };
-      if (u.searchParams.get("format") === "json") return json(res, 200, s);
+        sessions: Object.keys(state.sessions).length, agents: agents.length,
+        desks: (({ free, total }) => ({ used: total - free, total, cap: total }))(capacityFor(cfg, state)), events, lastEventAt: lastEventAt || undefined };
+      // ?session=<id prefix or project> narrows to matching sessions: one line each, or `sessions` in JSON.
+      const q = u.searchParams.get("session");
+      const per = Object.values(state.sessions).filter((x) => !q || x.id.startsWith(q) || x.project === q).map((x) => {
+        const own = agents.filter((a) => a.session === x.id);
+        return { session: x.id, project: x.project, state: x.waiting ? "waiting" : x.doing || own.some((a) => a.doing) ? "working" : "idle",
+          agents: own.length, errors: x.errors ?? 0, lastAt: x.lastAt, tokens: x.usage ? x.usage.input + x.usage.output : undefined };
+      });
+      if (u.searchParams.get("format") === "json") return json(res, 200, q ? { ...s, sessions: per } : { ...s, detail: per });
+      if (q) return void res.writeHead(200, { "content-type": "text/plain; charset=utf-8" }).end(per.map((x) => `${x.project} ${x.state} ${x.agents} agents ${x.errors} errors`).join("\n") + "\n");
       return void res.writeHead(200, { "content-type": "text/plain; charset=utf-8" }).end(`${s.working} working, ${s.waiting} waiting, ${s.queued} queued\n`);
     }
-    const all = themes();
-    if (path === "/themes") return json(res, 200, { themes: [...all.keys()].sort() });
-    const m = /^\/themes\/([\w-]{1,40})\.json$/.exec(path);
-    const body = m && all.get(m[1]);
-    return void (body ? res.writeHead(200, { "content-type": "application/json" }).end(body) : res.writeHead(404).end());
+    if (path === "/outcomes") {
+      const days = Math.min(Math.max(Number(u.searchParams.get("days")) || 7, 1), 90);
+      return json(res, 200, { schema: SCHEMA_VERSION, days: summarize(loadEvents(EVENTS, Date.now() - days * 86_400_000, 50_000)) });
+    }
   }
 
   if (path === "/" || path === "/index.html") {

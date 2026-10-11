@@ -1,4 +1,6 @@
-import type { Agent, Interaction, OfficeConfig, OfficeEvent, OfficeState, Seat, Session, Task } from "./types.ts";
+import { deskPos, MAX_DESKS } from "./layout.ts";
+import { crewName } from "./names.ts";
+import type { Agent, Interaction, OfficeConfig, OfficeEvent, OfficeState, Seat, Session, Task, Usage } from "./types.ts";
 
 export const SCHEMA_VERSION = 1;
 export const LOG_MAX = 40;
@@ -27,48 +29,84 @@ function say(s: OfficeState, i: Omit<Interaction, "id">): OfficeState {
   return { ...s, log: log.slice(-LOG_MAX), nextId: s.nextId + 1 };
 }
 
-/** Unmapped agent types become unlimited overflow "guests" rather than being dropped. */
-const GUEST = { count: 0, overflow: { max: Infinity } };
-
-/** Plugin agents arrive namespaced ("agent-office:qa-engineer"), so match the part after the last colon too. */
+/** Plugin agents arrive namespaced ("agent-office:qa-engineer"), so match the part after the last colon too. Unmapped types keep their bare type as role. */
 export function roleFor(cfg: OfficeConfig, agentType: string): string {
   const bare = bareType(agentType);
-  return Object.keys(cfg.roles).find((r) => cfg.roles[r].agent.toLowerCase() === bare) ?? "guest";
+  return Object.keys(cfg.roles).find((r) => cfg.roles[r].agent.toLowerCase() === bare) ?? bare;
 }
 
-function seatName(cfg: OfficeConfig, role: string, kind: Seat["kind"], index: number): string {
+/** The configured name for a slot, or null when there is none (the caller picks a crew name). */
+function seatName(cfg: OfficeConfig, role: string, kind: Seat["kind"], index: number): string | null {
   const r = cfg.roles[role];
-  const list = (kind === "permanent" ? r?.names : r?.overflow?.names) ?? [];
-  // A single overflow name is a prefix ("Temp 1", "Temp 2"); a longer list is used by index.
+  if (!r) return null; // unmapped type
+  const list = (kind === "permanent" ? r.names : r.overflow?.names) ?? [];
+  // A single overflow name is a prefix ("Temp"), not a person: only real lists name individuals.
   if (list[index] && !(kind === "overflow" && list.length === 1)) return list[index];
-  const base = kind === "overflow" ? (list[0] ?? "Temp") : role;
-  return `${base} ${index + 1}`;
-}
-
-/** First free permanent seat, else first free overflow seat, else null (queue). Pure. */
-export function allocate(cfg: OfficeConfig, state: OfficeState, role: string): Seat | null {
-  const r = cfg.roles[role] ?? GUEST;
-  const taken = new Set(Object.values(state.agents).flatMap((a) => (a.seat ? [a.seat.id] : [])));
-  for (let i = 0; i < r.count; i++) {
-    const id = `${role}#${i}`;
-    if (!taken.has(id)) return { id, role, kind: "permanent", index: i, name: seatName(cfg, role, "permanent", i) };
-  }
-  const max = r.overflow?.max ?? 0;
-  for (let i = 0; i < max; i++) {
-    const id = `${role}+${i}`;
-    if (!taken.has(id)) return { id, role, kind: "overflow", index: i, name: seatName(cfg, role, "overflow", i) };
-  }
   return null;
 }
 
-/** Seats left for a role; unmapped (guest) roles are unlimited. Queued agents hold no seat. */
-export function capacityFor(cfg: OfficeConfig, state: OfficeState, role: string) {
-  const r = cfg.roles[role];
-  if (!r) return { free: Infinity, total: Infinity, canSpawn: true };
-  const total = r.count + (r.overflow?.max ?? 0);
-  const used = Object.values(state.agents).filter((a) => a.role === role && a.seat).length;
-  const free = Math.max(0, total - used);
-  return { free, total, canSpawn: free > 0 };
+const deskOf = (id: string) => Number(id.slice(1));
+const dist = (a: number, b: number) => {
+  const p = deskPos(a), q = deskPos(b);
+  return Math.abs(p.x - q.x) + Math.abs(p.y - q.y);
+};
+const meanDist = (i: number, ds: number[]) => ds.reduce((n, d) => n + dist(i, d), 0) / ds.length;
+
+/**
+ * Cheapest free desk of the one global pool (ties: lowest index), or null at MAX_DESKS (queue). Pure.
+ * Cohesion first: a pod already owned by the session, else a fully empty pod, else any pod (tier x1000). Within a tier,
+ * cost is mean distance to the session's desks (none yet: the emptiest, then lowest, pod), 0.4x mean distance to
+ * same-role desks (secondary), +0.5 for a pod already 3/4 full. Core-team slots (cfg names/count) only decide kind and name.
+ */
+export function allocate(cfg: OfficeConfig, state: OfficeState, role: string, session?: string): Seat | null {
+  const seated = Object.values(state.agents).filter((a) => a.seat);
+  const taken = new Set(seated.map((a) => deskOf(a.seat!.id)));
+  const mates = seated.filter((a) => session !== undefined && a.session === session).map((a) => deskOf(a.seat!.id));
+  const peers = seated.filter((a) => a.role === role).map((a) => deskOf(a.seat!.id));
+  const podUse = Array.from({ length: MAX_DESKS / 4 }, () => 0);
+  for (const d of taken) podUse[Math.floor(d / 4)]++;
+  // Pod owner = session of the pod's lowest occupied desk (derived, no state).
+  const owner = new Map<number, string>();
+  for (const a of [...seated].sort((x, y) => deskOf(x.seat!.id) - deskOf(y.seat!.id))) {
+    const p = Math.floor(deskOf(a.seat!.id) / 4);
+    if (!owner.has(p)) owner.set(p, a.session);
+  }
+  let best = -1, bestCost = Infinity;
+  // Compact growth: candidates are the occupied pods plus the FIRST empty pod only (a session starts a fresh pod there).
+  // Never beyond it: the same-role pull used to pick the pod row below a colleague, a desk the office never built.
+  // The client builds every desk up to the highest one in use (buildLayout minDesks), so what is chosen here exists.
+  const firstEmpty = podUse.findIndex((n) => n === 0);
+  const limit = firstEmpty < 0 ? MAX_DESKS : Math.min(MAX_DESKS, (firstEmpty + 1) * 4);
+  for (let i = 0; i < limit; i++) {
+    if (taken.has(i)) continue;
+    const pod = Math.floor(i / 4), use = podUse[pod];
+    // Tiers dominate every other term: own pod, then a fully empty pod, then someone else's.
+    const tier = session !== undefined && owner.get(pod) === session ? 0 : use === 0 ? 1 : 2;
+    const cost = tier * 1000 + (mates.length ? meanDist(i, mates) : use * 100) + (peers.length ? 0.4 * meanDist(i, peers) : 0) + (use >= 3 ? 0.5 : 0);
+    if (cost < bestCost) { best = i; bestCost = cost; }
+  }
+  if (best < 0) return null;
+  // Slot within the role: lowest free core index below count, else lowest free temp index.
+  const used = (kind: Seat["kind"]) => new Set(seated.filter((a) => a.role === role && a.seat!.kind === kind).map((a) => a.seat!.index));
+  const lowestFree = (u: Set<number>) => { let n = 0; while (u.has(n)) n++; return n; };
+  const core = lowestFree(used("permanent"));
+  const kind: Seat["kind"] = core < (cfg.roles[role]?.count ?? 0) ? "permanent" : "overflow";
+  const index = kind === "permanent" ? core : lowestFree(used("overflow"));
+  let name = seatName(cfg, role, kind, index);
+  if (name === null) {
+    // Crew name: seeded by project | role | slot so a project's Nth worker of a role is the same person every run.
+    const taken = new Set(seated.map((a) => a.seat!.name));
+    for (const r of Object.values(cfg.roles)) for (const n of [...(r.names ?? []), ...(r.overflow?.names ?? [])]) taken.add(n);
+    const sess = session !== undefined ? state.sessions[session] : undefined;
+    name = crewName(`${sess?.cwd ?? sess?.project ?? session ?? ""}|${role}|${index}`, taken);
+  }
+  return { id: `d${best}`, role, kind, index, name };
+}
+
+/** Desks left in the office (one global pool, so `role` does not matter). Queued agents hold no seat. */
+export function capacityFor(_cfg: OfficeConfig, state: OfficeState, _role?: string) {
+  const free = MAX_DESKS - Object.values(state.agents).filter((a) => a.seat).length;
+  return { free, total: MAX_DESKS, canSpawn: free > 0 };
 }
 
 /** Agents this id delegated to (id may be `lead:<session>`). */
@@ -89,7 +127,7 @@ function promote(cfg: OfficeConfig | undefined, s: OfficeState, t: number): Offi
   for (const id of s.queue) {
     const a = agents[id];
     if (!a) continue;
-    const seat = allocate(cfg, { ...s, agents }, a.role);
+    const seat = allocate(cfg, { ...s, agents }, a.role, a.session);
     if (seat) agents[id] = { ...a, seat, seatedAt: t, queueWaitMs: t - (a.startedAt ?? t) };
     else queue.push(id);
   }
@@ -97,6 +135,45 @@ function promote(cfg: OfficeConfig | undefined, s: OfficeState, t: number): Offi
 }
 
 const WRITE_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
+/** Consecutive identical tool calls (same tool, same whitespace-normalised detail) before an agent is flagged as looping. */
+export const LOOP_MIN = 4;
+const FILES_MAX = 50, TOOLS_MAX = 24, KEY_MAX = 120;
+
+/** Count +1 for `key` in a capped counter map. Untrusted keys: own-property checks only, never inherited names. */
+function bump(rec: Record<string, number> | undefined, key: string, cap: number): Record<string, number> {
+  const r = rec ?? {};
+  if (!Object.hasOwn(r, key) && Object.keys(r).length >= cap) {
+    const low = Object.entries(r).reduce((m, x) => (x[1] < m[1] ? x : m));
+    return bump(Object.fromEntries(Object.entries(r).filter(([k]) => k !== low[0])), key, cap);
+  }
+  return Object.fromEntries([...Object.entries(r).filter(([k]) => k !== key), [key, (Object.hasOwn(r, key) ? r[key] : 0) + 1]]);
+}
+
+/** Loop bookkeeping for one tool call: O(1) (last key + run length). */
+function loopStep(x: { loopKey?: string; loopN?: number }, tool: string, detail?: string) {
+  const loopKey = `${tool}\0${(detail ?? "").trim().replace(/\s+/g, " ")}`;
+  const loopN = x.loopKey === loopKey ? (x.loopN ?? 0) + 1 : 1;
+  return { loopKey, loopN, loop: loopN >= LOOP_MIN ? { tool, n: loopN } : undefined };
+}
+
+/** Most-edited files, per session (all sessions when `session` is omitted). Pure. */
+export function hotFiles(state: OfficeState, session?: string, limit = 8): { path: string; count: number; session: string }[] {
+  return Object.values(state.sessions)
+    .filter((x) => session === undefined || x.id === session)
+    .flatMap((x) => Object.entries(x.files ?? {}).map(([path, count]) => ({ path, count, session: x.id })))
+    .sort((a, b) => b.count - a.count || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+    .slice(0, limit);
+}
+
+/** Tool usage summed over sessions, most used first. Pure. */
+export function topTools(state: OfficeState, n = 5): { tool: string; count: number }[] {
+  const m = new Map<string, number>();
+  for (const x of Object.values(state.sessions)) for (const [t, c] of Object.entries(x.toolCounts ?? {})) m.set(t, (m.get(t) ?? 0) + c);
+  return [...m].map(([tool, count]) => ({ tool, count })).sort((a, b) => b.count - a.count || (a.tool < b.tool ? -1 : 1)).slice(0, n);
+}
+
+/** Billable-ish total of a session's lead usage (input + output + cache creation; cache reads excluded). */
+export const usageTotalOf = (x: { usage?: Usage }): number => (x.usage ? x.usage.input + x.usage.output + x.usage.cacheCreate : 0);
 const lastKeys = <T,>(o: Record<string, T>, n: number) => (Object.keys(o).length > n ? Object.fromEntries(Object.entries(o).slice(-n)) : o);
 
 const base = (cwd: string) => cwd.split(/[\\/]/).filter(Boolean);
@@ -145,10 +222,10 @@ function endSession(cfg: OfficeConfig | undefined, s: OfficeState, session: stri
   return relabel(promote(cfg, { ...n, queue: s.queue.filter((id) => id in agents) }, t));
 }
 
-/** DONE:/BLOCKED: prefix of an agent's final message. */
-const outcomeOf = (m?: string): Interaction["outcome"] => {
-  const w = /^\s*(done|blocked)\b/i.exec(m ?? "")?.[1].toLowerCase();
-  return w === "done" || w === "blocked" ? w : m?.trim() ? undefined : "empty";
+/** DONE:/BLOCKED:/PARTIAL: prefix of an agent's final message. */
+export const outcomeOf = (m?: string): Interaction["outcome"] => {
+  const w = /^\s*(done|blocked|partial)\b/i.exec(m ?? "")?.[1].toLowerCase();
+  return w === "done" || w === "blocked" || w === "partial" ? w : m?.trim() ? undefined : "empty";
 };
 
 /**
@@ -219,7 +296,7 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
       if (s.agents[e.agentId] || Object.keys(s.agents).length >= LIMITS.agents) return s;
       s = filterPending(s, (j) => (j.t ?? e.t) >= e.t - LIMITS.pendingTtlMs);
       const role = roleFor(cfg, e.agentType);
-      const seat = allocate(cfg, s, role);
+      const seat = allocate(cfg, s, role, e.session);
       const key = `${e.session}|${bareType(e.agentType)}`;
       const [job, ...rest] = s.pending[key] ?? [];
       const parent = job?.from && s.agents[job.from] ? job.from : leadId(e.session);
@@ -253,9 +330,13 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
     case "tool": {
       const a = e.agentId ? s.agents[e.agentId] : undefined;
       const sess = s.sessions[e.session];
-      const agents = a ? { ...s.agents, [a.id]: { ...a, doing: e.tool, detail: e.detail, why: e.why, busyAt: e.t, toolCount: (a.toolCount ?? 0) + 1 } } : s.agents;
+      const agents = a ? { ...s.agents, [a.id]: { ...a, doing: e.tool, detail: e.detail, why: e.why, busyAt: e.t, toolCount: (a.toolCount ?? 0) + 1, ...loopStep(a, e.tool, e.detail) } } : s.agents;
       // No agent id means the lead itself is working.
-      const sessions = { ...s.sessions, [sess.id]: { ...sess, waiting: false, ...(a ? {} : { doing: e.tool, detail: e.detail, why: e.why, busyAt: e.t }) } };
+      const sessions = { ...s.sessions, [sess.id]: {
+        ...sess, waiting: false, toolCounts: bump(sess.toolCounts, e.tool.slice(0, KEY_MAX), TOOLS_MAX),
+        ...(e.detail && WRITE_TOOLS.has(e.tool) ? { files: bump(sess.files, e.detail.slice(0, KEY_MAX), FILES_MAX) } : {}),
+        ...(a ? {} : { doing: e.tool, detail: e.detail, why: e.why, busyAt: e.t, ...loopStep(sess, e.tool, e.detail) }),
+      } };
       const track = { ...s.track! };
       if (e.id) track.starts = lastKeys({ ...track.starts, [`${e.session}|${e.id}`]: e.t }, LIMITS.track);
       let conflicts = s.conflicts!;
@@ -288,7 +369,7 @@ export function reduce(cfg: OfficeConfig, state: OfficeState, e: OfficeEvent): O
     case "prompt":
       return say(patchSession(s, e.session, { prompt: e.text, waiting: false }), { t: e.t, kind: "prompt", session: e.session, from: "user", to: leadId(e.session), text: e.text });
     case "turn_end":
-      return say(patchSession(s, e.session, { doing: undefined, detail: undefined, why: undefined, prompt: undefined, ...(e.usage ? { usage: e.usage } : {}) }), { t: e.t, kind: "done", session: e.session, from: leadId(e.session), to: "user", text: "" });
+      return say(patchSession(s, e.session, { doing: undefined, detail: undefined, why: undefined, prompt: undefined, loop: undefined, loopKey: undefined, loopN: undefined, ...(e.usage ? { usage: e.usage } : {}) }), { t: e.t, kind: "done", session: e.session, from: leadId(e.session), to: "user", text: "" });
     case "waiting":
       return patchSession(s, e.session, { waiting: true, waitingText: e.text });
   }
