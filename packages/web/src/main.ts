@@ -21,7 +21,7 @@ import { hash } from "./color.ts";
 import { clampBox, collapseLatch, FIGURE_ART, tetherDots, waitsFor, stackLabels, worstState, type Box, alertsFor, boardLines, crowdLod, doorHold, holds, loadLevel, newAlerts, feedItem, isWorking, longToolMs, pickStroller, planInteraction, shrinkFloor, pushCapped, statusOf, stepHold, couchSeats, tetherAlpha, ticketEnd, ticketFor, ticketT, yieldsTo, TICKET_MS, uniqueNames, type Action, type PlanCtx, type Shrink, type StrollCand, type Ticket } from "./choreo.ts";
 import { advance, connect, newCursor, type Envelope } from "./net.ts";
 import { camera, bindPointer, isNarrow, phoneScale, pickAuto, type View } from "./camera.ts";
-import { hooks, liveIn, office, publish, pushFeed, setConnection, isPresenter, type ActorInfo, type SessionInfo } from "./api.ts";
+import { hooks, liveIn, office, publish, pushFeed, setConnection, isPresenter, snoozedIds, type ActorInfo, type SessionInfo } from "./api.ts";
 import { bindUi } from "./ui.ts";
 
 let TOP = 40; // header height, kept in sync below
@@ -786,24 +786,30 @@ function onEnvelope(env: Envelope) {
   departing();
   releaseBlocked(now);
   fileOutcomes(state.outcomes ?? [], r.fresh);
-  const al = alertsFor(state, blocked.keys(), leadId), wt = waitsFor(state, leadId);
-  for (const a of actors.values()) {
-    const before = a.alert, w = wt.get(a.id); // each actor's own wait (kind from the daemon's notification_type)
-    a.setAlert(al.get(a.id) ?? null, w?.kind ?? "permission", w?.soft);
-    if (a.alert !== before) {
-      if (a.lead && a.alert === "waiting" && !r.fresh) { a.steps = []; a.path = []; a.cur = null; } // back to its desk: the one place it waits for you
-      gold(a);
-      if (a.alert === "blocked" && !r.fresh && !settings.reducedMotion) a.glitch();
-    }
-  }
-  const edges = newAlerts(seenAlerts, al);
-  if (!r.fresh) for (const id of edges) if (actors.has(id)) alertFocus(id, al.get(id)!);
+  applyAlerts(r.fresh);
   const lines = boardLines(state.tasks);
   if (lines.join("\n") !== boardText.join("\n")) boardText = lines;
   // prune per-actor maps of everything that left (#40)
   for (const m of [meta, lastBusy, lastErr, visitors, huddling, strolled, tray] as Map<string, unknown>[])
     for (const id of m.keys()) if (!actors.has(id) && !liveIds.has(id)) m.delete(id);
   publish(env);
+}
+
+/** Alert signs from the state's waits and held gave-ups; a wait snoozed in NEEDS YOU shows none until the snooze ends. */
+function applyAlerts(fresh: boolean) {
+  const al = alertsFor(state, blocked.keys(), leadId), wt = waitsFor(state, leadId);
+  for (const id of snoozedIds) if (al.get(id) === "waiting") al.delete(id);
+  for (const a of actors.values()) {
+    const before = a.alert, w = wt.get(a.id); // each actor's own wait (kind from the daemon's notification_type)
+    a.setAlert(al.get(a.id) ?? null, w?.kind ?? "permission", w?.soft);
+    if (a.alert !== before) {
+      if (a.lead && a.alert === "waiting" && !fresh) { a.steps = []; a.path = []; a.cur = null; } // back to its desk: the one place it waits for you
+      gold(a);
+      if (a.alert === "blocked" && !fresh && !settings.reducedMotion) a.glitch();
+    }
+  }
+  const edges = newAlerts(seenAlerts, al);
+  if (!fresh) for (const id of edges) if (actors.has(id)) alertFocus(id, al.get(id)!);
 }
 
 /** Attention pulse (ring + edge vignette) for a newly blocked/waiting actor; the single alert cue, no camera move. */
@@ -1249,6 +1255,7 @@ addEventListener("keydown", (e) => {
 hooks.canvas = () => app.canvas;
 hooks.pulse = (id) => actors.get(id)?.hopNow();
 hooks.ingest = onEnvelope;
+hooks.refreshAlerts = () => applyAlerts(true); // a snooze toggled: signs follow at once, without a pulse
 hooks.applyTextScale = (n) => { setTextScale(n); for (const a of actors.values()) a.refreshText(); };
 hooks.sessions = (): SessionInfo[] =>
   Object.values(state.sessions).map((s) => ({
@@ -1272,7 +1279,7 @@ hooks.actors = (): ActorInfo[] => {
     const src = ag ?? (a.lead ? sess : undefined);
     out.push({
       id, label: m?.name ?? a.label, role: m?.role ?? "?", session: sess?.id ?? m?.session ?? "", project: sess?.project ?? "",
-      status: statusOf({ blocked: held, waiting: a.lead && !!sess?.waiting, queued: a.queued, working: a.working, active: !a.lead || !!sess?.prompt }),
+      status: statusOf({ blocked: held, waiting: a.lead && !!sess?.waiting && !snoozedIds.has(id), queued: a.queued, working: a.working, active: !a.lead || !!sess?.prompt }),
       lead: a.lead,
       task: ag?.task ?? (a.lead ? sess?.prompt : state.tasks?.find((t) => t.agentId === id)?.text),
       why: src?.why, confidence: ag?.confidence, doing: src?.doing, detail: src?.detail, cwd: sess?.cwd, branch: sess?.branch,

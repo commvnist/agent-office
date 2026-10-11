@@ -1,6 +1,6 @@
 // DOM chrome (replaces legacy-dom.ts): radar, card, sessions, roster, feed, aria. A pure consumer of api.ts `office`.
 // Ids come from index.html. Free text is only ever set with textContent.
-import { office, type ActorInfo, type FeedItem } from "./api.ts";
+import { hooks, office, snoozedIds, type ActorInfo, type FeedItem } from "./api.ts";
 import { hotFiles, leadId } from "@agent-office/core";
 import { $, announce as domAnnounce, btn, clip, copy, el, renderIf, store, sync } from "./dom.ts";
 import { bySession, burnHot, gaveUpKey, captionText, burnRate, cdCommand, filterFeed, fmtAge, fmtDur, fmtTokens, openGaveUps, quietBefore, sessionColor, sessionState, radar, rosterGroups, sanitizeFilters, statusGroups, summary, sumUsage, urgency, usageTotal, waitsOf, whoLine, type FeedFilter, type RadarItem } from "./logic.ts";
@@ -78,6 +78,8 @@ function renderRadar(now: number) {
   for (const [k, u] of snoozed) if (u <= now || !keys.has(k)) { snoozed.delete(k); changed = true; }
   if (changed) store.set("snooze", JSON.stringify(Object.fromEntries(snoozed)));
   items = all.filter((i) => !snoozed.has(i.key));
+  const sz = all.filter((i) => i.kind === "waiting" && snoozed.has(i.key)).map((i) => i.id);
+  if (sz.length !== snoozedIds.size || sz.some((id) => !snoozedIds.has(id))) { snoozedIds.clear(); for (const id of sz) snoozedIds.add(id); hooks.refreshAlerts(); } // a snoozed row also leaves the office
   for (const i of items) if (!radarKeys.has(i.key) && i.kind !== "stuck") announce(`${i.label}: ${i.wait === "question" ? "is asking you a question" : look(notify.kindOf(i)).label}`, !i.soft); // a finished turn is said politely
   radarKeys = new Set(items.map((i) => i.key));
   const why = (i: RadarItem) => dropOutcome(i.reason || (i.kind === "blocked" ? lastReport(i.id) ?? "" : "")).trim();

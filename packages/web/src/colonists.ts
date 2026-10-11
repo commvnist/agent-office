@@ -1,6 +1,6 @@
 // Colonist bar: a slim strip of tiny agent portraits with status rings above the stage. Hidden at <= 6 agents; overflow shows "+N".
 // The portrait is a 12x12 canvas head painted from the same Look the scene uses, cached per look (no pixi texture needed).
-import { office, type ActorInfo } from "./api.ts";
+import { office, snoozedIds, type ActorInfo } from "./api.ts";
 import { $, el, sync } from "./dom.ts";
 import { RANK } from "./logic.ts";
 import { lookKey } from "./lru.ts";
@@ -35,7 +35,7 @@ function head(look0: Look): ImageData {
   return d;
 }
 
-const eff = (a: ActorInfo) => (a.lead && a.status !== "blocked" && office.getEnvelope()?.state.sessions[a.session]?.waiting ? "waiting" : a.status);
+const eff = (a: ActorInfo) => (a.lead && a.status !== "blocked" && !snoozedIds.has(a.id) && office.getEnvelope()?.state.sessions[a.session]?.waiting ? "waiting" : a.status);
 
 export function bindColonists() {
   const bar = $("colony"), cache = new Map<string, HTMLButtonElement>();

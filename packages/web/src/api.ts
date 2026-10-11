@@ -53,7 +53,10 @@ export const hooks = {
   applyTextScale: (_n: number) => {},
   pulse: (_id: string) => {},
   ingest: (_e: Envelope) => {},
+  refreshAlerts: () => {},
 };
+/** Actors whose wait the viewer snoozed in NEEDS YOU (ui.ts fills it): the scene leaves them unflagged until it ends. */
+export const snoozedIds = new Set<string>();
 export type Mode = "live" | "demo" | "replay";
 
 let env: Envelope | null = null;
