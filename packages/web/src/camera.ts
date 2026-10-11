@@ -107,7 +107,7 @@ export class Camera {
    * lobby, first pods) instead of showing its middle; at equal height both agree. A phone always hangs it from the top. */
   private anchorY(sc: number) {
     const L = this.last;
-    return L.lh * sc > L.H || this.phone ? L.top + (L.lh * sc) / 2 : L.top + L.H / 2; // X7: phones hang it from the top: no dead band under the header
+    return L.lh * sc > L.H || this.phone || L.H > 2 * L.cx ? L.top + (L.lh * sc) / 2 : L.top + L.H / 2; // X7: phones and any portrait stage (an unfolded phone) hang it from the top: no dead band under the header
   }
   /** panY that puts art y on the viewport centre at scale `sc`. */
   private panYFor(y: number, sc: number) {

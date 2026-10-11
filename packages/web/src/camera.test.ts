@@ -139,4 +139,7 @@ test("X7: on a phone a room shorter than the stage hangs from the header, whatev
   c.autoPos = { x: 160, y: 190 }; // far down the room: a centred fit would pan it down and leave a band above
   for (let i = 0; i < 5; i++) c.view(1, 390, 700, 140, 320, 200, null, 0.1);
   assert.equal(c.view(1, 390, 700, 140, 320, 200).oy, 140);
+  const fold = new Camera(); // an unfolded phone (693x830) is not "phone" but is portrait: still no band above the room
+  assert.equal(fold.view(2, 693, 830, 100, 320, 200).oy, 100);
+  assert.equal(new Camera().view(2, 1300, 700, 40, 320, 200).oy, 40 + (700 - 400) / 2, "landscape keeps the room centred");
 });
