@@ -406,7 +406,7 @@ Built by the lead session and two Opus agents in parallel: A on core, server and
 | D2 persistent pod labels | The owner asked for plaques on hover only. Pod identity is in the hover plaque and the triage card. |
 | R2 value-key regrade, F1–F3 character silhouettes and poses, E1/E3/E7–E12 environment polish, L2/L4/L5 identity props | One coordinated art pass behind a palette token, not piecemeal; the art agent warns a partial regrade leaves two styles. |
 | V4 and G1–G6 session-collapse level of detail | Large, and touches allocation and the scene. Chip grouping by session and the "+N · k need you" overflow landed as the first step. |
-| P1 delta streaming, P2 per-day history, P5 floors, P6 performance gate, P7 multi-machine digest, the after-action summary, and derived signals (permission latency, tool p95) | Architectural, so they're next-phase work. |
+| P5 floors, P6 performance gate | Scale work (Phase 3 of the finishing pass). |
 
 ## Finishing pass (October 2026)
 
@@ -434,3 +434,18 @@ Not observable from here: a real tool-permission prompt (this session runs witho
 | A8 | Done | An alert's flag and ring are fixed obstacles for other agents' tags (never its own), so a walking lead's label yields around a blocked helper. A status pip never sits on someone else's tag. |
 | B10 | Done | The panel's NEEDS YOU band is exactly the header's height, so both end on one line (measured: 40 px and 40 px, was 40 and 43). |
 | H5 | Done | Labels clamp to the visible part of the floor, so a followed or zoomed camera never cuts one at the canvas edge; off-screen agents are not stacked. The camera fits above the meter strip and the phone's Fit button, so neither covers a desk. On phones one highlight card shows at a time and a "gave up" card times out (NEEDS YOU and the pill keep it), so it no longer covers the stage where the camera frames the alert. |
+
+### Phase 2: data architecture
+
+| Item | Verdict | What changed |
+|---|---|---|
+| P1 delta streaming | Done | After a full snapshot on connect, each commit sends an `event: patch` (changed head fields, changed session/agent/pending entries, other changed keys, log drop/add), diffed by reference with privacy blanking cached per object. A client that misses a base resyncs from `/state`. Measured: 605-byte patches against an 18 KB snapshot. `?lod=summary` and `?session=<id>` give a per-client level of detail (sessions plus per-session crew counts); the canvas keeps the full stream. A degraded (trimmed) envelope is always sent in full. Known cost: the full envelope is still serialized per commit to detect a degraded one (shortcut comment; measured in the Phase 3 performance gate). |
+| P2 per-day history | Done | New events go to `events/YYYY-MM-DD.jsonl` with free text in a sibling `.text.jsonl` and a time index (`.idx`). Deleting text keeps a replayable timeline; privacy mode writes no text file. `/history` reads asynchronously and streams its response in slices with backpressure, pages older with `more`, caps a page at 20,000 events and clamps to retention. The legacy `events.jsonl` is still read, never rewritten (verified byte-identical across the switch on the owner's machine). `textHours` (default = `historyHours`) and `office.mjs history --purge-text`. |
+| After-action summary | Done | `state.summaries` (20, no free text): duration, agents, delegation tree, errors, permission waits, outcome counts, tokens; written at SessionEnd and by the idle sweep. Sessions view lists them under ENDED. |
+| Permission latency | Done | `session.permWait` (count, total, last, open since), shown on session tiles, panel rows and the lead's card. An open wait's age moves in whole minutes, so the card is not rebuilt every second. |
+| Tool p50/p95 + long-tool flag | Done | `session.toolStats` per tool (last 64 calls; p50, p95, failures), listed in the card. The canvas long-call arc now waits for 3x that tool's own p95 (at least 10 s) once 5 calls are known, else 30 s. |
+| X3 History on the new storage | Done | Default range "since your last visit" (else 24 h), Today, 7 days, custom From/To, Load older; row click selects and Replay this range stay. |
+| P4 plurals | Done | i18n messages are keyed by every `Intl.PluralRules` category (tested with Polish one/few/many/other). |
+| P7 many machines | Done | `scripts/digest.mjs --counts` exports counts and states only (no paths or text); read-only, no listener. Daemons stay loopback-only. |
+| Derived signal 5: exact delegation matching | Skipped | The Agent tool's result shape could not be verified from here, and `SubagentStart` already carries `agent_id`; matching by delegation order stays, with "(?)" marking a guess. |
+| Found in the screenshot pass | Fixed | Opening the page on a busy office paraded every agent in through the door (about 15 s at 45 agents); a fresh snapshot now places the crowd at its desks at once. "1 errors" is now "1 error". |

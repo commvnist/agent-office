@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { Interaction } from "@agent-office/core";
-import { planInteraction, alertsFor, statusOf, isWorking, boardLines, pickStroller, feedItem, cleanText, uniqueNames, stackLabels, toolKind, skyAt, clampBox, hopPose, stepDrop, popScale, quirkAt, toolIcon, HOP_MS, idleTier, pickPartner, microPose, yieldsTo, stepHold, holds, doorHold, tetherAlpha, loadLevel, sessionHue, shrinkFloor, YIELD_MAX_MS, SLIP_MS, type PlanCtx, type Shrink } from "./choreo.ts";
+import { planInteraction, alertsFor, statusOf, isWorking, boardLines, pickStroller, feedItem, cleanText, uniqueNames, stackLabels, longToolMs, toolKind, skyAt, clampBox, hopPose, stepDrop, popScale, quirkAt, toolIcon, HOP_MS, idleTier, pickPartner, microPose, yieldsTo, stepHold, holds, doorHold, tetherAlpha, loadLevel, sessionHue, shrinkFloor, YIELD_MAX_MS, SLIP_MS, type PlanCtx, type Shrink } from "./choreo.ts";
 
 const it = (o: Partial<Interaction>): Interaction => ({ id: 1, t: 1000, kind: "delegate", session: "s", from: "lead:s", to: "a1", text: "do it", ...o });
 const ctx = (log: Interaction[] = [], ids = ["lead:s", "a1", "a2"]): PlanCtx => ({ has: (i) => ids.includes(i), resolve: (h) => ids.find((i) => i === h), log });
@@ -288,4 +288,11 @@ test("stackLabels: an alert flag pushes other tags away but not its owner's (A8)
   const flag = { x: 50, y: 0, w: 10, h: 10, pri: 2, own: me };
   assert.deepEqual(stackLabels([flag, { x: 50, y: 2, w: 40, h: 8, own: me }]), [0, 0], "own tag stays put");
   assert.ok(stackLabels([flag, { x: 50, y: 2, w: 40, h: 8, own: other }])[1] >= 9, "a neighbour's tag yields");
+});
+
+test("longToolMs: 3x the tool's own p95 once known, floored at 10 s; 30 s before that", () => {
+  assert.equal(longToolMs(undefined), 30_000);
+  assert.equal(longToolMs({ n: 4, p95: 1000 }), 30_000);
+  assert.equal(longToolMs({ n: 5, p95: 1000 }), 10_000);
+  assert.equal(longToolMs({ n: 20, p95: 60_000 }), 180_000);
 });

@@ -100,13 +100,25 @@ export const toCsv = (events: OfficeEvent[]) =>
   [COLS.join(","), ...events.map((e) => COLS.map((c) => cell((e as Record<string, unknown>)[c])).join(","))].join("\n") + "\n";
 export const toJsonl = (events: OfficeEvent[]) => events.map((e) => JSON.stringify(e)).join("\n") + "\n";
 
-// shortcut: the server returns the newest HISTORY_LIMIT events in range; for more, the user narrows the range.
-export const HISTORY_LIMIT = 2000;
-/** since/until are epoch ms; until is inclusive and 0 means now. Trimmed client-side too, in case the daemon ignores it. */
+// shortcut: one page is the newest HISTORY_LIMIT events in range (the daemon caps at 20000); older pages load on demand with until.
+export const HISTORY_LIMIT = 5000;
+/** since/until are epoch ms; until is inclusive and 0 means now. Trimmed client-side too, in case the daemon ignores it.
+ * `limited` = older events exist in the range (the daemon's `more`; older daemons: a full page). */
 export async function fetchHistory(since: number, until = 0, priv = false): Promise<{ events: OfficeEvent[]; limited: boolean }> {
   const q = `/history?since=${since}&limit=${HISTORY_LIMIT}${until ? `&until=${until}` : ""}${priv ? "&private=1" : ""}`;
   const r = await fetch(q, { credentials: "same-origin" });
   if (!r.ok) throw new Error(r.status === 401 ? "unauthorized (open the page via the daemon URL)" : `HTTP ${r.status}`);
-  const raw: OfficeEvent[] = (await r.json()).events ?? [];
-  return { events: until ? raw.filter((e) => e.t <= until) : raw, limited: raw.length >= HISTORY_LIMIT };
+  const body: { events?: OfficeEvent[]; more?: boolean } = await r.json(), raw = body.events ?? [];
+  return { events: until ? raw.filter((e) => e.t <= until) : raw, limited: body.more ?? raw.length >= HISTORY_LIMIT };
+}
+
+const H = 3600e3;
+export type RangeKey = "last" | "today" | "day" | "week" | "custom";
+/** The History view's range presets. "last" = since the previous visit (at least the last hour; first visit = last 24 h). until 0 = now. */
+export function historyRange(key: RangeKey, now: number, lastSeen: number, custom = { since: 0, until: 0 }): { since: number; until: number } {
+  if (key === "custom" && custom.since) return { since: custom.since, until: custom.until > custom.since ? custom.until : 0 };
+  if (key === "today") { const d = new Date(now); d.setHours(0, 0, 0, 0); return { since: d.getTime(), until: 0 }; }
+  if (key === "week") return { since: now - 7 * 24 * H, until: 0 };
+  if (key === "last" && lastSeen) return { since: Math.min(lastSeen, now - H), until: 0 };
+  return { since: now - 24 * H, until: 0 };
 }

@@ -23,7 +23,7 @@ export function summarize(events: OfficeEvent[]): DaySummary[] {
     if (!d) days.set(k, d = { day: k, sessions: 0, agents: {}, outcomes: { done: 0, blocked: 0, partial: 0, empty: 0, other: 0 }, tokens: 0, errors: 0, hours: 0, s: new Set(), h: new Set(), tok: new Map() });
     d.s.add(e.session); d.h.add(new Date(e.t).getHours());
     if (e.type === "agent_start") { const r = e.agentType.split(":").pop()!; d.agents[r] = (d.agents[r] ?? 0) + 1; }
-    else if (e.type === "agent_stop") d.outcomes[outcomeOf(e.message) ?? "other"]++;
+    else if (e.type === "agent_stop") d.outcomes[e.outcome ?? outcomeOf(e.message) ?? "other"]++; // stored lines carry the outcome, text or not
     else if (e.type === "tool_end" && !e.ok) d.errors++;
     if ((e.type === "turn_end" || e.type === "usage") && e.usage) d.tok.set(e.session, Math.max(d.tok.get(e.session) ?? 0, e.usage.input + e.usage.output + e.usage.cacheCreate));
   }

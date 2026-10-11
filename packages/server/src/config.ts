@@ -45,9 +45,10 @@ export function validateConfig(raw: unknown, defaultRoles?: OfficeConfig["roles"
     if (raw.protocol !== "office" && raw.protocol !== "observe") throw new Error("protocol must be office or observe");
     cfg.protocol = raw.protocol;
   }
-  if (raw.historyHours !== undefined) {
-    if (!int(raw.historyHours, 1, 2160)) throw new Error("historyHours must be an integer 1-2160");
-    cfg.historyHours = raw.historyHours as number;
+  for (const k of ["historyHours", "textHours"] as const) {
+    if (raw[k] === undefined) continue;
+    if (!int(raw[k], 1, 2160)) throw new Error(`${k} must be an integer 1-2160`);
+    cfg[k] = raw[k] as number;
   }
   for (const k of ["enforceSeats", "privacy"] as const) {
     if (raw[k] === undefined) continue;
@@ -69,7 +70,7 @@ export function validateConfig(raw: unknown, defaultRoles?: OfficeConfig["roles"
   return cfg;
 }
 
-const KNOWN = ["roles", "protocol", "historyHours", "parallelism", "enforceSeats", "privacy", "theme", "idleTtlMinutes", "spendAlarmTokens"];
+const KNOWN = ["roles", "protocol", "historyHours", "textHours", "parallelism", "enforceSeats", "privacy", "theme", "idleTtlMinutes", "spendAlarmTokens"];
 const ROLE_KEYS = ["agent", "count", "names", "overflow"];
 
 /** Paths of keys validateConfig would silently drop (typos like "paralelism"). Non-fatal; cap 5. */

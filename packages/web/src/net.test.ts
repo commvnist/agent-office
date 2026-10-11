@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { advance, newCursor, type Envelope } from "./net.ts";
+import { advance, applyPatch, newCursor, type Envelope } from "./net.ts";
 
 const env = (epoch: string, rev: number, ids: number[], extra: Partial<Envelope> = {}): Envelope =>
   ({ schema: 1, version: "x", epoch, rev, state: { log: ids.map((id) => ({ id })) } as any, config: { roles: {} }, ...extra });
@@ -31,4 +31,25 @@ test("config change does not replay history", () => {
   advance(c, env("e", 1, [1, 2]));
   const r = advance(c, env("e", 2, [1, 2], { config: { roles: { qa: {} } } as any }))!;
   assert.deepEqual(r.items, []);
+});
+
+test("applyPatch: maps set and delete keys, keys replace, log drops and appends, head merges; the input is not mutated", () => {
+  const e0 = { ...env("e", 3, [1, 2, 3]), state: { sessions: { a: { id: "a" }, b: { id: "b" } }, agents: {}, pending: {}, log: [{ id: 1 }, { id: 2 }, { id: 3 }], tasks: [] } as any };
+  const e1 = applyPatch(e0, { epoch: "e", rev: 5, base: 3, head: { privacy: true }, maps: { sessions: { a: null, c: { id: "c" } } }, keys: { tasks: [{ id: 1 }] }, log: { drop: 1, add: [{ id: 4 } as any] } })!;
+  assert.equal(e1.rev, 5);
+  assert.equal(e1.privacy, true);
+  assert.deepEqual(Object.keys(e1.state.sessions), ["b", "c"]);
+  assert.deepEqual(e1.state.log.map((i) => i.id), [2, 3, 4]);
+  assert.deepEqual(e1.state.tasks, [{ id: 1 }]);
+  assert.equal(e1.state.agents, e0.state.agents); // untouched maps keep their identity
+  assert.deepEqual(Object.keys(e0.state.sessions), ["a", "b"]);
+  assert.equal(e0.state.log.length, 3);
+});
+
+test("applyPatch refuses a patch that does not fit: no envelope, other epoch, other base", () => {
+  const e0 = env("e", 3, [1]);
+  assert.equal(applyPatch(null, { epoch: "e", rev: 4, base: 3 }), null);
+  assert.equal(applyPatch(e0, { epoch: "x", rev: 4, base: 3 }), null);
+  assert.equal(applyPatch(e0, { epoch: "e", rev: 5, base: 4 }), null);
+  assert.equal(applyPatch(e0, { epoch: "e", rev: 4, base: 3 })!.rev, 4);
 });

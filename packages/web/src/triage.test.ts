@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { clipWords, doneRows, dropOutcome, nextStep, statusKey, statusWord, tree, waitKindOf } from "./triage.ts";
+import { clipWords, doneRows, dropOutcome, nextStep, permLine, statusKey, statusWord, topTools, tree, waitKindOf } from "./triage.ts";
 
 test("one status key per actor; waitKind wins, else the text decides", () => {
   assert.equal(statusKey("blocked"), "blocked");
@@ -38,4 +38,15 @@ test("done rows prefer state.outcomes and fall back to feed reports", () => {
   assert.deepEqual(doneRows(o, [], () => "proj")[0], { key: "a1@2", agentId: "a1", name: "Priya", project: "proj", outcome: "done", text: "shipped", task: "ship", t: 2 });
   const feed = [{ kind: "report", fromId: "b", from: "Bo", text: "BLOCKED: no key", t: 1, outcome: "blocked", session: "s" }, { kind: "prompt", from: "you", text: "x", t: 0 }];
   assert.deepEqual(doneRows(undefined, feed, (s) => s.toUpperCase()).map((r) => [r.name, r.project, r.text]), [["Bo", "S", "no key"]]);
+});
+
+test("permLine counts completed waits and the open one; topTools ranks by calls", () => {
+  const f = (ms: number) => `${Math.round(ms / 1000)}s`;
+  assert.equal(permLine(undefined, 0, f), "");
+  assert.equal(permLine({ n: 0, totalMs: 0 }, 0, f), "");
+  assert.equal(permLine({ n: 2, totalMs: 20_000 }, 0, f), "2 permission waits · avg 10s");
+  assert.equal(permLine({ n: 0, totalMs: 0, since: 1000 }, 41_000, f), "permission: waiting now");
+  assert.equal(permLine({ n: 0, totalMs: 0, since: 1000 }, 151_000, f), "permission: waiting 120s", "whole minutes, so the card is not rebuilt every second");
+  const stat = (n: number) => ({ n, fail: 0, p50: 1, p95: 2 });
+  assert.deepEqual(topTools({ Read: stat(3), Bash: stat(9), Edit: stat(3) }, 2).map((x) => x.tool), ["Bash", "Edit"]);
 });

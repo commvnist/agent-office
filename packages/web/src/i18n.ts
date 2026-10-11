@@ -1,9 +1,11 @@
 // Message table and t() for the chrome modules (#174).
 // shortcut: only panel/modes/views use it and only English ships; move the remaining inline strings and add locales when a translation exists.
-const MSG: Record<string, Record<string, string>> = {
+// A plural message maps Intl.PluralRules categories (zero/one/two/few/many/other) to forms; `other` is required.
+type Msg = string | (Partial<Record<Intl.LDMLPluralRule, string>> & { other: string });
+export const MSG: Record<string, Record<string, Msg>> = {
   en: {
     panel: "Panel", needYou: "{n} need you", stale: "Stale since {time}: the daemon stream is down.",
-    session: "{n} session|{n} sessions", agent: "{n} agent|{n} agents", event: "{n} event|{n} events",
+    session: { one: "{n} session", other: "{n} sessions" }, agent: { one: "{n} agent", other: "{n} agents" }, event: { one: "{n} event", other: "{n} events" },
   },
 };
 const base = (l: string) => l.toLowerCase().split("-")[0];
@@ -13,10 +15,10 @@ export const locale = (() => {
   return base(want) in MSG ? base(want) : "en";
 })();
 
-/** t("session", {n: 2}) -> "2 sessions". "a|b" holds the one|other forms; {x} is replaced from vars. */
+/** t("session", {n: 2}) -> "2 sessions". Plural forms are picked by Intl.PluralRules for vars.n; {x} is replaced from vars. */
 export function t(key: string, vars: Record<string, string | number> = {}, loc = locale): string {
-  let s = (MSG[loc] ?? MSG.en)[key] ?? MSG.en[key] ?? key;
-  if (s.includes("|")) { const [one, other] = s.split("|"); s = new Intl.PluralRules(loc).select(Number(vars.n)) === "one" ? one : other; }
+  const m = (MSG[loc] ?? MSG.en)[key] ?? MSG.en[key] ?? key;
+  const s = typeof m === "string" ? m : m[new Intl.PluralRules(loc).select(Number(vars.n))] ?? m.other;
   return s.replace(/\{(\w+)\}/g, (_, k) => String(vars[k] ?? ""));
 }
 export const setLang = () => { document.documentElement.lang = locale; };

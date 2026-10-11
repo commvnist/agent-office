@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// agent-office CLI: status | start | restart | stop | doctor | init | config --validate | history [--purge] | uninstall [--purge]. Usage: node scripts/office.mjs <cmd>
-import { readFileSync, existsSync, statSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+// agent-office CLI: status | start | restart | stop | doctor | init | config --validate | history [--purge|--purge-text] | uninstall [--purge]. Usage: node scripts/office.mjs <cmd>
+import { readFileSync, existsSync, statSync, rmSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { spawnSync, spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -128,17 +128,33 @@ const cmds = {
     return bad ? 1 : 0;
   },
   async history() {
-    // The on-disk history: the event log (and its backup) plus the opt-in raw log (AGENT_OFFICE_LOG).
+    // The on-disk history: day files under events/ (structure, .text.jsonl free text, .idx), the legacy event log
+    // (and its backup), and the opt-in raw log (AGENT_OFFICE_LOG).
+    const days = join(HOME, "events");
+    const dayFiles = existsSync(days) ? readdirSync(days).map((f) => join(days, f)) : [];
     const files = ["events.jsonl", "events.jsonl.1", "events.log", "events.log.1"].map((f) => join(HOME, f)).filter((f) => existsSync(f));
-    if (process.argv.includes("--purge")) {
-      for (const f of files) rmSync(f, { force: true });
-      console.log(files.length ? `deleted ${files.join(", ")}` : "no stored history");
-      if (await health()) console.log("the running daemon still holds today's office in memory: node scripts/office.mjs restart clears it");
+    const later = async () => { if (await health()) console.log("the running daemon still holds today's office in memory: node scripts/office.mjs restart clears it"); };
+    if (process.argv.includes("--purge-text")) {
+      const text = dayFiles.filter((f) => f.endsWith(".text.jsonl"));
+      for (const f of text) rmSync(f, { force: true });
+      console.log(text.length ? `deleted ${text.length} text files in ${days} (the timeline stays)` : "no stored text files");
+      if (files.some((f) => /events\.jsonl/.test(f))) console.log("the legacy events.jsonl keeps its text inline until historyHours prunes it (or history --purge)");
+      await later();
       return 0;
     }
-    if (!files.length) return console.log(`no stored history in ${HOME}`), 0;
+    if (process.argv.includes("--purge")) {
+      for (const f of files) rmSync(f, { force: true });
+      rmSync(days, { recursive: true, force: true });
+      console.log(files.length || dayFiles.length ? `deleted ${[...files, ...(dayFiles.length ? [days] : [])].join(", ")}` : "no stored history");
+      await later();
+      return 0;
+    }
+    if (!files.length && !dayFiles.length) return console.log(`no stored history in ${HOME}`), 0;
     for (const f of files) console.log(`${f}  ${Math.round(statSync(f).size / 1024)} KB`);
-    console.log("kept for office.json historyHours (default 168); delete now with: node scripts/office.mjs history --purge");
+    const kb = (l) => Math.round(l.reduce((n, f) => n + statSync(f).size, 0) / 1024);
+    const text = dayFiles.filter((f) => f.endsWith(".text.jsonl"));
+    if (dayFiles.length) console.log(`${days}  ${dayFiles.filter((f) => /\d\.jsonl$/.test(f)).length} days, ${kb(dayFiles) - kb(text)} KB structure, ${kb(text)} KB text`);
+    console.log("kept for office.json historyHours (default 168), text for textHours (default = historyHours); delete now with: node scripts/office.mjs history --purge (everything) or --purge-text (text only)");
     return 0;
   },
   async uninstall() {
@@ -152,5 +168,5 @@ const cmds = {
 };
 
 const fn = cmds[process.argv[2]];
-if (!fn) { console.error("usage: node scripts/office.mjs status|start|restart|stop|doctor|init [--force]|config --validate [file]|history [--purge]|uninstall [--purge]"); process.exit(2); }
+if (!fn) { console.error("usage: node scripts/office.mjs status|start|restart|stop|doctor|init [--force]|config --validate [file]|history [--purge|--purge-text]|uninstall [--purge]"); process.exit(2); }
 process.exitCode = (await fn()) ?? 0;

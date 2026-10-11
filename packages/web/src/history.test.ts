@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { OfficeEvent } from "@agent-office/core";
-import { fetchHistory, gantt, markers, pickRange, rangeStats, toCsv, waterfall, zoomView } from "./history.ts";
+import { fetchHistory, historyRange, gantt, markers, pickRange, rangeStats, toCsv, waterfall, zoomView } from "./history.ts";
 import { posterModel } from "./logic.ts";
 import { emptyState } from "@agent-office/core";
-import { t } from "./i18n.ts";
+import { MSG, t } from "./i18n.ts";
 
 const ev = (x: unknown) => x as OfficeEvent;
 const E = [
@@ -33,6 +33,9 @@ test("poster adds tokens, longest agent and errors", () => {
 test("plural message", () => {
   assert.equal(t("session", { n: 1 }, "en"), "1 session");
   assert.equal(t("session", { n: 3 }, "en"), "3 sessions");
+  MSG.pl = { file: { one: "{n} plik", few: "{n} pliki", many: "{n} plików", other: "{n} pliku" } }; // P4: every CLDR category, not one/other
+  assert.deepEqual([1, 3, 5, 1.5].map((n) => t("file", { n }, "pl")), ["1 plik", "3 pliki", "5 plików", "1.5 pliku"]);
+  delete MSG.pl;
 });
 test("fetchHistory sends until, trims client-side, and reports the limit", async () => {
   const realFetch = globalThis.fetch;
@@ -45,6 +48,8 @@ test("fetchHistory sends until, trims client-side, and reports the limit", async
     assert.match(url, /private=1/);
     assert.deepEqual(r.events.map((e) => e.t), [1, 5]);
     assert.equal(r.limited, false);
+    globalThis.fetch = (async () => new Response(JSON.stringify({ events: [ev(1)], more: true }))) as typeof fetch;
+    assert.equal((await fetchHistory(0)).limited, true); // the daemon's `more` decides, not the page size
     globalThis.fetch = (async () => new Response("", { status: 401 })) as typeof fetch;
     await assert.rejects(fetchHistory(0), /unauthorized/);
   } finally {
@@ -66,4 +71,15 @@ test("pickRange sorts and clamps; zoomView keeps the anchor and the bounds", () 
   assert.deepEqual(z, { t0: 2500, t1: 7500 });
   assert.deepEqual(zoomView(z, 0.01, 5000, full), full); // zooming far out stops at the data
   assert.equal(zoomView(full, 1e9, 0, full).t1 - zoomView(full, 1e9, 0, full).t0, 1000); // and far in at MIN_SPAN
+});
+
+test("historyRange presets: since last visit (at least an hour), first visit 24 h, week, custom", () => {
+  const now = 100 * 3600e3;
+  assert.deepEqual(historyRange("last", now, now - 5 * 3600e3), { since: now - 5 * 3600e3, until: 0 });
+  assert.deepEqual(historyRange("last", now, now - 60e3), { since: now - 3600e3, until: 0 });
+  assert.deepEqual(historyRange("last", now, 0), { since: now - 24 * 3600e3, until: 0 });
+  assert.deepEqual(historyRange("week", now, 0), { since: now - 7 * 24 * 3600e3, until: 0 });
+  assert.deepEqual(historyRange("custom", now, 0, { since: 5, until: 9 }), { since: 5, until: 9 });
+  assert.deepEqual(historyRange("custom", now, 0, { since: 5, until: 2 }), { since: 5, until: 0 }); // an end before the start means now
+  assert.ok(historyRange("today", now, 0).since <= now);
 });

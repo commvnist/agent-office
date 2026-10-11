@@ -435,3 +435,62 @@ test("a usage event updates the session's running total, never lowering it", () 
   const less = { input: 1, output: 0, cacheRead: 0, cacheCreate: 0 };
   assert.deepEqual(run(lead({ type: "usage", usage: u }), lead({ type: "usage", usage: less }), lead({ type: "turn_end", usage: less })).sessions.s1.usage, u, "never shrinks");
 });
+
+test("permWait counts permission waits until the lead's next event; turn waits are not counted", () => {
+  const s0 = run({ type: "session_start", session: "s1", project: "p", t: 0 },
+    { type: "waiting", session: "s1", kind: "permission", t: 100 },
+    { type: "waiting", session: "s1", kind: "permission", t: 150 }); // a repeated prompt keeps its start
+  assert.deepEqual(s0.sessions.s1.permWait, { n: 0, totalMs: 0, since: 100 });
+  const s1 = reduce(cfg, reduce(cfg, s0, { type: "tool", session: "s1", agentId: "x", tool: "Read", t: 200 }), { type: "tool", session: "s1", tool: "Bash", t: 400 });
+  assert.deepEqual(s1.sessions.s1.permWait, { n: 1, totalMs: 300, lastMs: 300 }, "a helper's event does not end it, the lead's does");
+  const s2 = [{ type: "waiting", session: "s1", kind: "turn", t: 500 }, { type: "prompt", session: "s1", text: "go", t: 900 },
+    { type: "waiting", session: "s1", kind: "permission", t: 1000 }, { type: "turn_end", session: "s1", t: 1100 }]
+    .reduce((s, e) => reduce(cfg, s, e as OfficeEvent), s1);
+  assert.deepEqual(s2.sessions.s1.permWait, { n: 2, totalMs: 400, lastMs: 100 });
+});
+
+test("toolStats: p50/p95 and failures per tool from finished calls, bounded", () => {
+  let s = run({ type: "session_start", session: "s1", project: "p", t: 0 });
+  for (let i = 1; i <= 100; i++) {
+    s = reduce(cfg, s, { type: "tool", session: "s1", tool: "Bash", id: `b${i}`, t: i * 1000 });
+    s = reduce(cfg, s, { type: "tool_end", session: "s1", tool: "Bash", id: `b${i}`, ok: i % 10 !== 0, t: i * 1000 + i });
+  }
+  assert.deepEqual(s.sessions.s1.toolStats!.Bash, { n: 64, fail: 7, p50: 68, p95: 97 }, "last 64 calls: 37..100 ms, 40..100 by 10 failed");
+  for (let i = 0; i < 40; i++) {
+    s = reduce(cfg, s, { type: "tool", session: "s1", tool: `T${i}`, id: `t${i}`, t: 200_000 });
+    s = reduce(cfg, s, { type: "tool_end", session: "s1", tool: `T${i}`, id: `t${i}`, ok: true, t: 200_005 });
+  }
+  const st = s.sessions.s1.toolStats!;
+  assert.equal(Object.keys(st).length, LIMITS.toolStats);
+  assert.ok(st.Bash, "the well-sampled tool survives eviction");
+  assert.equal(Object.keys(s.track!.runs!.s1.tools).length, LIMITS.toolStats);
+});
+
+test("an ended session leaves an after-action summary with no free text", () => {
+  const evs: OfficeEvent[] = [
+    { type: "session_start", session: "s1", project: "p", cwd: "/w/proj", t: 1000 },
+    { type: "delegate", session: "s1", agentType: "qa-engineer", text: "SECRET TASK", t: 1100 },
+    { ...start("a"), t: 1150 }, { ...start("b"), t: 1150 },
+    { type: "tool", session: "s1", agentId: "a", tool: "Bash", detail: "SECRET CMD", id: "x", t: 1200 },
+    { type: "tool_end", session: "s1", agentId: "a", tool: "Bash", ok: false, error: "SECRET ERR", id: "x", t: 1300 },
+    { type: "agent_stop", session: "s1", agentId: "a", message: "DONE: SECRET RESULT", t: 1400 },
+    { type: "agent_stop", session: "s1", agentId: "b", outcome: "partial", t: 1500 }, // stored line without text
+    { type: "waiting", session: "s1", kind: "permission", t: 1600 },
+    { type: "tool", session: "s1", tool: "Read", t: 1700 },
+    { type: "usage", session: "s1", usage: { input: 1, output: 2, cacheRead: 0, cacheCreate: 0 }, t: 1800 },
+    { type: "session_end", session: "s1", t: 2000 },
+  ];
+  const s = run(...evs);
+  assert.equal(s.track!.runs!.s1, undefined);
+  const [sum] = s.summaries!;
+  assert.deepEqual({ ...sum, tree: sum.tree.map((x) => [x.id, x.name, x.role, x.parent]) }, {
+    session: "s1", project: "proj", startedAt: 1000, endedAt: 2000, durationMs: 1000, agents: 2,
+    tree: [["a", "Quinn", "qa", "lead:s1"], ["b", "Sam", "qa", "lead:s1"]], errors: 1,
+    permission: { n: 1, totalMs: 100 }, outcomes: { done: 1, blocked: 0, partial: 1, empty: 0 }, usage: { input: 1, output: 2, cacheRead: 0, cacheCreate: 0 },
+  });
+  assert.ok(!JSON.stringify(s.summaries).includes("SECRET"));
+  const swept = sweep(run({ type: "session_start", session: "s9", project: "q", t: 0 }), 10_000, 1000).state;
+  assert.equal(swept.summaries![0].session, "s9", "the idle sweep writes one too");
+  const many = Array.from({ length: 25 }, (_, i) => [{ type: "session_start", session: `z${i}`, project: "p", t: i }, { type: "session_end", session: `z${i}`, t: i }] as OfficeEvent[]).flat();
+  assert.equal(run(...many).summaries!.length, LIMITS.summaries);
+});

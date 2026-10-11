@@ -31,8 +31,8 @@ daemon. It never prompts Claude. If `claude` is not on PATH it prints the two `/
 | Try without Claude Code | The page's **Sample** button (no daemon needed), or `npm run demo` (plays fake sessions into a throwaway daemon and prints its URL; `-- --live` posts to your real one) |
 | Start, restart or inspect the daemon | `node scripts/office.mjs start\|restart\|status` (`status` shows event age and per-session lines) |
 | Write a starter config, check it offline | `node scripts/office.mjs init`, `node scripts/office.mjs config --validate` |
-| Daily digest from stored events | `node scripts/digest.mjs --days 7 [--json]` (only as far back as `historyHours` keeps) |
-| See or delete the stored history | `node scripts/office.mjs history`, `node scripts/office.mjs history --purge` |
+| Daily digest from stored events | `node scripts/digest.mjs --days 7 [--json] [--counts]` (only as far back as `historyHours` keeps; `--counts` leaves out file paths, for sharing) |
+| See or delete the stored history | `node scripts/office.mjs history`, `node scripts/office.mjs history --purge` (everything), `node scripts/office.mjs history --purge-text` (free text only, the timeline stays) |
 | Try without installing | `claude --plugin-dir ./plugin` |
 
 The marketplace manifest is `.claude-plugin/marketplace.json` (plugin source `./plugin`).
@@ -64,7 +64,8 @@ Re-read on change, no restart needed. Without the file, the built-in roster (arc
 | `parallelism` | `off`, `auto` (default, a neutral note: delegating is optional), `aggressive` (asks the lead to split work and fan out). Office protocol only |
 | `enforceSeats` | Deny spawns when every desk is taken (the office holds up to 64) instead of queueing visually. Office protocol only |
 | `privacy` | Hide prompt/tool text; show tool names and structure only. Also: free text is stripped before anything is written to disk, and transcripts are never opened (no narration, no token totals) |
-| `historyHours` | Hours of event history kept on disk (1-2160, default 168 = 7 days, matching the 7-day digest); older events are deleted at start and hourly |
+| `historyHours` | Hours of event history kept on disk (1-2160, default 168 = 7 days, matching the 7-day digest); older events are deleted at start and hourly (whole UTC day files, so disk may hold up to a day more; reads never return older events) |
+| `textHours` | Hours the free text of stored events is kept (1-2160, default = `historyHours`); older text files are deleted earlier and the timeline (structure, tool names, counts) stays |
 | `idleTtlMinutes` | Minutes of silence (1-1440, default 45) before an idle session is swept; unknown keys are ignored with a warning |
 | `spendAlarmTokens` | Integer 0-1000000000 (0 or absent = off): the client warns when a session's token total (input + output + cache creation) crosses it |
 | `theme` | Ignored: there is one built-in look. Still accepted so old files keep loading |
@@ -73,7 +74,7 @@ Hot files (observer-only, derived from hook tool events): `Edit`/`Write`/`MultiE
 
 Some of these options are defined in the types before every consumer ships; see `docs/improvements.md` for status. Ready-made rosters live in `plugin/packs` (`node scripts/apply-pack.mjs --list`, then `node scripts/apply-pack.mjs heist --dry-run`; agents go to `./.claude/agents` unless `--agents-dir` is given, `*.bak` backups are kept and `--undo` restores them).
 
-Environment: `AGENT_OFFICE_PORT` (default 4747), `AGENT_OFFICE_HOME` (default `~/.agent-office`), `AGENT_OFFICE_LOG=1` (append raw hook payloads to `events.log`; ignored in privacy mode), `AGENT_OFFICE_HOST` (bind address, default 127.0.0.1; a non-loopback address is refused unless `AGENT_OFFICE_ALLOW_REMOTE=1` is also set), `AGENT_OFFICE_DISABLED=1` (hooks do nothing). API: `docs/event-api.md`; CLI: `node scripts/office.mjs status|start|restart|stop|doctor|init|config --validate|history [--purge]`. More in `docs/ENTERPRISE.md`.
+Environment: `AGENT_OFFICE_PORT` (default 4747), `AGENT_OFFICE_HOME` (default `~/.agent-office`), `AGENT_OFFICE_LOG=1` (append raw hook payloads to `events.log`; ignored in privacy mode), `AGENT_OFFICE_HOST` (bind address, default 127.0.0.1; a non-loopback address is refused unless `AGENT_OFFICE_ALLOW_REMOTE=1` is also set), `AGENT_OFFICE_DISABLED=1` (hooks do nothing). API: `docs/event-api.md`; CLI: `node scripts/office.mjs status|start|restart|stop|doctor|init|config --validate|history [--purge|--purge-text]`. More in `docs/ENTERPRISE.md`.
 
 ### Office protocol: what the office tells the model
 
@@ -87,10 +88,15 @@ The plugin also ships agent definitions and the `office-delegation` skill; Claud
 
 ### What is stored, where, for how long
 
-- **Event log**: `~/.agent-office/events.jsonl` (mode 0600, plus one backup `events.jsonl.1` after 5 MB). Every normalized event: tool names, clipped and redacted tool detail, prompts, working folder and branch, task and report text, token totals. It powers restart recovery, Replay, Recap and the digest. Kept for `historyHours` (default 168 h, 7 days). In privacy mode free text is stripped before it is written.
+- **Event log**: one set of files per UTC day in `~/.agent-office/events/` (folder mode 0700, files 0600). It powers restart recovery, History, Replay, Recap and the digest.
+  - `YYYY-MM-DD.jsonl`: every normalized event without its free text: type, session and agent ids, tool names, project folder name, ok/failed, report outcome (done/blocked/partial), token totals, times.
+  - `YYYY-MM-DD.text.jsonl`: the free text of those events (clipped and redacted prompts, tool detail and reasons, task and report text, errors, working folder and branch), keyed by the byte offset of its event line. Kept for `textHours` (default = `historyHours`); deleting it keeps the timeline. Never written in privacy mode.
+  - `YYYY-MM-DD.idx`: `time offset textOffset` lines so history reads can seek.
+  - Whole days are kept for `historyHours` (default 168 h, 7 days).
+- **Legacy event log** `events.jsonl` (+ `events.jsonl.1`): written by versions before the per-day files, text inline. Still read for history from before the switch, pruned by `historyHours` as before, never written again.
 - **Raw log** `events.log`: only when `AGENT_OFFICE_LOG` is set (never in privacy mode).
 - **Also in that folder**: `office.json`, `token`, `port`/`pid`, `daemon` (path of the daemon), `last-hook.json` (last hook name and session id) and `seq/` (per-session counters, no text).
-- **Delete**: `node scripts/office.mjs history --purge` (event and raw logs), or `node scripts/office.mjs uninstall --purge` (the whole folder). Nothing is stored anywhere else and nothing leaves the machine.
+- **Delete**: `node scripts/office.mjs history --purge` (day files, legacy and raw logs), `node scripts/office.mjs history --purge-text` (only the `.text.jsonl` files), or `node scripts/office.mjs uninstall --purge` (the whole folder). Nothing is stored anywhere else and nothing leaves the machine.
 
 ## Desks and pods
 

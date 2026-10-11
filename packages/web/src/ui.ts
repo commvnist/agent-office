@@ -7,7 +7,7 @@ import { bySession, burnHot, captionText, burnRate, cdCommand, filterFeed, fmtAg
 import { bindPanelChrome } from "./panel.ts";
 import { backToLive, bindModes, toggleSample } from "./modes.ts";
 import { STATUS, STATUS_ORDER } from "./theme.ts";
-import { clipWords, doneRows, dropOutcome, look, nextStep, outcomeLook, statusKey, statusWord, tree } from "./triage.ts";
+import { clipWords, doneRows, dropOutcome, look, nextStep, outcomeLook, permLine, statusKey, statusWord, topTools, tree } from "./triage.ts";
 import * as notify from "./notify.ts";
 import { bindFun, ringsEl } from "./fundom.ts";
 import { bindColonists } from "./colonists.ts";
@@ -23,6 +23,7 @@ const copyBtn = (label: string, text: string, title: string) =>
 const loadJson = <T,>(k: string, fb: T): T => { try { return JSON.parse(store.get(k) ?? "") ?? fb; } catch { return fb; } };
 const accent = (e: HTMLElement, project: string) => { e.classList.add("pc"); e.style.setProperty("--pc", `hsl(${projectHue(project)} 60% 65%)`); };
 const stateOf = () => office.getEnvelope()?.state;
+const signals = (sid: string) => stateOf()?.sessions[sid];
 /** Live source with the daemon stream down: panel sections say so instead of looking empty. */
 const offline = () => office.source.mode === "live" && office.connection.state === "retrying";
 /** Leads of a waiting session read as waiting everywhere (radar, roster, session row). */
@@ -142,6 +143,24 @@ function toolList(calls: readonly ToolCall[], hide: boolean): HTMLElement {
   return d;
 }
 
+/** Per-tool timings of the session (contract 1): the 5 busiest tools, p50/p95 over their last 64 calls and the failure rate. */
+function toolStatsList(sid: string): HTMLElement | null {
+  const top = topTools(signals(sid)?.toolStats);
+  if (!top.length) return null;
+  const d = el("details", "full tcalls");
+  d.append(el("summary", "", "session tool timings (p50 / p95)"));
+  const ul = el("ul", "tc");
+  ul.setAttribute("aria-label", "Busiest tools of this session with median and 95th percentile duration");
+  for (const x of top) {
+    const li = el("li");
+    li.append(el("b", "", x.tool), el("span", "k", ` ${x.n} · p50 ${fmtMs(x.p50)} · p95 ${fmtMs(x.p95)}`));
+    if (x.fail) li.append(el("span", "er", ` · ${Math.round((x.fail / x.n) * 100)}% failed`));
+    ul.append(li);
+  }
+  d.append(ul);
+  return d;
+}
+
 // ---- selected card (#79 #91 #92) = the triage card (X1, X2): state, reason, who delegated it, the next step, the tree ----
 function renderCard() {
   const c = $("card"), id = office.selected;
@@ -160,6 +179,9 @@ function renderCard() {
   if (a.confidence === "guess") rows.push(["handed by", "a guess: several or no delegations matched this helper"]);
   if (a.branch) rows.push(["branch", a.branch]);
   if (a.cwd) rows.push(["folder", a.cwd]);
+  const perm = a.lead ? permLine(signals(a.session)?.permWait, Date.now(), fmtDur) : "";
+  if (perm) rows.push(["permission", perm]);
+  const timings = toolStatsList(a.session);
   const texts: [string, string | undefined][] = [
     ["prompt", last((i) => i.kind === "prompt" && i.toId === a.id)?.text],
     ["delegation received", last((i) => i.kind === "delegate" && i.toId === a.id)?.text],
@@ -170,7 +192,7 @@ function renderCard() {
   const full = texts.filter((x): x is [string, string] => !!x[1]);
   if (k === "blocked") full.sort((x, y) => +(y[0] === "report") - +(x[0] === "report")); // most relevant first
   const calls = tools.get(a.id), hide = hideText();
-  const sig = JSON.stringify([a.label, k, reason, a.task, t.up.map((x) => x.id), t.down.map((x) => [x.id, keyOf(x)]), rows, full, calls, hide, office.source.mode]);
+  const sig = JSON.stringify([a.label, k, reason, a.task, t.up.map((x) => x.id), t.down.map((x) => [x.id, keyOf(x)]), rows, full, calls, hide, office.source.mode, timings?.textContent]);
   renderIf(c, sig, () => {
     const out: Node[] = [];
     const head = el("div", "chead");
@@ -204,7 +226,7 @@ function renderCard() {
     const md = [`## ${a.label}: ${look(k).label}`, ...(reason ? [`- reason: ${reason}`] : []), ...(by ? [`- delegated by: ${by}`] : []), ...rows.map(([key, v]) => `- ${key}: ${v}`), ...full.map(([key, v]) => `\n### ${key}\n${v}`)].join("\n");
     const bar = el("div", "row");
     bar.append(btn("Focus", "Zoom to and follow it (f)", () => office.focus(a.id), "b sm"), copyBtn("Copy summary", md, "Copy this agent's state as markdown"), btn("Clear", "Deselect (Esc)", () => office.select(null), "b sm"));
-    out.push(bar, toolList(calls, hide));
+    out.push(bar, toolList(calls, hide), ...(timings ? [timings] : []));
     full.forEach(([key, v], n) => {
       const d = el("details", "full");
       d.open = n === 0 && k !== "working";
@@ -257,13 +279,13 @@ function renderSessions(now: number) {
   const st = stateOf();
   const acts = office.actors();
   const list = office.sessions();
-  const rows = list.map((s) => ({ s, last: st?.sessions[s.id]?.lastAt, prompt: st?.sessions[s.id]?.prompt, u: urgency(s, acts), rate: rateOf(s.id, now), c: ringCounts(acts, s.id) }))
+  const rows = list.map((s) => ({ s, last: st?.sessions[s.id]?.lastAt, prompt: st?.sessions[s.id]?.prompt, perm: permLine(signals(s.id)?.permWait, now, fmtDur), u: urgency(s, acts), rate: rateOf(s.id, now), c: ringCounts(acts, s.id) }))
     .sort((a, b) => a.u - b.u || a.s.project.localeCompare(b.s.project));
   const tot = sumUsage(list.map((s) => s.usage));
   $("n-sess").textContent = rows.length ? `(${rows.length})` : "";
-  renderIf($("sessions"), JSON.stringify([rows.map((r) => [r.s, r.prompt, r.u, r.last ? fmtAge(now - r.last) : "", Math.round(r.rate / 1000), filter.session === r.s.id, r.c]), idleOpen]), () => {
+  renderIf($("sessions"), JSON.stringify([rows.map((r) => [r.s, r.prompt, r.u, r.perm, r.last ? fmtAge(now - r.last) : "", Math.round(r.rate / 1000), filter.session === r.s.id, r.c]), idleOpen]), () => {
     if (!rows.length) return [el("div", "k pad", offline() ? "Offline: waiting for the daemon (see the banner at the top of the panel)." : "No sessions yet. Start Claude Code with the plugin.")];
-    const one = ({ s, last, prompt, rate, c }: (typeof rows)[number]) => {
+    const one = ({ s, last, prompt, perm, rate, c }: (typeof rows)[number]) => {
       const d = el("div", c.total ? "sess hasr" : "sess");
       accent(d, s.project);
       if (c.total) d.append(ringsEl(c));
@@ -273,6 +295,7 @@ function renderSessions(now: number) {
       if (prompt) { const p = el("div", "pr", prompt); p.title = prompt; d.append(p); }
       const quiet = last ? (now - last < 60_000 ? "active now" : `quiet ${fmtAge(now - last)}`) : "";
       d.append(el("div", "k", [`${s.agents} agent${s.agents === 1 ? "" : "s"}`, s.branch ? `branch ${s.branch}` : "", quiet].filter(Boolean).join(" · ")));
+      if (perm) d.append(el("div", "k", perm));
       if (s.usage) {
         const u = el("div", "k", fmtTokens(s.usage));
         if (rate > 0) { const r = el("span", `burn${burnHot(rate) ? " hot" : ""}`, ` · ~${Math.round(rate / 1000)}k tokens/min${burnHot(rate) ? " (high)" : ""}`); u.append(r); }

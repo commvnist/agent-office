@@ -390,3 +390,6 @@ export function courierGuard(cx: number, cy: number, walkers: Iterable<{ x: numb
   }
   return { wait, fade };
 }
+
+/** When a running tool earns the long-call arc: 3x that tool's own p95 in this session once 5 calls are known (never under 10 s), else 30 s. */
+export const longToolMs = (st?: { n: number; p95: number }) => (st && st.n >= 5 ? Math.max(10_000, 3 * st.p95) : 30_000);

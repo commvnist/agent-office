@@ -31,6 +31,7 @@ body:has(.view:not([hidden])) #top{background:var(--bg)}
 .tile{display:flex;flex-direction:column;gap:4px;text-align:left;background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--st,var(--mute));border-radius:4px;padding:8px 12px;cursor:pointer}
 .tile>span:nth-child(2){color:var(--st);font-weight:700}
 .tile .er{color:var(--bad-ink)}
+.tile.ended{cursor:default}
 .tlview{display:flex;flex-direction:column;overflow:hidden}
 .tlbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .tlwrap{flex:1;min-height:0;overflow-y:auto;position:relative}

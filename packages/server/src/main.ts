@@ -5,14 +5,14 @@ import { join, normalize, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import {
-  emptyState, reduce, sweep, capacityFor, roleFor, leadRoster, introFor, SCHEMA_VERSION,
+  reduce, sweep, capacityFor, roleFor, leadRoster, introFor, outcomeOf, safeId, SCHEMA_VERSION,
   type OfficeConfig, type OfficeEvent, type OfficeState,
 } from "@agent-office/core";
 import { adapt, clip } from "./adapter.ts";
 import { validateConfig, unknownKeys } from "./config.ts";
 import { summarize } from "./digest.ts";
-import { appendRotating, loadEvents, pruneEvents, replay } from "./store.ts";
-import { fitEnvelope, publicState } from "./snapshot.ts";
+import { appendRotating, appendEvent, readEvents, pruneEvents, pruneDays, replay, strip } from "./store.ts";
+import { fit, publicState, lodState, diffEnvelope, type Snap } from "./snapshot.ts";
 import { readNarration, readUsage, newLedger, tallyUsage, ledgerTotal, type Ledger } from "./usage.ts";
 
 const PORT = Number(process.env.AGENT_OFFICE_PORT ?? 4747);
@@ -70,35 +70,67 @@ function reloadConfig(): boolean {
 const ttlMs = () => (cfg.idleTtlMinutes ?? 45) * 60_000;
 reloadConfig();
 
-// State: rebuilt from the stored event log, then swept so quiet sessions do not come back.
+// State: rebuilt from the stored events (day files under events/, plus the legacy events.jsonl), then swept so quiet sessions do not come back.
 const EVENTS = join(DIR, "events.jsonl");
 const historyMs = () => (cfg.historyHours ?? 168) * 3600_000;
-/** Retention: delete stored events older than historyHours (boot and hourly). */
-const prune = () => { try { const n = pruneEvents(EVENTS, Date.now() - historyMs()); if (n) log(`history: pruned ${n} events older than ${cfg.historyHours ?? 168} h`); } catch (e) { log("history prune:", (e as Error).message); } };
+const textMs = () => Math.min(cfg.textHours ?? Infinity, cfg.historyHours ?? 168) * 3600_000;
+/** Retention: delete stored events older than historyHours and stored text older than textHours (boot and hourly). */
+const prune = () => {
+  try {
+    const n = pruneEvents(EVENTS, Date.now() - historyMs());
+    const f = pruneDays(DIR, Date.now() - historyMs(), Date.now() - textMs());
+    if (n || f) log(`history: pruned ${n} legacy events and ${f} day files (historyHours ${cfg.historyHours ?? 168}, textHours ${cfg.textHours ?? cfg.historyHours ?? 168})`);
+  } catch (e) { log("history prune:", (e as Error).message); }
+};
 prune();
 // shortcut: replay the last 50k events of the retention window (a busy hour can exceed the 5k default and drop session starts); raise it if sessions come back as "recovered"
-let state: OfficeState = replay(cfg, loadEvents(EVENTS, Date.now() - historyMs(), 50_000), Date.now(), ttlMs());
+let state: OfficeState = replay(cfg, (await readEvents(DIR, { since: Date.now() - historyMs(), limit: 50_000, text: !cfg.privacy })).events, Date.now(), ttlMs());
 let rev = 0, events = 0, lastEventAt = 0;
 /** Re-read office.json; a change must reach clients (and the envelope cache) whichever request noticed it first. */
 const refreshConfig = () => { if (!reloadConfig()) return false; rev++; push(); return true; };
 let lastProto: unknown;
-type Client = { priv: boolean };
-const clients = new Map<ServerResponse, Client>();
-let cache: { rev: number; json?: string; priv?: string } = { rev: -1 };
-function envelope(priv: boolean): string {
-  if (cache.rev !== rev) cache = { rev };
-  const k = priv ? "priv" : "json";
-  const hide = priv || !!cfg.privacy;
-  return (cache[k] ??= fitEnvelope({
-    schema: SCHEMA_VERSION, version: VERSION, epoch: EPOCH, rev, privacy: hide, protocol: cfg.protocol ?? "office",
-    configError, configWarning, config: cfg,
-  }, publicState(state, hide), MAX_STATE));
+/** What a client sees: free text blanked (`priv`), and the level of detail (`lod`: summary counts; `session` in full). */
+type View = { priv: boolean; lod: boolean; session?: string };
+const viewKey = (v: View) => `${+v.priv}|${+v.lod}|${v.session ?? ""}`;
+const viewOf = (u: URL): View => {
+  const q = u.searchParams.get("session"), session = q && safeId(q) ? q : undefined;
+  return { priv: u.searchParams.get("private") === "1" || !!cfg.privacy, lod: u.searchParams.get("lod") === "summary" || session !== undefined, session };
+};
+type Sent = Snap & { json: string; degraded: boolean };
+const clients = new Map<ServerResponse, View>();
+let cache: { rev: number; m: Map<string, Sent> } = { rev: -1, m: new Map() };
+function snap(v: View): Sent {
+  if (cache.rev !== rev) cache = { rev, m: new Map() };
+  let x = cache.m.get(viewKey(v));
+  if (!x) {
+    const hide = v.priv || !!cfg.privacy, pub = publicState(state, hide);
+    const head = { schema: SCHEMA_VERSION, version: VERSION, epoch: EPOCH, rev, privacy: hide, protocol: cfg.protocol ?? "office", configError, configWarning, config: cfg };
+    const st = v.lod ? lodState(pub, v.session) : pub;
+    cache.m.set(viewKey(v), (x = { head, st, ...fit(head, st, MAX_STATE) }));
+  }
+  return x;
 }
 const write = (res: ServerResponse, chunk: string) => {
   if (res.writableLength > MAX_BUFFERED) { clients.delete(res); res.destroy(); return; }
   res.write(chunk);
 };
-const push = () => { for (const [res, c] of clients) write(res, `id: ${EPOCH}-${rev}\ndata: ${envelope(c.priv)}\n\n`); };
+/** Per view: the last snapshot its clients hold, so the next push can be a patch against it. */
+const lastSent = new Map<string, Sent>();
+const full = (x: Sent) => `id: ${EPOCH}-${rev}\ndata: ${x.json}\n\n`;
+// shortcut: the full envelope is still serialized on every commit (to know whether it is degraded); skip it when CPU shows up in profiles.
+const push = () => {
+  const frames = new Map<string, string>();
+  for (const [res, v] of clients) {
+    const k = viewKey(v);
+    let f = frames.get(k);
+    if (f === undefined) {
+      const cur = snap(v), prev = lastSent.get(k);
+      f = !prev || prev.degraded || cur.degraded ? full(cur) : `id: ${EPOCH}-${rev}\nevent: patch\ndata: ${JSON.stringify(diffEnvelope(prev, cur))}\n\n`;
+      frames.set(k, f); lastSent.set(k, cur);
+    }
+    write(res, f);
+  }
+};
 
 /** Install a new state and push it (an oversized envelope is trimmed and marked degraded, never dropped: fitEnvelope). */
 function commit(next: OfficeState) {
@@ -124,10 +156,6 @@ const hasHeaderToken = (req: IncomingMessage) => { const t = req.headers["x-agen
 const canRead = (req: IncomingMessage) => hasHeaderToken(req) || same(cookieOf(req), TOKEN);
 const json = (res: ServerResponse, code: number, body: unknown) => res.writeHead(code, { "content-type": "application/json" }).end(JSON.stringify(body));
 
-const TEXTY = ["text", "detail", "why", "message", "error", "cwd", "branch"];
-const strip = (e: OfficeEvent) => Object.fromEntries(Object.entries(e).filter(([k]) => !TEXTY.includes(k)));
-/** Stored form in privacy mode: the same fields gone, `text` kept as "" so the event still replays. */
-const scrub = (e: OfficeEvent) => ({ ...strip(e), ...("text" in e ? { text: "" } : {}) });
 
 /** Only text meant for the model, bounded, without control characters. */
 const cleanContext = (s: string) => s.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "").slice(0, 2000);
@@ -229,12 +257,14 @@ function onEvent(payload: any, res: ServerResponse) {
   }
   let next = state, ctx: string | null = null;
   for (const e of evs) {
+    const before = next;
     next = reduce(c, next, e);
     // Hook stdout is parsed by Claude Code: this is how roster/identity reach the model.
     if (e.type === "session_start") ctx = leadRoster(c);
     else if (e.type === "agent_start") ctx = introFor(c, next, e.agentId);
-    // Privacy mode: free text never reaches disk (same fields /history blanks).
-    try { appendRotating(EVENTS, JSON.stringify({ v: SCHEMA_VERSION, ...(c.privacy ? scrub(e) : e) })); } catch (err) { log("event log:", (err as Error).message); }
+    // Privacy mode: free text never reaches disk (same fields /history blanks). The outcome is stamped so a replay without text keeps it.
+    const stored = e.type === "agent_stop" ? { ...e, outcome: outcomeOf(e.message ?? before.agents[e.agentId]?.report) } : e;
+    try { appendEvent(DIR, stored, !!c.privacy); } catch (err) { log("event log:", (err as Error).message); }
   }
   if (evs.length) commit(next);
   const out = office && ctx && (hook === "SessionStart" || hook === "SubagentStart")
@@ -281,26 +311,39 @@ function handle(req: IncomingMessage, res: ServerResponse, allowedHosts: Set<str
 
   if (path === "/state" || path === "/stream" || path === "/history" || path === "/status" || path === "/outcomes") {
     if (!canRead(req)) return void res.writeHead(401).end();
-    const priv = u.searchParams.get("private") === "1" || !!cfg.privacy;
-    if (path === "/state") { refreshConfig(); return void res.writeHead(200, { "content-type": "application/json" }).end(envelope(priv)); }
+    const view = viewOf(u), priv = view.priv;
+    const fail = (e: unknown) => { log("read error:", e); if (!res.headersSent) res.writeHead(500).end(); else res.end(); };
+    if (path === "/state") { refreshConfig(); return void res.writeHead(200, { "content-type": "application/json" }).end(snap(view).json); }
     if (path === "/stream") {
       if (clients.size >= MAX_CLIENTS) return void res.writeHead(503).end();
       refreshConfig();
       res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
-      // A reconnecting client that already has this revision gets no duplicate snapshot.
-      if (req.headers["last-event-id"] !== `${EPOCH}-${rev}`) write(res, `id: ${EPOCH}-${rev}\ndata: ${envelope(priv)}\n\n`);
+      // A reconnecting client that already has this revision gets no duplicate snapshot. Either way it holds `snap(view)` now.
+      const cur = snap(view), k = viewKey(view);
+      if (req.headers["last-event-id"] !== `${EPOCH}-${rev}`) write(res, full(cur));
       else res.write(": up to date\n\n");
-      clients.set(res, { priv });
-      req.on("close", () => clients.delete(res));
+      clients.set(res, view);
+      lastSent.set(k, cur);
+      req.on("close", () => { clients.delete(res); if (![...clients.values()].some((v) => viewKey(v) === k)) lastSent.delete(k); });
       return;
     }
     if (path === "/history") {
-      const since = Number(u.searchParams.get("since")) || 0;
-      const limit = Math.min(Math.max(Number(u.searchParams.get("limit")) || 500, 1), 2000);
+      // Never older than the retention window (day files are deleted whole, so disk may hold up to a day more).
+      const since = Math.max(Number(u.searchParams.get("since")) || 0, Date.now() - historyMs());
+      const limit = Math.min(Math.max(Number(u.searchParams.get("limit")) || 500, 1), 20_000);
       const untilParam = u.searchParams.get("until");
       const until = untilParam && Number.isFinite(+untilParam) ? +untilParam : Infinity;
-      const events = loadEvents(EVENTS, since, limit, until);
-      return json(res, 200, { schema: SCHEMA_VERSION, epoch: EPOCH, events: priv ? events.map(strip) : events });
+      // Streamed out in slices of 500 events, waiting for the socket to drain: a 20k-event page never builds one big string.
+      readEvents(DIR, { since, until, limit, text: !priv }).then(async ({ events, more }) => {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.write(`{"schema":${SCHEMA_VERSION},"epoch":${JSON.stringify(EPOCH)},"more":${more},"events":[`);
+        for (let i = 0; i < events.length && !res.destroyed; i += 500) {
+          const part = events.slice(i, i + 500).map((e) => JSON.stringify(priv ? strip(e) : e)).join(",");
+          if (!res.write((i ? "," : "") + part)) await new Promise((r) => { res.once("drain", r); res.once("close", r); }); // a closed client must not leave this waiting
+        }
+        res.end("]}");
+      }).catch(fail);
+      return;
     }
     if (path === "/status") {
       const agents = Object.values(state.agents).filter((a) => a.seat);
@@ -322,7 +365,8 @@ function handle(req: IncomingMessage, res: ServerResponse, allowedHosts: Set<str
     }
     if (path === "/outcomes") {
       const days = Math.min(Math.max(Number(u.searchParams.get("days")) || 7, 1), 90);
-      return json(res, 200, { schema: SCHEMA_VERSION, days: summarize(loadEvents(EVENTS, Date.now() - days * 86_400_000, 50_000)) });
+      readEvents(DIR, { since: Date.now() - days * 86_400_000, limit: 50_000 }).then(({ events }) => json(res, 200, { schema: SCHEMA_VERSION, days: summarize(events) }), fail);
+      return;
     }
   }
 

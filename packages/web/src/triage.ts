@@ -1,5 +1,6 @@
 // Pure helpers for the experience layer (no DOM): one status vocabulary for every DOM surface, the triage card's
 // next step and delegation tree, word-boundary clipping, the "Recently done" rows.
+import type { Session } from "@agent-office/core";
 import { STATUS, type StatusKey } from "./theme.ts";
 
 type Sess = { waiting?: boolean; waitKind?: "permission" | "turn"; waitingText?: string };
@@ -61,3 +62,20 @@ export function doneRows(outcomes: readonly Outcome[] | undefined, feed: readonl
 /** Outcome glyph and word: done is quiet (working green), gave up uses the blocked status, partial and unknown stay neutral. */
 export const outcomeLook = (o: string): Look =>
   o === "blocked" ? STATUS.blocked : o === "done" ? { color: STATUS.working.color, glyph: "✓", label: "done" } : o === "partial" ? { color: STATUS.idle.color, glyph: "~", label: "partly done" } : { color: STATUS.idle.color, glyph: "•", label: "finished" };
+
+// ---- derived signals (contract 1); absent from older daemons ----
+type PermWait = NonNullable<Session["permWait"]>;
+type ToolStat = NonNullable<Session["toolStats"]>[string];
+/** "2 permission waits · avg 14s · waiting 40s now"; "" when there were none and none is open. */
+export function permLine(p: PermWait | undefined, now: number, fmt: (ms: number) => string): string {
+  if (!p || (!p.n && !p.since)) return "";
+  const parts = p.n ? [`${p.n} permission wait${p.n === 1 ? "" : "s"}`] : [];
+  if (p.n) parts.push(`avg ${fmt(p.totalMs / p.n)}`);
+  // whole minutes only: the text (and so the card that shows it) changes at most once a minute, not every render
+  const age = p.since ? Math.floor(Math.max(0, now - p.since) / 60_000) * 60_000 : 0;
+  if (p.since) parts.push(`${p.n ? "" : "permission: "}${age ? `waiting ${fmt(age)}` : "waiting now"}`);
+  return parts.join(" · ");
+}
+/** The busiest tools first (by calls, then name), at most `max`. */
+export const topTools = (stats: Record<string, ToolStat> | undefined, max = 5) =>
+  Object.entries(stats ?? {}).sort((a, b) => b[1].n - a[1].n || a[0].localeCompare(b[0])).slice(0, max).map(([tool, s]) => ({ tool, ...s }));

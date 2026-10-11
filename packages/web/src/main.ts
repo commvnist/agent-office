@@ -18,7 +18,7 @@ import { dev, setDpr } from "./snap.ts";
 import { clip, store } from "./dom.ts";
 import { ticketTex } from "./ticket.ts";
 import { hash } from "./color.ts";
-import { courierGuard, alertsFor, boardLines, crowdLod, doorHold, holds, loadLevel, newAlerts, feedItem, isWorking, pickPartner, pickStroller, planInteraction, sessionHue, shrinkFloor, pushCapped, courierDue, statusOf, stepHold, couchSeats, tetherAlpha, ticketEnd, ticketFor, ticketT, yieldsTo, TICKET_MS, uniqueNames, type Action, type PlanCtx, type Shrink, type StrollCand, type Ticket } from "./choreo.ts";
+import { courierGuard, alertsFor, boardLines, crowdLod, doorHold, holds, loadLevel, newAlerts, feedItem, isWorking, longToolMs, pickPartner, pickStroller, planInteraction, sessionHue, shrinkFloor, pushCapped, courierDue, statusOf, stepHold, couchSeats, tetherAlpha, ticketEnd, ticketFor, ticketT, yieldsTo, TICKET_MS, uniqueNames, type Action, type PlanCtx, type Shrink, type StrollCand, type Ticket } from "./choreo.ts";
 import { advance, connect, newCursor, type Envelope } from "./net.ts";
 import { camera, bindPointer, isNarrow, phoneScale, pickAuto } from "./camera.ts";
 import { hooks, liveIn, office, publish, pushFeed, setConnection, isPresenter, type ActorInfo, type SessionInfo } from "./api.ts";
@@ -790,6 +790,7 @@ function onEnvelope(env: Envelope) {
   skyT = office.source.mode === "replay" ? state.log[state.log.length - 1]?.t ?? 0 : 0;
   chooseLayout();
   syncActors();
+  if (r.fresh) fastForward(); // the crowd already at work is at its desks, not parading in through the door (a 45-agent page took ~15 s)
   const now = Date.now(), hidden = document.hidden;
   if (r.fresh) for (const it of env.state.log) if (it.kind === "report" && it.outcome === "done" && now - it.t < 600_000) pushSignal(doneAt, it.t);
   stepFunLayer(env, prevState, r.fresh, now, hidden);
@@ -1013,6 +1014,7 @@ app.ticker.add((tk) => {
     a.setStaleMin(quietMs >= idleTagMs ? Math.floor(quietMs / 60_000) : 0); // "idle 7m" in the tag, at the Stuck threshold
     a.thinking = !a.lead || !!state.sessions[meta.get(id)?.session ?? ""]?.prompt;
     a.toolSince = isRun && now - a.busyAt < STALE_MS ? a.busyAt : 0; // past 5 min a missing tool_end is likelier than a real call
+    if (a.toolSince) { const sess = state.sessions[meta.get(id)?.session ?? ""], tool = a.lead ? sess?.doing : state.agents[id]?.doing; a.longAfter = longToolMs(tool ? sess?.toolStats?.[tool] : undefined); }
     a.update(dt, now);
     a.syncUi(ui.ox, ui.oy, ui.sc, hud);
     if (a.path.length || a.speech || a.toolBubble || a.emote || a.hop > 0) active = true;

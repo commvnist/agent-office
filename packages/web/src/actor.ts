@@ -169,6 +169,7 @@ export class Actor {
   private lx = 0; // lane offset (art px): walkers keep to their right
   private ly = 0;
   toolSince = 0; // start of the tool call in flight, 0 = none
+  longAfter = 30_000; // ms before that call earns the long-call arc (main.ts: longToolMs)
   private glitchAt = 0; // wall ms of the last tag glitch (120ms jitter + chromatic tint)
 
   constructor(
@@ -571,10 +572,10 @@ export class Actor {
     // arc for a tool call that has been running a while: busy, not hung (#114)
     const el = this.toolSince ? this.t - this.toolSince : 0;
     if (this.progOn) { this.prog.clear(); this.progOn = false; }
-    if (el > 30_000) { // only a genuinely long call earns a mark, and only the arc: a full track circle on every busy worker read as noise (critique A4/T7)
+    if (el > this.longAfter) { // only a genuinely long call (3x the tool's own p95) earns a mark, and only the arc: a full track circle on every busy worker read as noise (critique A4/T7)
       this.progOn = true;
       this.prog.position.set(sx, dev(sy - 12 * sc));
-      const end = -Math.PI / 2 + Math.PI * 2 * Math.min(1, el / 300_000);
+      const end = -Math.PI / 2 + Math.PI * 2 * Math.min(1, (el - this.longAfter) / 270_000);
       const r = 17 * sc;
       this.prog.moveTo(0, -r).arc(0, 0, r, -Math.PI / 2, end).stroke({ width: Math.max(1, Math.round(sc)), color: 0x7fe3ff, alpha: 0.7 }); // moveTo: the arc must not continue a previous path (that drew a spoke)
     }

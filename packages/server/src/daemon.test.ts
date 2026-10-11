@@ -1,7 +1,7 @@
 import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
-import { mkdtempSync, writeFileSync, readFileSync, statSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync, statSync, readdirSync } from "node:fs";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -174,7 +174,9 @@ test("privacy: no free text reaches events.jsonl, and the transcript is never re
   await post(d, { hook_event_name: "PreToolUse", session_id: "p1", tool_name: "Bash", tool_input: { command: "echo CMD-SECRET" }, transcript_path: tp, cwd });
   writeFileSync(tp, [said("m1", "TRANSCRIPT-SECRET", 5), said("m2", "MORE-SECRET", 7)].map((l) => JSON.stringify(l)).join("\n") + "\n");
   await post(d, { hook_event_name: "Stop", session_id: "p1", transcript_path: tp, cwd, last_assistant_message: "FINAL-SECRET" });
-  const disk = readFileSync(join(d.home, "events.jsonl"), "utf8");
+  const days = join(d.home, "events"), names = readdirSync(days);
+  assert.ok(!names.some((f) => f.endsWith(".text.jsonl")), "privacy mode writes no text file");
+  const disk = names.map((f) => readFileSync(join(days, f), "utf8")).join("\n");
   for (const x of ["PROMPT-SECRET", "CMD-SECRET", "FINAL-SECRET", "SECRET", cwd]) assert.ok(!disk.includes(x), x);
   assert.match(disk, /"tool":"Bash"/);
   const s = await st(d);
@@ -232,4 +234,54 @@ test("retention: events older than historyHours are pruned at boot", async () =>
   await new Promise((res) => p.stdout!.on("data", (x) => /listening on/.test(String(x)) && res(x)));
   const left = readFileSync(join(home, "events.jsonl"), "utf8");
   assert.ok(!left.includes('"r0"') && left.includes('"r1"'));
+});
+
+/** Read SSE frames from /stream until `n` frames (heartbeats excluded) arrived. */
+function frames(d: Awaited<ReturnType<typeof boot>>, path: string, n: number, during: () => Promise<unknown>) {
+  return new Promise<{ event: string; id: string; data: any }[]>((resolve, reject) => {
+    const got: { event: string; id: string; data: any }[] = [];
+    const r = request({ host: "127.0.0.1", port: d.port, path, headers: { "x-agent-office-token": d.token } }, (res) => {
+      let buf = "";
+      res.setEncoding("utf8").on("data", (c: string) => {
+        buf += c;
+        for (let i; (i = buf.indexOf("\n\n")) >= 0; buf = buf.slice(i + 2)) {
+          const f = Object.fromEntries(buf.slice(0, i).split("\n").filter((l) => !l.startsWith(":")).map((l) => [l.slice(0, l.indexOf(":")), l.slice(l.indexOf(":") + 2)]));
+          if (!f.data) continue;
+          got.push({ event: f.event ?? "message", id: f.id, data: JSON.parse(f.data) });
+          if (got.length === 1) during().catch(reject);
+          if (got.length === n) { r.destroy(); resolve(got); }
+        }
+      });
+    });
+    r.on("error", (e) => (got.length < n ? reject(e) : undefined)); r.end();
+  });
+}
+
+test("stream: full envelope on connect, then patches; summary level of detail; /history pages with more", async () => {
+  const d = await boot();
+  await post(d, { hook_event_name: "SessionStart", session_id: "s1", cwd: "/w/proj" });
+  const evs = [
+    { hook_event_name: "SubagentStart", session_id: "s1", agent_id: "a1", agent_type: "qa-engineer" },
+    { hook_event_name: "PreToolUse", session_id: "s1", agent_id: "a1", tool_name: "Bash", tool_input: { command: "ls" } },
+  ];
+  const send = async () => { for (const e of evs) await post(d, e); };
+  const [first, ...rest] = await frames(d, "/stream", 3, send);
+  assert.equal(first.event, "message");
+  assert.ok(first.data.state.sessions.s1 && first.id === `${first.data.epoch}-${first.data.rev}`);
+  assert.deepEqual(rest.map((f) => f.event), ["patch", "patch"]);
+  assert.equal(rest[0].data.base, first.data.rev);
+  assert.equal(rest[1].data.base, rest[0].data.rev);
+  assert.deepEqual([Object.keys(rest[1].data.maps.sessions), Object.keys(rest[1].data.maps.agents), rest[1].data.keys], [["s1"], ["a1"], undefined], "only what changed");
+  assert.equal(rest[1].data.maps.agents.a1.doing, "Bash");
+  const lod = JSON.parse((await call(d.port, "/state?lod=summary", { headers: { "x-agent-office-token": d.token } })).body);
+  assert.deepEqual([lod.state.agents, lod.state.log, lod.state.crew.s1], [{}, [], { agents: 1, working: 1, waiting: 0, blocked: 0, queued: 0 }]);
+  const one = JSON.parse((await call(d.port, "/state?session=s1", { headers: { "x-agent-office-token": d.token } })).body);
+  assert.ok(one.state.agents.a1 && one.state.crew);
+  const tk = { "x-agent-office-token": d.token };
+  const h = JSON.parse((await call(d.port, "/history?limit=2", { headers: tk })).body);
+  assert.deepEqual([h.events.length, h.more, h.events[1].detail], [2, true, "ls"]);
+  const older = JSON.parse((await call(d.port, `/history?limit=2&until=${h.events[0].t - 1}`, { headers: tk })).body);
+  assert.equal(older.events.at(-1).type, "session_start");
+  const priv = JSON.parse((await call(d.port, "/history?private=1", { headers: tk })).body);
+  assert.ok(!JSON.stringify(priv).includes("/w/proj") && !JSON.stringify(priv).includes('"ls"'));
 });

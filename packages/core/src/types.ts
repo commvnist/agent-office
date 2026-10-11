@@ -18,8 +18,10 @@ export type OfficeConfig = {
   enforceSeats?: boolean;
   /** Hide prompt/tool text in the stream (tool names and structure only); also strips it before events.jsonl and skips transcript reads. */
   privacy?: boolean;
-  /** Hours of events.jsonl kept on disk (1-2160, default 24); older lines are pruned at boot and hourly. */
+  /** Hours of stored events kept on disk (1-2160, default 168); older day files (and legacy events.jsonl lines) are deleted at boot and hourly. */
   historyHours?: number;
+  /** Hours of stored free text kept (1-2160, default = historyHours); older `.text.jsonl` day files are deleted earlier, the timeline stays. */
+  textHours?: number;
   /** Ignored: there is one built-in look. Still parsed so old config files keep working. */
   theme?: string;
   /** Minutes of silence (1-1440, default 45) before an idle session is swept. */
@@ -48,7 +50,8 @@ export type OfficeEvent = Base &
     | { type: "session_start"; session: string; project: string; cwd?: string; branch?: string; source?: "startup" | "resume" | "compact" | "clear"; t: number }
     | { type: "session_end"; session: string; t: number }
     | { type: "agent_start"; session: string; agentId: string; agentType: string; t: number }
-    | { type: "agent_stop"; session: string; agentId: string; message?: string; usage?: Usage; t: number }
+    /** `outcome` is stamped by the daemon on the stored line (from the report) so a replay without text keeps it. */
+    | { type: "agent_stop"; session: string; agentId: string; message?: string; usage?: Usage; outcome?: Interaction["outcome"]; t: number }
     /** `id` = tool_use_id; `why` = plain-English reason. */
     | { type: "tool"; session: string; agentId?: string; tool: string; detail?: string; why?: string; id?: string; t: number; /** a subagent's hand-back report (SubagentHandback input) */ message?: string }
     /** PostToolUse / PostToolUseFailure. */
@@ -150,6 +153,30 @@ export type Session = {
   usage?: Usage;
   files?: Record<string, number>;
   toolCounts?: Record<string, number>;
+  /** Completed permission waits (waitKind "permission" until the lead's next event); `since` = start of the wait in progress. */
+  permWait?: { n: number; totalMs: number; lastMs?: number; since?: number };
+  /** Per tool name (at most 32): calls among the last 64 finished ones with a known duration, failures among them, p50/p95 ms. */
+  toolStats?: Record<string, { n: number; fail: number; p50: number; p95: number }>;
+};
+
+/** After-action summary of an ended session (session_end or idle sweep). Counts and structure only, no free text. */
+export type Summary = {
+  session: string; project: string; startedAt: number; endedAt: number; durationMs: number;
+  /** Agents started in the session; `tree` holds the first 64. */
+  agents: number;
+  tree: { id: string; name?: string; role: string; parent: string }[];
+  /** Failed tool calls (lead and agents). */
+  errors: number;
+  permission: { n: number; totalMs: number };
+  outcomes: { done: number; blocked: number; partial: number; empty: number };
+  usage?: Usage;
+};
+
+/** Per-session reducer bookkeeping behind toolStats and Summary (in track, so never sent to clients). */
+export type Run = {
+  agents: number; tree: Summary["tree"]; errors: number; outcomes: Summary["outcomes"];
+  /** Last 64 durations (ms) and ok flags per tool name. */
+  tools: Record<string, { ms: number[]; ok: boolean[] }>;
 };
 
 export type Task = {
@@ -188,6 +215,8 @@ export type OfficeState = {
   /** Last LIMITS.outcomes finished delegations, newest first. Kept after their session ends. */
   outcomes?: Outcome[];
   nextTask?: number;
-  /** Reducer bookkeeping (dedupe ring, tool start times, last write per file); not for display. */
-  track?: { seen: string[]; starts: Record<string, number>; touched: Record<string, { by: string; t: number }> };
+  /** Last LIMITS.summaries ended sessions, newest first. */
+  summaries?: Summary[];
+  /** Reducer bookkeeping (dedupe ring, tool start times, last write per file, per-session runs); not for display. */
+  track?: { seen: string[]; starts: Record<string, number>; touched: Record<string, { by: string; t: number }>; runs?: Record<string, Run> };
 };
