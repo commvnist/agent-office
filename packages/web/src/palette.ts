@@ -6,6 +6,7 @@ import { announce, btn, el } from "./dom.ts";
 import { modal } from "./dialog.ts";
 import { rank } from "./funlogic.ts";
 import { statusKey, statusWord } from "./triage.ts";
+import { hostOnly } from "./sharelogic.ts";
 
 export type Cmd = { label: string; run: () => void };
 // Modules register their own handlers here, so no command depends on a toolbar button's label.
@@ -44,7 +45,7 @@ export function bindPalette() {
     }));
     const sessions = office.sessions().map((s) => ({ label: `Session: ${s.project}`, run: () => { office.select(s.lead); office.focus(s.lead); } }));
     return [
-      ...registry,
+      ...(office.source.liveEnvelope()?.remote ? registry.filter((c) => !hostOnly(c.label)) : registry), // a paired phone: view-only
       ...sessions, ...agents,
     ];
   };

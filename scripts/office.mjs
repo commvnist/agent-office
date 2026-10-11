@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// agent-office CLI: status | start | restart | stop | doctor | init | config --validate | history [--purge|--purge-text] | uninstall [--purge]. Usage: node scripts/office.mjs <cmd>
+// agent-office CLI: status | start | restart | stop | doctor | init | config --validate | history [--purge|--purge-text] | share on|off|status|code|devices|revoke <id>|revoke-all | uninstall [--purge]. Usage: node scripts/office.mjs <cmd>
 import { readFileSync, existsSync, statSync, rmSync, writeFileSync, mkdirSync, readdirSync } from "node:fs";
 import { spawnSync, spawn } from "node:child_process";
 import { homedir } from "node:os";
@@ -158,6 +158,24 @@ const cmds = {
     console.log("kept for office.json historyHours (default 168), text for textHours (default = historyHours); delete now with: node scripts/office.mjs history --purge (everything) or --purge-text (text only)");
     return 0;
   },
+  async share() {
+    // The local share controls (loopback only, master token; see docs/event-api.md "Share on the local network").
+    const [sub = "status", arg] = process.argv.slice(3);
+    const routes = { on: ["POST", "/share", { on: true }], off: ["POST", "/share", { on: false }], status: ["GET", "/share"], devices: ["GET", "/share"],
+      code: ["POST", "/share/code"], revoke: ["DELETE", `/share/devices/${arg}`], "revoke-all": ["DELETE", "/share/devices"] };
+    const r = routes[sub];
+    if (!r) return console.error("usage: share on|off|status|code|devices|revoke <id>|revoke-all"), 2;
+    if (sub === "revoke" && !/^[0-9a-f]{8}$/.test(arg ?? "")) return console.error("usage: share revoke <device id, 8 hex>"), 2;
+    if (!(await health())) return console.log("not running"), 1;
+    const res = await fetch(base() + r[1], { method: r[0], headers: { "x-agent-office-token": token() }, body: r[2] && JSON.stringify(r[2]), signal: AbortSignal.timeout(5000) });
+    const j = await res.json().catch(() => ({}));
+    if (j.error) console.log(`error: ${plain(j.error)}`);
+    if (sub === "code" && j.code) return console.log(`pairing code ${j.code} (valid until ${new Date(j.expiresAt).toLocaleTimeString()}, single use): open the share URL on the device and type it`), 0;
+    if (sub !== "devices") console.log(j.enabled ? `sharing read-only on ${j.url} until ${new Date(j.until).toLocaleString()}\ncertificate SHA-256 ${j.fingerprint}` : "not sharing");
+    if (sub !== "status" || j.devices?.length) for (const x of j.devices ?? []) console.log(`  ${x.id}  ${plain(x.name)}  paired ${new Date(x.createdAt).toLocaleDateString()}, last seen ${age(Date.now() - x.lastSeen)} ago`);
+    if (sub === "devices" && !j.devices?.length) console.log("no paired devices");
+    return res.ok ? 0 : 1;
+  },
   async uninstall() {
     if (process.argv.includes("--purge")) { rmSync(HOME, { recursive: true, force: true }); console.log(`deleted ${HOME}`); return 0; }
     console.log(`To uninstall:
@@ -169,5 +187,5 @@ const cmds = {
 };
 
 const fn = cmds[process.argv[2]];
-if (!fn) { console.error("usage: node scripts/office.mjs status|start|restart|stop|doctor|init [--force]|config --validate [file]|history [--purge|--purge-text]|uninstall [--purge]"); process.exit(2); }
+if (!fn) { console.error("usage: node scripts/office.mjs status|start|restart|stop|doctor|init [--force]|config --validate [file]|history [--purge|--purge-text]|share on|off|status|code|devices|revoke <id>|revoke-all|uninstall [--purge]"); process.exit(2); }
 process.exitCode = (await fn()) ?? 0;

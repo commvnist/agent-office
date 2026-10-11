@@ -16,6 +16,7 @@ import { stopSample } from "./modes.ts";
 import { F } from "./flags.ts";
 import { hideText, setStreamSafe, streamSafe } from "./stream.ts";
 import { bindKiosk } from "./kiosk.ts";
+import { bindLan, isRemote, shareSection } from "./lan.ts";
 import "./chrome.css";
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
@@ -97,7 +98,7 @@ function bindPresenter() {
   $("px").addEventListener("click", () => setPresenter(false));
   addEventListener("keydown", (e) => {
     if (e.key === "Escape" && body.classList.contains("presenter")) { e.preventDefault(); e.stopPropagation(); setPresenter(false); return; }
-    if ((e.key === "p" || e.key === "P") && !ignoreKey(e)) setPresenter(!body.classList.contains("presenter"));
+    if ((e.key === "p" || e.key === "P") && !ignoreKey(e) && !isRemote()) setPresenter(!body.classList.contains("presenter"));
   });
   office.onFeed((f) => {
     if (!body.classList.contains("presenter")) return;
@@ -234,12 +235,15 @@ function bindSettings(tools: HTMLElement) {
     dp.textContent = office.privacy ? "The daemon is blanking text for everyone (office.json privacy)." : "";
   };
 
+  const fillShare = shareSection(sec("Share on network"), row);
+
   pop.hidden = true;
   const openBtn = btn("⚙", "Settings: display, motion, sound, notifications, privacy, office protocol", () => m.toggle());
   openBtn.setAttribute("aria-haspopup", "dialog");
   openBtn.setAttribute("aria-label", "Settings");
+  openBtn.id = "set-open";
   group(tools, "Setup").append(openBtn);
-  const m = modal(pop, openBtn, () => { fillMutes(); fillInfo(); });
+  const m = modal(pop, openBtn, () => { fillMutes(); fillInfo(); fillShare(); });
   register("Open Settings", () => m.open());
   bindPalette();
   // apply persisted choices
@@ -262,6 +266,7 @@ function bindIntro() {
 async function probe(): Promise<string> {
   try {
     const r = await fetch("/state", { credentials: "same-origin" });
+    if (r.status === 401 && isRemote()) return "This device is no longer paired (revoked, or unused for 30 days). Open /pair on this address and type a new code from the host.";
     if (r.status === 401) return "Unauthorized: this page has no access cookie. Open it through the daemon URL (http://127.0.0.1:<port>/), not a copy or another host.";
     if (r.status === 403) return "Host not allowed: open the page as 127.0.0.1 or localhost on the daemon port.";
     return "The stream dropped; retrying. If this persists run: node scripts/office.mjs doctor";
@@ -287,7 +292,8 @@ function banner() {
     msgs.push(`Stale since ${new Date(staleSince).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}. ${probed || "Connection lost, retrying…"}`);
   } else { probed = ""; staleSince = 0; }
   staleEl.hidden = !staleSince;
-  if (staleSince) staleEl.textContent = t("stale", { time: new Date(staleSince).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) });
+  // on a paired phone the probe's reason (e.g. "no longer paired") is the useful line, not a generic "stream is down"
+  if (staleSince) staleEl.textContent = isRemote() && probed ? probed : t("stale", { time: new Date(staleSince).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) });
   if (s === "connecting") msgs.push("Connecting to the daemon…");
 
   const sig = `${demo}\n${msgs.join("\n")}`;
@@ -320,6 +326,7 @@ export function bindPanelChrome(tools: HTMLElement) {
   bindViews(tools);
   bindKiosk(tools);
   bindSettings(tools);
+  bindLan();
   bindKeys(tools);
   bindIntro();
   office.connection.onChange(() => { $("live").classList.toggle("off", office.connection.state !== "live"); banner(); });

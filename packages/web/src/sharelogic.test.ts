@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildLink, mostRecent, parseLink, toolTracker } from "./sharelogic.ts";
+import { buildLink, hostOnly, lanChip, mmss, mostRecent, parseLink, shortFp, toolTracker } from "./sharelogic.ts";
 import { parseFlags } from "./flags.ts";
 
 test("permalink round-trips and drops junk", () => {
@@ -32,4 +32,19 @@ test("flags: kiosk and streamsafe parse; the removed overlay flags are ignored",
   assert.deepEqual(parseFlags("?preset=obs-720&overlay&kiosk&streamsafe=0"), { kiosk: true, streamSafe: false });
   assert.equal(parseFlags("?kiosk=0").kiosk, false);
   assert.equal(parseFlags("").streamSafe, null);
+});
+
+test("share on network: fingerprint, countdown, chip, view-only commands", () => {
+  assert.equal(shortFp("ab:cd:" + "01:".repeat(20)), "AB:CD:" + Array(14).fill("01").join(":"));
+  assert.equal(shortFp("abcd"), "AB:CD");
+  assert.equal(shortFp(), "");
+  assert.equal(mmss(120_000), "2:00");
+  assert.equal(mmss(59_001), "1:00");
+  assert.equal(mmss(-5), "0:00");
+  assert.equal(lanChip(null), "");
+  assert.equal(lanChip({ enabled: false, devices: [] }), "");
+  assert.equal(lanChip({ enabled: true, devices: [] }), "shared · 0 devices");
+  assert.equal(lanChip({ enabled: true, devices: [{ id: "a", name: "x", createdAt: 0, lastSeen: 0 }] }), "shared · 1 device");
+  for (const l of ["Export: Copy link", "Privacy: Private on / off (reloads)", "Setup: Private on / off", "Open Settings", "Display: Present (P)", "View: Kiosk (wallboard, Esc leaves)"]) assert.ok(hostOnly(l), l);
+  for (const l of ["View: Office (1)", "History: Replay a time range", "Open Help", "Agent: Ada"]) assert.ok(!hostOnly(l), l);
 });

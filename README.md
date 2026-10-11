@@ -67,12 +67,13 @@ Re-read on change, no restart needed. Without the file, the built-in roster (arc
 | `idleTtlMinutes` | Minutes of silence (1-1440, default 45) before an idle session is swept; unknown keys are ignored with a warning |
 | `spendAlarmTokens` | Integer 0-1000000000 (0 or absent = off): the client warns when a session's token total (input + output + cache creation) crosses it |
 | `theme` | Ignored: there is one built-in look. Still accepted so old files keep loading |
+| `share` | `{ enabled, port, address, stopAfterHours }`: the read-only network viewer (see "Share on the local network"). `enabled: true` starts it with the daemon; `port` default 4748; `address` an IP that must be private (default: the first private IPv4); `stopAfterHours` 1-168, default 8 |
 
 Hot files (observer-only, derived from hook tool events): `Edit`/`Write`/`MultiEdit`/`NotebookEdit` calls are counted per file path per session (top 50) as "hot files". Paths are hidden in privacy mode.
 
 Some of these options are defined in the types before every consumer ships; see `docs/improvements.md` for status. Ready-made rosters live in `plugin/packs` (`node scripts/apply-pack.mjs --list`, then `node scripts/apply-pack.mjs heist --dry-run`; agents go to `./.claude/agents` unless `--agents-dir` is given, `*.bak` backups are kept and `--undo` restores them).
 
-Environment: `AGENT_OFFICE_PORT` (default 4747), `AGENT_OFFICE_HOME` (default `~/.agent-office`), `AGENT_OFFICE_LOG=1` (append raw hook payloads to `events.log`; ignored in privacy mode), `AGENT_OFFICE_HOST` (bind address, default 127.0.0.1; a non-loopback address is refused unless `AGENT_OFFICE_ALLOW_REMOTE=1` is also set), `AGENT_OFFICE_DISABLED=1` (hooks do nothing). API: `docs/event-api.md`; CLI: `node scripts/office.mjs status|start|restart|stop|doctor|init|config --validate|history [--purge|--purge-text]`. More in `docs/ENTERPRISE.md`.
+Environment: `AGENT_OFFICE_PORT` (default 4747), `AGENT_OFFICE_HOME` (default `~/.agent-office`), `AGENT_OFFICE_LOG=1` (append raw hook payloads to `events.log`; ignored in privacy mode), `AGENT_OFFICE_HOST` (bind address, default 127.0.0.1; a non-loopback address is refused unless `AGENT_OFFICE_ALLOW_REMOTE=1` is also set), `AGENT_OFFICE_DISABLED=1` (hooks do nothing). API: `docs/event-api.md`; CLI: `node scripts/office.mjs status|start|restart|stop|doctor|init|config --validate|history [--purge|--purge-text]|share on|off|status|code|devices|revoke <id>|revoke-all`. More in `docs/ENTERPRISE.md`.
 
 ### Office protocol: what the office tells the model
 
@@ -93,8 +94,18 @@ The plugin also ships agent definitions and the `office-delegation` skill; Claud
   - Whole days are kept for `historyHours` (default 168 h, 7 days).
 - **Legacy event log** `events.jsonl` (+ `events.jsonl.1`): written by versions before the per-day files, text inline. Still read for history from before the switch, pruned by `historyHours` as before, never written again.
 - **Raw log** `events.log`: only when `AGENT_OFFICE_LOG` is set (never in privacy mode); whole hook payloads, pruned by `historyHours`.
-- **Also in that folder**: `office.json`, `token`, `port`/`pid`, `daemon` (path of the daemon), `last-hook.json` (last hook name and session id) and `seq/` (per-session counters, no text).
+- **Also in that folder**: `office.json`, `token` (hooks), `ui-token` (the browser cookie), `port`/`pid`, the share files when used (`tls/` key and certificate, `devices.json` with hashed device tokens, `share.log`), `daemon` (path of the daemon), `last-hook.json` (last hook name and session id) and `seq/` (per-session counters, no text).
 - **Delete**: `node scripts/office.mjs history --purge` (day files, legacy and raw logs), `node scripts/office.mjs history --purge-text` (the `.text.jsonl` files and the raw `events.log`), or `node scripts/office.mjs uninstall --purge` (the whole folder). Nothing is stored anywhere else and nothing leaves the machine.
+
+### Share on the local network
+
+Watch the office from a phone or tablet on the same network, read-only. Off by default.
+
+1. Turn it on: Settings > Share on network, or `node scripts/office.mjs share on` (or `"share": { "enabled": true }` in office.json). It prints a URL such as `https://192.168.1.20:4748` and the certificate's SHA-256 fingerprint.
+2. Open the URL on the device. The certificate is self-signed: accept the warning (compare the fingerprint if you like; the browser shows it in the certificate details).
+3. Pair: "Pair a phone" in Settings, or `node scripts/office.mjs share code`, shows a 6-digit code for 2 minutes. Type it on the device.
+
+The device then sees what the host page shows (text included, unless `privacy` is on) but cannot change anything: there are no write routes on that listener. `share devices` lists paired devices, `share revoke <id>` or `share revoke-all` removes them (open views close at once), `share off` stops the listener, and it stops by itself after `stopAfterHours` (8). Devices unused for 30 days are forgotten. Only private addresses are accepted. Details and the threat model: `docs/ENTERPRISE.md`; routes: `docs/event-api.md`.
 
 ## Desks and pods
 

@@ -43,6 +43,7 @@ export const toggleKiosk = () => (kioskOn() ? stopKiosk() : startKiosk());
 
 export function bindKiosk(tools: HTMLElement) {
   const b = btn("Kiosk", "Wallboard: fullscreen, rotates office / sessions, holds the office while something needs you, Esc leaves (?kiosk in the URL)", toggleKiosk);
+  b.id = "kiosk";
   group(tools, "Display").append(b);
   document.addEventListener("ao:radar", (e) => {
     const was = need;

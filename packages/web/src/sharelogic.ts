@@ -50,3 +50,18 @@ export function mostRecent(s: OfficeState): string | null {
   for (const x of Object.values(s.sessions)) see(leadId(x.id), x.busyAt ?? x.lastAt ?? x.startedAt);
   return best;
 }
+
+// ---- share on the local network (S5/S6): what GET /share returns on the loopback page ----
+export type LanDevice = { id: string; name: string; createdAt: number; lastSeen: number };
+export type LanShare = { enabled: boolean; url?: string; fingerprint?: string; until?: number; devices: LanDevice[]; code?: { expiresAt: number } };
+/** The certificate fingerprint as the phone's browser shows it: upper-case hex pairs, the first 16. */
+export const shortFp = (fp = "") => (fp.replace(/[^0-9a-f]/gi, "").toUpperCase().match(/../g) ?? []).slice(0, 16).join(":");
+/** Pairing countdown, rounded up so it reads 0:00 only at expiry. */
+export const mmss = (ms: number) => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; };
+/** Header chip while sharing is on; "" hides it. */
+export const lanChip = (s: LanShare | null) => {
+  const n = s?.enabled ? s.devices.length : -1;
+  return n < 0 ? "" : `shared · ${n} device${n === 1 ? "" : "s"}`;
+};
+/** Palette commands a paired (view-only) page drops: they change the host or export from it. */
+export const hostOnly = (label: string) => /^(Export|Privacy|Setup):|^Open Settings|Present|Kiosk/.test(label);

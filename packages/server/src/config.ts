@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import type { OfficeConfig } from "@agent-office/core";
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -67,10 +68,21 @@ export function validateConfig(raw: unknown, defaultRoles?: OfficeConfig["roles"
     if (!int(raw.spendAlarmTokens, 0, 1e9)) throw new Error("spendAlarmTokens must be an integer 0-1000000000");
     cfg.spendAlarmTokens = raw.spendAlarmTokens as number;
   }
+  if (raw.share !== undefined) {
+    const sh = raw.share;
+    if (!isObj(sh)) throw new Error("share must be an object");
+    if (sh.enabled !== undefined && typeof sh.enabled !== "boolean") throw new Error("share.enabled must be a boolean");
+    if (sh.port !== undefined && !int(sh.port, 0, 65535)) throw new Error("share.port must be an integer 0-65535");
+    if (sh.address !== undefined && (typeof sh.address !== "string" || !isIP(sh.address))) throw new Error("share.address must be an IP address");
+    // 168 h max: the auto-stop timer must stay under setTimeout's 24.8-day limit
+    if (sh.stopAfterHours !== undefined && !int(sh.stopAfterHours, 1, 168)) throw new Error("share.stopAfterHours must be an integer 1-168");
+    cfg.share = Object.fromEntries(SHARE_KEYS.filter((k) => sh[k] !== undefined).map((k) => [k, sh[k]]));
+  }
   return cfg;
 }
 
-const KNOWN = ["roles", "protocol", "historyHours", "textHours", "parallelism", "enforceSeats", "privacy", "theme", "idleTtlMinutes", "spendAlarmTokens"];
+const KNOWN = ["roles", "protocol", "historyHours", "textHours", "parallelism", "enforceSeats", "privacy", "theme", "idleTtlMinutes", "spendAlarmTokens", "share"];
+const SHARE_KEYS = ["enabled", "port", "address", "stopAfterHours"];
 const ROLE_KEYS = ["agent", "count", "names", "overflow"];
 
 /** Paths of keys validateConfig would silently drop (typos like "paralelism"). Non-fatal; cap 5. */
@@ -82,5 +94,6 @@ export function unknownKeys(raw: unknown): string[] {
     out.push(...Object.keys(r).filter((x) => !ROLE_KEYS.includes(x)).map((x) => `roles.${k}.${x}`));
     if (isObj(r.overflow)) out.push(...Object.keys(r.overflow).filter((x) => x !== "max" && x !== "names").map((x) => `roles.${k}.overflow.${x}`));
   }
+  if (isObj(raw.share)) out.push(...Object.keys(raw.share).filter((x) => !SHARE_KEYS.includes(x)).map((x) => `share.${x}`));
   return out.slice(0, 5);
 }

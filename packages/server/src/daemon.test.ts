@@ -41,7 +41,12 @@ test("auth, host and origin checks; cookie grants read access", async () => {
   assert.equal((await call(d.port, "/state")).status, 401);
   const page = await call(d.port, "/");
   const cookie = String(page.headers["set-cookie"]);
-  assert.match(cookie, /HttpOnly; SameSite=Strict/);
+  assert.match(cookie, /^ao_ui=[0-9a-f]{64}; HttpOnly; SameSite=Strict/);
+  assert.ok(!cookie.includes(d.token), "the master token is never a cookie");
+  if (process.platform !== "win32") assert.equal(statSync(join(d.home, "ui-token")).mode & 0o777, 0o600);
+  const ui = { cookie: cookie.split(";")[0] };
+  for (const path of ["/event", "/shutdown"]) assert.equal((await call(d.port, path, { method: "POST", headers: ui, body: "{}" })).status, 401, `the UI cookie cannot ${path}`);
+  assert.equal((await call(d.port, "/state", { headers: { cookie: `ao_ui=${d.token}` } })).status, 401, "the master token is not a UI token");
   const ev = { hook_event_name: "SessionStart", session_id: "s1", cwd: "/w/proj" };
   const r = await post(d, ev);
   const reply = JSON.parse(r.body).hookSpecificOutput;
@@ -303,4 +308,77 @@ test("stream: per-client level of detail: two clients connected at once each get
   assert.ok(JSON.stringify(sumAfter).includes('"agents":1'), "summary client sees the crew count rise");
   assert.ok(!JSON.stringify(sumAfter).includes("qa-engineer"), "summary client never receives the agent itself");
   assert.ok(JSON.stringify(full[1].data).includes('"a1"'), "full client receives the agent");
+});
+
+// ---- share on the local network: local controls (S5) and the LAN listener end to end ----
+const https = await import("node:https");
+const lan = (url: string, path: string, o: { method?: string; headers?: Record<string, string>; body?: string } = {}) => new Promise<R>((resolve, reject) => {
+  const u = new URL(url);
+  const r = https.request({ host: u.hostname.replace(/^\[|\]$/g, ""), port: u.port, path, method: o.method ?? "GET", agent: false, rejectUnauthorized: false, headers: o.headers }, (res) => {
+    let b = ""; res.on("data", (x) => (b += x)); res.on("end", () => resolve({ status: res.statusCode!, body: b, headers: res.headers }));
+  });
+  r.on("error", reject); r.end(o.body);
+});
+
+test("share controls: UI cookie or master header, no foreign Origin; a non-private address is refused", async () => {
+  const d = await boot({ share: { address: "8.8.8.8", port: 0 } });
+  const ui = { cookie: String((await call(d.port, "/")).headers["set-cookie"]).split(";")[0] };
+  assert.equal((await call(d.port, "/share")).status, 401);
+  assert.equal((await call(d.port, "/share", { headers: { ...ui, origin: "http://evil.example" } })).status, 403);
+  assert.equal((await call(d.port, "/share", { headers: { ...ui, origin: `http://127.0.0.1:${d.port}` } })).status, 200);
+  assert.deepEqual(JSON.parse((await call(d.port, "/share", { headers: ui })).body), { enabled: false, devices: [] });
+  assert.equal((await call(d.port, "/share/code", { method: "POST", headers: ui })).status, 409, "no code while sharing is off");
+  assert.equal((await call(d.port, "/share", { method: "POST", headers: ui, body: "{}" })).status, 400);
+  const on = await call(d.port, "/share", { method: "POST", headers: { "x-agent-office-token": d.token }, body: JSON.stringify({ on: true }) });
+  assert.equal(on.status, 409);
+  assert.match(JSON.parse(on.body).error, /refusing to share on 8\.8\.8\.8: not a private address/);
+  writeFileSync(join(d.home, "office.json"), JSON.stringify({ share: { address: "127.0.0.1", port: 0 } }));
+  await new Promise((r) => setTimeout(r, 50));
+  assert.match(JSON.parse((await call(d.port, "/share", { method: "POST", headers: ui, body: JSON.stringify({ on: true }) })).body).error, /not a private address/);
+});
+
+const LAN_IP = (await import("./share.ts")).lanAddress();
+test("share end to end: pair over HTTPS, read-only remote view, token separation, revoke closes the stream", { skip: !LAN_IP && "no private network address on this machine" }, async () => {
+  const d = await boot({ share: { address: LAN_IP, port: 0 }, privacy: true });
+  const ui = { cookie: String((await call(d.port, "/")).headers["set-cookie"]).split(";")[0] };
+  await post(d, { hook_event_name: "SessionStart", session_id: "s1", cwd: "/w/secret-proj" });
+  const st = JSON.parse((await call(d.port, "/share", { method: "POST", headers: ui, body: JSON.stringify({ on: true }) })).body);
+  assert.equal(st.enabled, true);
+  assert.match(st.fingerprint, /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/);
+  const url = st.url as string, host = new URL(url).host;
+  const { code } = JSON.parse((await call(d.port, "/share/code", { method: "POST", headers: ui })).body);
+  assert.ok(JSON.parse((await call(d.port, "/share", { headers: ui })).body).code.expiresAt > Date.now());
+  const paired = await lan(url, "/pair", { method: "POST", headers: { host, "content-type": "application/x-www-form-urlencoded" }, body: `code=${code}` });
+  assert.equal(paired.status, 303);
+  const dev = { host, cookie: String(paired.headers["set-cookie"]).split(";")[0] };
+  const env = JSON.parse((await lan(url, "/state", { headers: dev })).body);
+  assert.equal(env.remote, true);
+  assert.ok(!("configError" in env) && !("configWarning" in env) && env.config.share === undefined, "a paired device never gets host config text or share settings");
+  assert.equal(env.privacy, true, "the host's privacy setting applies to remote viewers");
+  assert.ok(!JSON.stringify(env).includes("secret-proj"));
+  assert.equal(JSON.parse((await call(d.port, "/state", { headers: ui })).body).remote, undefined);
+  // Token separation: the master token and UI cookie mean nothing on the LAN; the device cookie means nothing on loopback.
+  assert.equal((await lan(url, "/state", { headers: { host, "x-agent-office-token": d.token } })).status, 401);
+  assert.equal((await lan(url, "/state", { headers: { host, cookie: ui.cookie } })).status, 401);
+  assert.equal((await call(d.port, "/state", { headers: { cookie: dev.cookie } })).status, 401);
+  for (const [m, p] of [["POST", "/event"], ["POST", "/shutdown"], ["GET", "/share"], ["POST", "/share/code"], ["GET", "/status"], ["GET", "/outcomes"], ["GET", "/health"]]) {
+    assert.equal((await lan(url, p, { method: m, headers: { ...dev, "x-agent-office-token": d.token }, body: "{}" })).status, 404, `${m} ${p} on the LAN`);
+  }
+  assert.equal((await lan(url, "/state", { headers: { ...dev, host: "evil.example" } })).status, 403);
+  // Revoke closes the device's open stream at once.
+  const { closed } = await new Promise<{ closed: Promise<void> }>((resolve, reject) => { // wrapped: resolving with a promise would wait for it
+    const u = new URL(url);
+    const r = https.request({ host: u.hostname, port: u.port, path: "/stream", agent: false, rejectUnauthorized: false, headers: dev }, (res) => {
+      assert.equal(res.statusCode, 200);
+      resolve({ closed: new Promise((c) => { res.on("close", () => c()); res.on("error", () => c()); res.resume(); }) });
+    });
+    r.on("error", reject); r.end();
+  });
+  const id = JSON.parse((await call(d.port, "/share", { headers: ui })).body).devices[0].id;
+  assert.equal((await call(d.port, `/share/devices/${id}`, { method: "DELETE", headers: ui })).status, 200);
+  await closed;
+  assert.equal((await lan(url, "/state", { headers: dev })).status, 401);
+  assert.equal((await call(d.port, "/share/devices", { method: "DELETE", headers: ui })).status, 200);
+  assert.equal(JSON.parse((await call(d.port, "/share", { method: "POST", headers: ui, body: JSON.stringify({ on: false }) })).body).enabled, false);
+  await assert.rejects(lan(url, "/pair", { headers: { host } }), "the LAN listener is gone");
 });

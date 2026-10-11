@@ -28,7 +28,11 @@
 .sgrp legend{padding:0 8px 0 0;font-size:calc(11px * var(--ts,1));font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--mute)}
 .sgrp p{margin:0}
 .sgrp > .b{align-self:flex-start}
-.mutes .srow{grid-template-columns:minmax(0,1fr) auto;cursor:default} .mutes .srow>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap} .sctl{display:flex;gap:4px}
+.mutes .srow{grid-template-columns:minmax(0,1fr) auto;cursor:default}
+/* S6 Share on network: the pairing code reads across a room; facts in the .kv columns */
+.lanf{display:flex;flex-direction:column;gap:4px} .lanf .fp{font-family:ui-monospace,Menlo,Consolas,monospace;overflow-wrap:anywhere;color:var(--soft)}
+.lanpair{padding:8px;border:1px solid var(--acc);border-radius:var(--r);text-align:center} .lanpair .pcode{font-size:calc(30px * var(--ts,1));font-weight:700;letter-spacing:.12em;font-variant-numeric:tabular-nums;color:var(--fg)}
+.devs .sctl{align-items:center} .mutes .srow>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap} .sctl{display:flex;gap:4px}
 .kv{display:grid;grid-template-columns:120px minmax(0,1fr);gap:8px;align-items:baseline} .kv>:first-child{justify-self:start;max-width:100%;overflow-wrap:anywhere} /* C1: a fixed label column, values at min-width 0 */
 #help h3{margin:8px 0 0;font-size:calc(11px * var(--ts,1));font-weight:600;letter-spacing:.1em;text-transform:uppercase;color:var(--mute)}
 #help p{margin:0} #help > .b{align-self:flex-start}

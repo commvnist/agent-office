@@ -7,7 +7,8 @@ The daemon (`packages/server/src/main.ts`) speaks HTTP on `AGENT_OFFICE_HOST:AGE
 - A random token lives in `$AGENT_OFFICE_HOME/token` (mode 0600, created on first start).
 - Every request's `Host` must be `127.0.0.1:<port>`, `localhost:<port>`, `[::1]:<port>` (or the configured `AGENT_OFFICE_HOST`), else 403 (DNS rebinding).
 - `POST /event` and `POST /shutdown` need header `x-agent-office-token: <token>` and must not carry an `Origin` header (403).
-- Reads (`/state`, `/stream`, `/history`, `/status`, `/outcomes`) need the token header **or** the `ao_token` cookie. The cookie is `HttpOnly; SameSite=Strict`, issued when `/` is loaded from an allowed Host, so the web page works without custom headers.
+- Reads (`/state`, `/stream`, `/history`, `/status`, `/outcomes`) need the token header **or** the `ao_ui` cookie. The cookie carries a separate UI token (`$AGENT_OFFICE_HOME/ui-token`, 0600), is `HttpOnly; SameSite=Strict`, and is issued when `/` is loaded from an allowed Host, so the web page works without custom headers. The UI token never authorizes `POST /event` or `/shutdown`, and the master token is never set as a cookie.
+- The share controls (`/share*`, below) take the `ao_ui` cookie or the token header, and refuse an `Origin` other than `http://<the request's Host>` (403).
 - No CORS headers are sent. `/health` and static files need only the Host check.
 
 ## Endpoints
@@ -22,6 +23,24 @@ The daemon (`packages/server/src/main.ts`) speaks HTTP on `AGENT_OFFICE_HOST:AGE
 | `GET /outcomes[?days=7]` | `{schema, days: [{day, sessions, agents, outcomes: {done, blocked, partial, empty, other}, tokens, errors, hours}]}` per local day from the stored events (structure only, no text read; max 90 days, but only as far back as `historyHours` keeps). Counts only. `tokens` counts each session's highest running total of the day once. |
 | `GET /health` | `{ok, version, pid, schema, warning?}`; `warning` when a forwarder speaks another protocol. |
 | `POST /shutdown` | Token required; stops the daemon. |
+| `GET /share` | `{enabled, url?, fingerprint?, until?, devices: [{id, name, createdAt, lastSeen}], code?: {expiresAt}}` (the code itself is never repeated). |
+| `POST /share` | Body `{"on": true\|false}`. Starting re-reads office.json `share`; a refused start (no or non-private address, port in use) is 409 with `error`. |
+| `POST /share/code` | `{code, expiresAt}`: 6 digits, single use, 2 minutes, replaces any earlier code. 409 `{error}` while sharing is off or pairing is locked. |
+| `DELETE /share/devices/<id>` | Revoke one device (8 hex id): its record goes and its open streams close at once. 404 for an unknown id. |
+| `DELETE /share/devices` | Revoke every device. |
+
+## Share on the local network (read-only listener)
+
+Off by default. When on, a second listener speaks HTTPS on `share.address:share.port` (default: the first private IPv4 of the machine, port 4748). The address must be private (10/8, 172.16/12, 192.168/16, 169.254/16, fd00::/8, fe80::/10) or the start is refused. It has exactly these routes (`LAN_ROUTES` in `packages/server/src/share.ts`), everything else is 404 whatever the credentials:
+
+| Method path | Notes |
+|---|---|
+| `GET /pair` | A small HTML form (no scripts) for the 6-digit code. |
+| `POST /pair` | Form body `code=NNNNNN`. Right: 303 to `/` with cookie `ao_dev=<32 random bytes, base64url>; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=30 days`. Wrong or expired: 401. Five wrong codes from any source invalidate the code and lock pairing for 60 s (429). A foreign `Origin` is 403. |
+| `GET /state`, `/stream`, `/history` | With a device cookie: the same handlers and views as on loopback (`?private=1`, `?lod=summary`, the host's `privacy` setting applies); the envelope gains `remote: true`. At most 2 streams per device and 10 in total (503). |
+| `GET <file>` | With a device cookie: the web build. Without one, `GET /` redirects to `/pair` and anything else is 401. |
+
+`Host` must equal the bound `address:port` (403). Responses carry `Content-Security-Policy` (`default-src 'self'`, plus `'unsafe-eval'` scripts for PixiJS and inline styles; no inline scripts), `X-Frame-Options: DENY`, `Referrer-Policy: same-origin`, `nosniff`, `no-store`; no CORS and no HSTS (the certificate is self-signed). Devices are stored hashed (SHA-256, compared with `timingSafeEqual`) in `devices.json` (0600) and expire after 30 days unused; loading the page slides the cookie. The listener stops after `share.stopAfterHours` (default 8). Pairings, revokes, failed attempts and lockouts are appended to `share.log` (no codes or tokens).
 
 **Spend.** On PostToolUse (at most every 5 s per session), SubagentStop and Stop the daemon adds the token `usage` fields of every transcript the session named (`transcript_path`, `agent_transcript_path`) to a per-session running ledger (only newly appended bytes, at most 8 MB per read, each message id once) and emits a `usage` event; `turn_end` carries the same total. Not in privacy mode.
 

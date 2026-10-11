@@ -28,6 +28,9 @@ export type OfficeConfig = {
   idleTtlMinutes?: number;
   /** Lead-session token total (see usageTotalOf) at which the client raises a spend alarm; 0 or absent = off. Validated 0..1e9. */
   spendAlarmTokens?: number;
+  /** Read-only viewer on the local network (HTTPS, paired devices). `enabled` starts it with the daemon; `port` default 4748 (0 = any);
+   *  `address` must be private (default: the first private IPv4 of this machine); `stopAfterHours` 1-168, default 8. */
+  share?: { enabled?: boolean; port?: number; address?: string; stopAfterHours?: number };
 };
 
 /*

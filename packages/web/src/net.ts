@@ -3,6 +3,8 @@ import type { Interaction, OfficeConfig, OfficeState } from "@agent-office/core"
 
 export type Envelope = {
   schema: number; version: string; epoch: string; rev: number; privacy?: boolean;
+  /** Set by the LAN listener: this page is a paired device's read-only view. */
+  remote?: boolean;
   configError?: { message: string; t: number };
   configWarning?: string;
   state: OfficeState; config: OfficeConfig;

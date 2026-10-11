@@ -14,6 +14,7 @@ import { summarize } from "./digest.ts";
 import { appendRotating, appendEvent, bootEvents, readEvents, pruneEvents, pruneDays, replay, strip } from "./store.ts";
 import { fit, publicState, lodState, diffEnvelope, type Snap } from "./snapshot.ts";
 import { readNarration, readUsage, newLedger, tallyUsage, ledgerTotal, type Ledger } from "./usage.ts";
+import { createShare } from "./share.ts";
 
 const PORT = Number(process.env.AGENT_OFFICE_PORT ?? 4747);
 const HOST = process.env.AGENT_OFFICE_HOST || "127.0.0.1";
@@ -34,6 +35,10 @@ mkdirSync(DIR, { recursive: true, mode: 0o700 });
 const TOKEN_FILE = join(DIR, "token");
 if (!existsSync(TOKEN_FILE)) writeFileSync(TOKEN_FILE, randomBytes(32).toString("hex") + "\n", { mode: 0o600 });
 const TOKEN = readFileSync(TOKEN_FILE, "utf8").trim();
+// The browser's cookie is a separate UI token: reads and the local share controls, never /event or /shutdown (S0).
+const UI_TOKEN_FILE = join(DIR, "ui-token");
+if (!existsSync(UI_TOKEN_FILE)) writeFileSync(UI_TOKEN_FILE, randomBytes(32).toString("hex") + "\n", { mode: 0o600 });
+const UI_TOKEN = readFileSync(UI_TOKEN_FILE, "utf8").trim();
 
 const DEFAULT: OfficeConfig = {
   roles: {
@@ -92,11 +97,11 @@ let rev = 0, events = 0, lastEventAt = 0;
 const refreshConfig = () => { if (!reloadConfig()) return false; rev++; push(); return true; };
 let lastProto: unknown;
 /** What a client sees: free text blanked (`priv`), and the level of detail (`lod`: summary counts; `session` in full). */
-type View = { priv: boolean; lod: boolean; session?: string };
-const viewKey = (v: View) => `${+v.priv}|${+v.lod}|${v.session ?? ""}`;
-const viewOf = (u: URL): View => {
+type View = { priv: boolean; lod: boolean; session?: string; remote?: boolean };
+const viewKey = (v: View) => `${+v.priv}|${+v.lod}|${v.session ?? ""}|${+!!v.remote}`;
+const viewOf = (u: URL, remote: boolean): View => {
   const q = u.searchParams.get("session"), session = q && safeId(q) ? q : undefined;
-  return { priv: u.searchParams.get("private") === "1" || !!cfg.privacy, lod: u.searchParams.get("lod") === "summary" || session !== undefined, session };
+  return { priv: u.searchParams.get("private") === "1" || !!cfg.privacy, lod: u.searchParams.get("lod") === "summary" || session !== undefined, session, remote };
 };
 type Sent = Snap & { json: string; degraded: boolean };
 const clients = new Map<ServerResponse, View>();
@@ -106,7 +111,11 @@ function snap(v: View): Sent {
   let x = cache.m.get(viewKey(v));
   if (!x) {
     const hide = v.priv || !!cfg.privacy, pub = publicState(state, hide);
-    const head = { schema: SCHEMA_VERSION, version: VERSION, epoch: EPOCH, rev, privacy: hide, protocol: cfg.protocol ?? "office", configError, configWarning, config: cfg };
+    // a paired device sees the office, not the host: no config error/warning text (it names the host's file path) and no
+    // share settings; it gets the roles it needs to draw the office
+    const head = v.remote
+      ? { schema: SCHEMA_VERSION, version: VERSION, epoch: EPOCH, rev, privacy: hide, protocol: cfg.protocol ?? "office", config: { ...cfg, share: undefined }, remote: true }
+      : { schema: SCHEMA_VERSION, version: VERSION, epoch: EPOCH, rev, privacy: hide, protocol: cfg.protocol ?? "office", configError, configWarning, config: cfg };
     const st = v.lod ? lodState(pub, v.session) : pub;
     cache.m.set(viewKey(v), (x = { head, st, ...fit(head, st, MAX_STATE) }));
   }
@@ -153,9 +162,9 @@ function serve(url: string, res: ServerResponse): boolean {
 }
 
 const same = (a: string, b: string) => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));
-const cookieOf = (req: IncomingMessage) => /(?:^|;\s*)ao_token=([\w-]+)/.exec(req.headers.cookie ?? "")?.[1] ?? "";
+const cookieOf = (req: IncomingMessage) => /(?:^|;\s*)ao_ui=([\w-]+)/.exec(req.headers.cookie ?? "")?.[1] ?? "";
 const hasHeaderToken = (req: IncomingMessage) => { const t = req.headers["x-agent-office-token"]; return typeof t === "string" && same(t, TOKEN); };
-const canRead = (req: IncomingMessage) => hasHeaderToken(req) || same(cookieOf(req), TOKEN);
+const canRead = (req: IncomingMessage) => hasHeaderToken(req) || same(cookieOf(req), UI_TOKEN);
 const json = (res: ServerResponse, code: number, body: unknown) => res.writeHead(code, { "content-type": "application/json" }).end(JSON.stringify(body));
 
 
@@ -278,6 +287,74 @@ function onEvent(payload: any, res: ServerResponse) {
   res.writeHead(200, { "content-type": "application/json" }).end(out ? JSON.stringify(out) : "");
 }
 
+/** GET /state, /stream, /history: the same handlers and views for the loopback page and a paired LAN device (`remote`). */
+function readRoute(path: string, req: IncomingMessage, res: ServerResponse, u: URL, remote: boolean) {
+  const view = viewOf(u, remote), priv = view.priv;
+  const fail = (e: unknown) => { log("read error:", e); if (!res.headersSent) res.writeHead(500).end(); else res.end(); };
+  if (path === "/state") { refreshConfig(); return void res.writeHead(200, { "content-type": "application/json" }).end(snap(view).json); }
+  if (path === "/stream") {
+    if (clients.size >= MAX_CLIENTS) return void res.writeHead(503).end();
+    refreshConfig();
+    res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+    // A reconnecting client that already has this revision gets no duplicate snapshot. Either way it holds `snap(view)` now.
+    const cur = snap(view), k = viewKey(view);
+    if (req.headers["last-event-id"] !== `${EPOCH}-${rev}`) write(res, full(cur));
+    else res.write(": up to date\n\n");
+    clients.set(res, view);
+    lastSent.set(k, cur);
+    req.on("close", () => { clients.delete(res); if (![...clients.values()].some((v) => viewKey(v) === k)) lastSent.delete(k); });
+    return;
+  }
+  // Never older than the retention window (day files are deleted whole, so disk may hold up to a day more).
+  const since = Math.max(Number(u.searchParams.get("since")) || 0, Date.now() - historyMs());
+  const limit = Math.min(Math.max(Number(u.searchParams.get("limit")) || 500, 1), 20_000);
+  const untilParam = u.searchParams.get("until");
+  const until = untilParam && Number.isFinite(+untilParam) ? +untilParam : Infinity;
+  // Streamed out in slices of 500 events, waiting for the socket to drain: a 20k-event page never builds one big string.
+  readEvents(DIR, { since, until, limit, text: !priv }).then(async ({ events, more }) => {
+    res.writeHead(200, { "content-type": "application/json" });
+    const closed = new Promise((r) => res.once("close", r)); // one listener per response, not one per slice
+    res.write(`{"schema":${SCHEMA_VERSION},"epoch":${JSON.stringify(EPOCH)},"more":${more},"events":[`);
+    for (let i = 0; i < events.length && !res.destroyed; i += 500) {
+      const part = events.slice(i, i + 500).map((e) => JSON.stringify(priv ? strip(e) : e)).join(",");
+      if (!res.write((i ? "," : "") + part)) await Promise.race([new Promise((r) => res.once("drain", r)), closed]); // a closed client must not leave this waiting
+    }
+    res.end("]}");
+  }).catch(fail);
+}
+
+// Share on the local network (share.ts): a separate HTTPS listener with its own route table; controlled only from here.
+const share = createShare({
+  dir: DIR, log, settings: () => cfg.share ?? {},
+  read: (path, req, res, u) => readRoute(path, req, res, u, true),
+  serve: (url, res) => existsSync(WEB) && serve(url, res),
+});
+/** Local share controls (S5): the UI cookie or the master header, and no foreign Origin. */
+function shareRoute(req: IncomingMessage, res: ServerResponse, path: string) {
+  const origin = req.headers.origin;
+  if (origin !== undefined && origin !== `http://${req.headers.host}`) return void res.writeHead(403).end();
+  if (!canRead(req)) return void res.writeHead(401).end();
+  const route = `${req.method} ${path}`, id = /^\/share\/devices\/([0-9a-f]{8})$/.exec(path)?.[1];
+  if (route === "GET /share") return json(res, 200, share.status());
+  if (route === "POST /share/code") { const c = share.newCode(); return json(res, "error" in c ? 409 : 200, c); }
+  if (route === "DELETE /share/devices") { share.revoke(); return json(res, 200, share.status()); }
+  if (req.method === "DELETE" && id) return share.revoke(id) ? json(res, 200, share.status()) : json(res, 404, { error: "no such device" });
+  if (route !== "POST /share") return void res.writeHead(404).end();
+  let body = "";
+  req.setEncoding("utf8");
+  req.on("data", (d: string) => { body += d; if (body.length > 1024 && !res.headersSent) { res.writeHead(413, { connection: "close" }).end(); req.destroy(); } });
+  req.on("end", async () => {
+    if (res.headersSent) return;
+    let on: unknown;
+    try { on = JSON.parse(body).on; } catch { /* below */ }
+    if (typeof on !== "boolean") return json(res, 400, { error: "body must be {\"on\": true|false}" });
+    if (!on) { share.stop(); return json(res, 200, share.status()); }
+    refreshConfig();
+    const error = await share.start();
+    json(res, error ? 409 : 200, error ? { ...share.status(), error } : share.status());
+  });
+}
+
 const NO_DIST = `<!doctype html><title>Agent Office</title><body style="font:14px monospace;background:#111;color:#ddd"><h3>Agent Office</h3><p>The web client is not built. Run <code>npm run build:web</code> in the repo and reload.</p><p>Live state (debug):</p><pre id=o>waiting…</pre><script>new EventSource("/stream").onmessage=e=>o.textContent=JSON.stringify(JSON.parse(e.data),null,2)</script>`;
 
 function handle(req: IncomingMessage, res: ServerResponse, allowedHosts: Set<string>) {
@@ -313,45 +390,17 @@ function handle(req: IncomingMessage, res: ServerResponse, allowedHosts: Set<str
     });
     return;
   }
+  if (path === "/share" || path.startsWith("/share/")) return shareRoute(req, res, path);
   if (!get) return void res.writeHead(404).end();
 
-  if (path === "/state" || path === "/stream" || path === "/history" || path === "/status" || path === "/outcomes") {
+  if (path === "/state" || path === "/stream" || path === "/history") {
     if (!canRead(req)) return void res.writeHead(401).end();
-    const view = viewOf(u), priv = view.priv;
+    return readRoute(path, req, res, u, false);
+  }
+  if (path === "/status" || path === "/outcomes") {
+    if (!canRead(req)) return void res.writeHead(401).end();
+    const priv = viewOf(u, false).priv;
     const fail = (e: unknown) => { log("read error:", e); if (!res.headersSent) res.writeHead(500).end(); else res.end(); };
-    if (path === "/state") { refreshConfig(); return void res.writeHead(200, { "content-type": "application/json" }).end(snap(view).json); }
-    if (path === "/stream") {
-      if (clients.size >= MAX_CLIENTS) return void res.writeHead(503).end();
-      refreshConfig();
-      res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
-      // A reconnecting client that already has this revision gets no duplicate snapshot. Either way it holds `snap(view)` now.
-      const cur = snap(view), k = viewKey(view);
-      if (req.headers["last-event-id"] !== `${EPOCH}-${rev}`) write(res, full(cur));
-      else res.write(": up to date\n\n");
-      clients.set(res, view);
-      lastSent.set(k, cur);
-      req.on("close", () => { clients.delete(res); if (![...clients.values()].some((v) => viewKey(v) === k)) lastSent.delete(k); });
-      return;
-    }
-    if (path === "/history") {
-      // Never older than the retention window (day files are deleted whole, so disk may hold up to a day more).
-      const since = Math.max(Number(u.searchParams.get("since")) || 0, Date.now() - historyMs());
-      const limit = Math.min(Math.max(Number(u.searchParams.get("limit")) || 500, 1), 20_000);
-      const untilParam = u.searchParams.get("until");
-      const until = untilParam && Number.isFinite(+untilParam) ? +untilParam : Infinity;
-      // Streamed out in slices of 500 events, waiting for the socket to drain: a 20k-event page never builds one big string.
-      readEvents(DIR, { since, until, limit, text: !priv }).then(async ({ events, more }) => {
-        res.writeHead(200, { "content-type": "application/json" });
-        const closed = new Promise((r) => res.once("close", r)); // one listener per response, not one per slice
-        res.write(`{"schema":${SCHEMA_VERSION},"epoch":${JSON.stringify(EPOCH)},"more":${more},"events":[`);
-        for (let i = 0; i < events.length && !res.destroyed; i += 500) {
-          const part = events.slice(i, i + 500).map((e) => JSON.stringify(priv ? strip(e) : e)).join(",");
-          if (!res.write((i ? "," : "") + part)) await Promise.race([new Promise((r) => res.once("drain", r)), closed]); // a closed client must not leave this waiting
-        }
-        res.end("]}");
-      }).catch(fail);
-      return;
-    }
     if (path === "/status") {
       const agents = Object.values(state.agents).filter((a) => a.seat);
       const working = agents.filter((a) => a.doing).length + Object.values(state.sessions).filter((s) => s.doing).length;
@@ -379,7 +428,8 @@ function handle(req: IncomingMessage, res: ServerResponse, allowedHosts: Set<str
 
   if (path === "/" || path === "/index.html") {
     // The browser tab gets read access for /stream and /state through this cookie (Host was already checked).
-    res.setHeader("set-cookie", `ao_token=${TOKEN}; HttpOnly; SameSite=Strict; Path=/`);
+    // and expire the pre-split ao_token cookie, which held the master (write) token, in browsers that still have it
+    res.setHeader("set-cookie", [`ao_ui=${UI_TOKEN}; HttpOnly; SameSite=Strict; Path=/`, "ao_token=; Max-Age=0; Path=/"]);
     if (!existsSync(WEB)) return void res.writeHead(200, { "content-type": "text/html" }).end(NO_DIST);
   }
   if (existsSync(WEB) && serve(req.url ?? "/", res)) return;
@@ -411,6 +461,7 @@ server.listen(PORT, HOST, () => {
   if (!LOOPBACK) log(`WARNING: bound to ${HOST}, not loopback (AGENT_OFFICE_ALLOW_REMOTE=1). Anyone who can reach it and has the token can send events; hooks and browser must use this host.`);
   console.log(`agent-office listening on http://${HOST}:${port}`);
   setInterval(() => { refreshConfig(); }, 2000).unref();
+  if (cfg.share?.enabled) void share.start().then((e) => e && log("share:", e));
   setInterval(prune, 3600_000).unref();
   setInterval(() => {
     const r = sweep(state, Date.now(), ttlMs(), cfg);

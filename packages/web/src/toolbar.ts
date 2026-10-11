@@ -38,7 +38,7 @@ export function group(tools: HTMLElement, name: Exclude<(typeof NAMES)[number], 
 }
 
 // ---- O4: responsive header. The pill, the view switch and Panel always show; the rest folds in this order. ----
-const FOLDS = ["wm", "Display", "Export", "#privchip", "#nudge", "#rec-note", "Setup"];
+const FOLDS = ["wm", "Display", "Export", "#privchip", "#nudge", "#sharechip", "#rec-note", "Setup"];
 const marks = new Map<HTMLElement, Comment>();
 let sig = "";
 const foldable = (k: string) => (k.startsWith("#") ? document.getElementById(k.slice(1)) : groups.get(k)) ?? null;
@@ -48,7 +48,7 @@ export function fitHeader() {
   if (!top || !more || !pop) return;
   const narrow = matchMedia("(max-width:800px)").matches; // phones: the toolbar lives in the sheet, the header wraps
   const s = [top.clientWidth, narrow, getComputedStyle(document.documentElement).getPropertyValue("--ts"),
-    ...Array.from(top.querySelectorAll<HTMLElement>("#need,#stats,#badge,#stop-sample,#rec-note,#privchip,#nudge,#live")).map((e) => `${e.hidden}${e.className}${e.textContent}`)].join("|");
+    ...Array.from(top.querySelectorAll<HTMLElement>("#need,#stats,#badge,#stop-sample,#rec-note,#privchip,#sharechip,#nudge,#live")).map((e) => `${e.hidden}${e.className}${e.textContent}`)].join("|");
   if (s === sig) return;
   sig = s;
   for (const [e, c] of marks) c.after(e); // unfold everything, then fold until it fits
